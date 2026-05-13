@@ -1,132 +1,190 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
-import { ArrowLeft, Users, Calendar, FileText, CalendarDays, Building2, BarChart3, Plus, Edit, Trash2, Eye } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { ArrowLeft, Calendar, CalendarDays, Building2, Plus, Edit, Trash2, Eye, LogOut, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import LoginPage from "./LoginPage";
+import cimolLogo from "@/assets/cimol-logo.png";
 
-type AdminTab = "dashboard" | "horarios" | "professores" | "eventos" | "documentos" | "setores";
+type AdminTab = "horarios" | "eventos" | "setores" | "reorganizacao";
 
 const sidebarItems = [
-  { id: "dashboard" as AdminTab, label: "Dashboard", icon: BarChart3 },
   { id: "horarios" as AdminTab, label: "Horários", icon: Calendar },
-  { id: "professores" as AdminTab, label: "Professores", icon: Users },
   { id: "eventos" as AdminTab, label: "Eventos", icon: CalendarDays },
-  { id: "documentos" as AdminTab, label: "Documentos", icon: FileText },
   { id: "setores" as AdminTab, label: "Setores", icon: Building2 },
+  { id: "reorganizacao" as AdminTab, label: "Reorganização", icon: AlertCircle },
 ];
 
-const stats = [
-  { label: "Alunos Matriculados", valor: "847", mudanca: "+12%", icon: Users, cor: "from-blue-500 to-cyan-400" },
-  { label: "Professores Ativos", valor: "42", mudanca: "+2", icon: Users, cor: "from-emerald-500 to-teal-400" },
-  { label: "Turmas Ativas", valor: "32", mudanca: "=", icon: Calendar, cor: "from-violet-500 to-purple-400" },
-  { label: "Eventos este mês", valor: "5", mudanca: "+3", icon: CalendarDays, cor: "from-amber-500 to-yellow-400" },
-];
 
-const recentActivities = [
-  { acao: "Horário atualizado", detalhe: "Turma 62-1 — Informática", tempo: "2 min atrás" },
-  { acao: "Novo professor cadastrado", detalhe: "Prof. Ana Paula — Química", tempo: "15 min atrás" },
-  { acao: "Evento criado", detalhe: "Feira de Ciências 2025", tempo: "1h atrás" },
-  { acao: "Documento enviado", detalhe: "Calendário Acadêmico 2025", tempo: "3h atrás" },
-  { acao: "Turma criada", detalhe: "71-2 — Mecânica", tempo: "5h atrás" },
-];
+const ReorganizacaoSection = () => {
+  const [alunoMatricula, setAlunoMatricula] = useState("");
+  const [ano, setAno] = useState("");
+  const [turma, setTurma] = useState("");
+  const [curso, setCurso] = useState("");
+  const [problema, setProblema] = useState("");
+  const [salas, setSalas] = useState("");
+  const [registros, setRegistros] = useState<Array<{ id: number; aluno: string; ano: string; turma: string; curso: string; problema: string; salas: string; data: string }>>([
+    { id: 1, aluno: "João Silva", ano: "3º", turma: "62-1", curso: "Informática", problema: "Acessibilidade - Cadeira de rodas", salas: "S101, S205", data: "2025-05-10" },
+    { id: 2, aluno: "Maria Santos", ano: "2º", turma: "71-2", curso: "Mecânica", problema: "Alergia ao látex - Salas com quadros", salas: "S102, S304", data: "2025-05-08" },
+  ]);
 
-const DashboardContent = () => (
-  <div className="space-y-6 animate-fade-in">
-    <div>
-      <h2 className="text-2xl font-heading font-bold text-foreground">Dashboard</h2>
-      <p className="text-muted-foreground text-sm">Visão geral do sistema</p>
-    </div>
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-      {stats.map((stat, i) => {
-        const Icon = stat.icon;
-        return (
-          <div key={i} className="glass-card rounded-2xl p-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${stat.cor} flex items-center justify-center`}>
-                <Icon className="w-5 h-5 text-primary-foreground" />
-              </div>
-              <span className="text-xs font-medium text-success bg-success/10 px-2 py-0.5 rounded-full">{stat.mudanca}</span>
-            </div>
-            <div>
-              <p className="text-2xl font-heading font-bold text-foreground">{stat.valor}</p>
-              <p className="text-xs text-muted-foreground">{stat.label}</p>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-    <div className="glass-card rounded-2xl p-6">
-      <h3 className="font-heading font-bold text-foreground mb-4">Atividade Recente</h3>
-      <div className="space-y-3">
-        {recentActivities.map((act, i) => (
-          <div key={i} className="flex items-center justify-between py-3 border-b border-border/50 last:border-0">
-            <div>
-              <p className="font-medium text-sm text-foreground">{act.acao}</p>
-              <p className="text-xs text-muted-foreground">{act.detalhe}</p>
-            </div>
-            <span className="text-xs text-muted-foreground whitespace-nowrap ml-4">{act.tempo}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  </div>
-);
+  const handleAdicionar = () => {
+    if (alunoMatricula && ano && turma && curso && problema && salas) {
+      const novoRegistro = {
+        id: registros.length + 1,
+        aluno: alunoMatricula,
+        ano: ano,
+        turma: turma,
+        curso: curso,
+        problema: problema,
+        salas: salas,
+        data: new Date().toISOString().split('T')[0],
+      };
+      setRegistros([...registros, novoRegistro]);
+      setAlunoMatricula("");
+      setAno("");
+      setTurma("");
+      setCurso("");
+      setProblema("");
+      setSalas("");
+    }
+  };
 
-const ProfessoresAdmin = () => {
-  const profs = [
-    { id: 1, nome: "Fernando Silva", area: "Informática", email: "fernando@instituicao.edu.br", status: "Ativo" },
-    { id: 2, nome: "Maria Santos", area: "Mecânica", email: "maria@instituicao.edu.br", status: "Ativo" },
-    { id: 3, nome: "Carlos Oliveira", area: "Química", email: "carlos@instituicao.edu.br", status: "Ativo" },
-    { id: 4, nome: "Ana Costa", area: "Eletrônica", email: "ana@instituicao.edu.br", status: "Licença" },
-  ];
+  const handleDeletar = (id: number) => {
+    setRegistros(registros.filter(r => r.id !== id));
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div>
-          <h2 className="text-2xl font-heading font-bold text-foreground">Professores</h2>
-          <p className="text-muted-foreground text-sm">Gerenciar corpo docente</p>
-        </div>
-        <Button className="rounded-xl gap-2">
-          <Plus className="w-4 h-4" /> Novo Professor
-        </Button>
+      <div>
+        <h2 className="text-2xl font-heading font-bold text-foreground">Reorganização de Salas</h2>
+        <p className="text-muted-foreground text-sm">Registrar problemas que impedem acesso às salas e reorganizar</p>
       </div>
+
+      <div className="glass-card rounded-2xl p-6 space-y-4">
+        <h3 className="font-heading font-bold text-foreground flex items-center gap-2">
+          <AlertCircle className="w-5 h-5 text-accent" />
+          Registrar Novo Problema
+        </h3>
+        <div className="space-y-3">
+          <div>
+            <label className="text-sm font-medium text-foreground mb-1 block">Aluno/Matrícula</label>
+            <Input
+              placeholder="Nome ou número de matrícula"
+              value={alunoMatricula}
+              onChange={(e) => setAlunoMatricula(e.target.value)}
+              className="rounded-xl"
+            />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1 block">Ano</label>
+              <Input
+                placeholder="Ex: 1º, 2º, 3º"
+                value={ano}
+                onChange={(e) => setAno(e.target.value)}
+                className="rounded-xl"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1 block">Turma</label>
+              <Input
+                placeholder="Ex: 62-1"
+                value={turma}
+                onChange={(e) => setTurma(e.target.value)}
+                className="rounded-xl"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1 block">Curso</label>
+              <Input
+                placeholder="Ex: Informática"
+                value={curso}
+                onChange={(e) => setCurso(e.target.value)}
+                className="rounded-xl"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-foreground mb-1 block">Descrição do Problema</label>
+            <Input
+              placeholder="Ex: Acessibilidade, alergia, restrição física..."
+              value={problema}
+              onChange={(e) => setProblema(e.target.value)}
+              className="rounded-xl"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-foreground mb-1 block">Salas a Reorganizar</label>
+            <Input
+              placeholder="Ex: S101, S205, S304"
+              value={salas}
+              onChange={(e) => setSalas(e.target.value)}
+              className="rounded-xl"
+            />
+          </div>
+          <Button onClick={handleAdicionar} className="rounded-xl gap-2 w-full">
+            <Plus className="w-4 h-4" /> Registrar e Reorganizar
+          </Button>
+        </div>
+      </div>
+
       <div className="glass-card rounded-2xl overflow-hidden">
+        <div className="p-6 border-b border-border/50">
+          <h3 className="font-heading font-bold text-foreground">Alunos com Restrições</h3>
+          <p className="text-xs text-muted-foreground mt-1">{registros.length} registros ativos</p>
+        </div>
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/50">
-              <TableHead>Nome</TableHead>
-              <TableHead>Área</TableHead>
-              <TableHead>Email</TableHead>
-              <TableHead>Status</TableHead>
+              <TableHead>Aluno</TableHead>
+              <TableHead>Ano</TableHead>
+              <TableHead>Turma</TableHead>
+              <TableHead>Curso</TableHead>
+              <TableHead>Problema</TableHead>
+              <TableHead>Salas Reorganizadas</TableHead>
+              <TableHead>Data</TableHead>
               <TableHead className="text-right">Ações</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {profs.map((p) => (
-              <TableRow key={p.id} className="hover:bg-muted/30">
-                <TableCell className="font-medium">{p.nome}</TableCell>
-                <TableCell>{p.area}</TableCell>
-                <TableCell className="text-primary text-sm">{p.email}</TableCell>
-                <TableCell>
-                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-                    p.status === "Ativo" ? "bg-success/10 text-success" : "bg-accent/20 text-accent-foreground"
-                  }`}>
-                    {p.status}
-                  </span>
-                </TableCell>
+            {registros.map((reg) => (
+              <TableRow key={reg.id} className="hover:bg-muted/30">
+                <TableCell className="font-medium">{reg.aluno}</TableCell>
+                <TableCell className="text-sm">{reg.ano}</TableCell>
+                <TableCell className="text-sm">{reg.turma}</TableCell>
+                <TableCell className="text-sm">{reg.curso}</TableCell>
+                <TableCell className="text-sm">{reg.problema}</TableCell>
+                <TableCell className="text-sm text-primary">{reg.salas}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">{reg.data}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
-                    <button className="p-2 rounded-lg hover:bg-muted transition-colors"><Eye className="w-4 h-4 text-muted-foreground" /></button>
-                    <button className="p-2 rounded-lg hover:bg-muted transition-colors"><Edit className="w-4 h-4 text-muted-foreground" /></button>
-                    <button className="p-2 rounded-lg hover:bg-destructive/10 transition-colors"><Trash2 className="w-4 h-4 text-destructive" /></button>
+                    <button className="p-2 rounded-lg hover:bg-muted transition-colors">
+                      <Eye className="w-4 h-4 text-muted-foreground" />
+                    </button>
+                    <button className="p-2 rounded-lg hover:bg-muted transition-colors">
+                      <Edit className="w-4 h-4 text-muted-foreground" />
+                    </button>
+                    <button 
+                      onClick={() => handleDeletar(reg.id)}
+                      className="p-2 rounded-lg hover:bg-destructive/10 transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4 text-destructive" />
+                    </button>
                   </div>
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
+      </div>
+
+      <div className="bg-accent/10 border border-accent/20 rounded-2xl p-4">
+        <p className="text-sm text-accent-foreground">
+          <span className="font-medium">💡 Dica:</span> O sistema de reorganização irá automaticamente realocar o aluno para salas acessíveis
+          conforme os problemas registrados quando implementado.
+        </p>
       </div>
     </div>
   );
@@ -155,17 +213,46 @@ const GenericAdmin = ({ title, description }: { title: string; description: stri
   </div>
 );
 
-const AdminPage = () => {
+const AdminPageComponent = () => {
+  const navigate = useNavigate();
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [adminUser, setAdminUser] = useState("");
   const [activeTab, setActiveTab] = useState<AdminTab>("dashboard");
+
+  useEffect(() => {
+    // Verificar autenticação no mount
+    checkAuth();
+  }, []);
+
+  const checkAuth = () => {
+    const loggedIn = localStorage.getItem("admin_logged_in") === "true";
+    const user = localStorage.getItem("admin_user") || "";
+    setIsAuthenticated(loggedIn);
+    setAdminUser(user);
+  };
+
+  // Verificar autenticação quando o componente renderiza
+  if (!isAuthenticated && localStorage.getItem("admin_logged_in") === "true") {
+    checkAuth();
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem("admin_logged_in");
+    localStorage.removeItem("admin_user");
+    setIsAuthenticated(false);
+    navigate("/");
+  };
+
+  if (!isAuthenticated && localStorage.getItem("admin_logged_in") !== "true") {
+    return <LoginPage />;
+  }
 
   const renderContent = () => {
     switch (activeTab) {
-      case "dashboard": return <DashboardContent />;
-      case "professores": return <ProfessoresAdmin />;
       case "horarios": return <GenericAdmin title="Horários" description="Gerenciar horários de aula" />;
       case "eventos": return <GenericAdmin title="Eventos" description="Gerenciar eventos escolares" />;
-      case "documentos": return <GenericAdmin title="Documentos" description="Gerenciar documentos" />;
       case "setores": return <GenericAdmin title="Setores" description="Gerenciar setores da escola" />;
+      case "reorganizacao": return <ReorganizacaoSection />;
     }
   };
 
@@ -175,11 +262,11 @@ const AdminPage = () => {
       <aside className="w-64 bg-card border-r border-border flex flex-col shrink-0 hidden md:flex">
         <div className="p-4 border-b border-border">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-primary/20 p-0.5 flex items-center justify-center">
-              <Building2 className="w-5 h-5 text-primary" />
+            <div className="w-9 h-9 rounded-lg overflow-hidden bg-accent/20 p-0.5">
+              <img src={cimolLogo} alt="CIMOL" className="w-full h-full object-contain" />
             </div>
             <div>
-              <p className="font-heading font-bold text-sm text-foreground">Design Compass</p>
+              <p className="font-heading font-bold text-sm text-foreground">CIMOL Admin</p>
               <p className="text-xs text-muted-foreground">Painel de controle</p>
             </div>
           </div>
@@ -204,7 +291,17 @@ const AdminPage = () => {
             );
           })}
         </nav>
-        <div className="p-3 border-t border-border">
+        <div className="p-3 border-t border-border space-y-2">
+          <div className="text-xs text-muted-foreground px-3 py-2 bg-muted/30 rounded-lg truncate">
+            {adminUser}
+          </div>
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-destructive hover:bg-destructive/10 transition-all"
+          >
+            <LogOut className="w-4 h-4" />
+            Sair
+          </button>
           <Link
             to="/"
             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
@@ -256,4 +353,4 @@ const AdminPage = () => {
   );
 };
 
-export default AdminPage;
+export default AdminPageComponent;

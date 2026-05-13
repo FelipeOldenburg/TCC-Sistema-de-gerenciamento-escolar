@@ -106,5 +106,6 @@ export default {
         "scale-in": "scale-in 0.3s ease-out both",
       },
     },
+  },
   plugins: [require("tailwindcss-animate")],
 } satisfies Config;

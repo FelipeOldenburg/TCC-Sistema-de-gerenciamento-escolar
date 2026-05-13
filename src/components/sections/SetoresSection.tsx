@@ -1,4 +1,4 @@
-import { Building2, BookOpen, FlaskConical, Wrench, GraduationCap, HeartPulse, Coffee, Shield } from "lucide-react";
+import { Building2, BookOpen, FlaskConical, Wrench, GraduationCap, Coffee, Shield } from "lucide-react";
 
 const setores = [
   { nome: "Direção", descricao: "Gestão e administração escolar", icon: Building2, cor: "from-blue-600 to-blue-400" },
@@ -6,7 +6,6 @@ const setores = [
   { nome: "Biblioteca", descricao: "Acervo e sala de estudo", icon: BookOpen, cor: "from-amber-500 to-yellow-400" },
   { nome: "Laboratórios", descricao: "Labs técnicos e científicos", icon: FlaskConical, cor: "from-emerald-500 to-teal-400" },
   { nome: "Oficinas", descricao: "Práticas de mecânica e marcenaria", icon: Wrench, cor: "from-gray-600 to-gray-400" },
-  { nome: "Enfermaria", descricao: "Atendimento à saúde", icon: HeartPulse, cor: "from-rose-500 to-pink-400" },
   { nome: "Cantina", descricao: "Alimentação e convivência", icon: Coffee, cor: "from-orange-500 to-amber-400" },
   { nome: "Segurança", descricao: "Portaria e vigilância", icon: Shield, cor: "from-indigo-500 to-blue-400" },
 ];

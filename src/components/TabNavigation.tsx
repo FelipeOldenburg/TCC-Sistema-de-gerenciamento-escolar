@@ -1,14 +1,11 @@
-import { Calendar, MapPin, BookOpen, CalendarDays, Users, Building2, FileText, MessageSquareWarning } from "lucide-react";
+import { Calendar, MapPin, CalendarDays, Building2, MessageSquareWarning } from "lucide-react";
 import { useRef, useEffect } from "react";
 
 const tabs = [
   { id: "horarios", label: "Horários", icon: Calendar },
   { id: "mapa", label: "Mapa", icon: MapPin },
-  { id: "historia", label: "História", icon: BookOpen },
   { id: "eventos", label: "Eventos", icon: CalendarDays },
-  { id: "professores", label: "Professores", icon: Users },
   { id: "setores", label: "Setores", icon: Building2 },
-  { id: "documentos", label: "Documentos", icon: FileText },
   { id: "reclamacoes", label: "Feedback", icon: MessageSquareWarning },
 ] as const;
 
@@ -28,7 +25,8 @@ const TabNavigation = ({ activeTab, onTabChange }: TabNavigationProps) => {
 
   return (
     <nav className="bg-nav overflow-x-auto scrollbar-hide shadow-md relative z-10">
-      <div className="flex min-w-max px-2">
+      <div className="container max-w-7xl mx-auto px-4">
+        <div className="flex justify-center min-w-max">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -48,6 +46,7 @@ const TabNavigation = ({ activeTab, onTabChange }: TabNavigationProps) => {
             </button>
           );
         })}
+      </div>
       </div>
     </nav>
   );
