@@ -1,14 +1,14 @@
 import { Users, Mail } from "lucide-react";
 
 const professores = [
-  { nome: "Prof. Fernando Silva", area: "Informática", email: "fernando@cimol.edu.br" },
-  { nome: "Prof. Maria Santos", area: "Mecânica", email: "maria@cimol.edu.br" },
-  { nome: "Prof. Carlos Oliveira", area: "Química", email: "carlos@cimol.edu.br" },
-  { nome: "Prof. Ana Costa", area: "Eletrônica", email: "ana@cimol.edu.br" },
-  { nome: "Prof. Ricardo Lima", area: "Eletrotécnica", email: "ricardo@cimol.edu.br" },
-  { nome: "Prof. Juliana Pereira", area: "Meio Ambiente", email: "juliana@cimol.edu.br" },
-  { nome: "Prof. Roberto Ferreira", area: "Design de Móveis", email: "roberto@cimol.edu.br" },
-  { nome: "Prof. Luciana Alves", area: "Matemática", email: "luciana@cimol.edu.br" },
+  { nome: "Prof. Fernando Silva", area: "Informática", email: "fernando@instituicao.edu.br" },
+  { nome: "Prof. Maria Santos", area: "Mecânica", email: "maria@instituicao.edu.br" },
+  { nome: "Prof. Carlos Oliveira", area: "Química", email: "carlos@instituicao.edu.br" },
+  { nome: "Prof. Ana Costa", area: "Eletrônica", email: "ana@instituicao.edu.br" },
+  { nome: "Prof. Ricardo Lima", area: "Eletrotécnica", email: "ricardo@instituicao.edu.br" },
+  { nome: "Prof. Juliana Pereira", area: "Meio Ambiente", email: "juliana@instituicao.edu.br" },
+  { nome: "Prof. Roberto Ferreira", area: "Design de Móveis", email: "roberto@instituicao.edu.br" },
+  { nome: "Prof. Luciana Alves", area: "Matemática", email: "luciana@instituicao.edu.br" },
 ];
 
 const getInitials = (name: string) => {

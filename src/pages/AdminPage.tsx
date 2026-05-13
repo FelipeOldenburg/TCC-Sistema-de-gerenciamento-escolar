@@ -4,7 +4,6 @@ import { ArrowLeft, Users, Calendar, FileText, CalendarDays, Building2, BarChart
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import cimolLogo from "@/assets/cimol-logo.png";
 
 type AdminTab = "dashboard" | "horarios" | "professores" | "eventos" | "documentos" | "setores";
 
@@ -76,10 +75,10 @@ const DashboardContent = () => (
 
 const ProfessoresAdmin = () => {
   const profs = [
-    { id: 1, nome: "Fernando Silva", area: "Informática", email: "fernando@cimol.edu.br", status: "Ativo" },
-    { id: 2, nome: "Maria Santos", area: "Mecânica", email: "maria@cimol.edu.br", status: "Ativo" },
-    { id: 3, nome: "Carlos Oliveira", area: "Química", email: "carlos@cimol.edu.br", status: "Ativo" },
-    { id: 4, nome: "Ana Costa", area: "Eletrônica", email: "ana@cimol.edu.br", status: "Licença" },
+    { id: 1, nome: "Fernando Silva", area: "Informática", email: "fernando@instituicao.edu.br", status: "Ativo" },
+    { id: 2, nome: "Maria Santos", area: "Mecânica", email: "maria@instituicao.edu.br", status: "Ativo" },
+    { id: 3, nome: "Carlos Oliveira", area: "Química", email: "carlos@instituicao.edu.br", status: "Ativo" },
+    { id: 4, nome: "Ana Costa", area: "Eletrônica", email: "ana@instituicao.edu.br", status: "Licença" },
   ];
 
   return (
@@ -176,11 +175,11 @@ const AdminPage = () => {
       <aside className="w-64 bg-card border-r border-border flex flex-col shrink-0 hidden md:flex">
         <div className="p-4 border-b border-border">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg overflow-hidden bg-accent/20 p-0.5">
-              <img src={cimolLogo} alt="CIMOL" className="w-full h-full object-contain" />
+            <div className="w-9 h-9 rounded-lg bg-primary/20 p-0.5 flex items-center justify-center">
+              <Building2 className="w-5 h-5 text-primary" />
             </div>
             <div>
-              <p className="font-heading font-bold text-sm text-foreground">CIMOL Admin</p>
+              <p className="font-heading font-bold text-sm text-foreground">Design Compass</p>
               <p className="text-xs text-muted-foreground">Painel de controle</p>
             </div>
           </div>
