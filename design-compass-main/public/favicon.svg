@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 300" width="240" height="300">
+  <!-- Yellow outer border/stroke -->
+  <path d="M 120 8 L 215 55 L 215 140 Q 215 195 120 258 Q 25 195 25 140 L 25 55 Z" 
+        fill="none" stroke="#FFD700" stroke-width="12" stroke-linejoin="round" stroke-linecap="round"/>
+  
+  <!-- Blue shield background -->
+  <path d="M 120 18 L 204 58 L 204 140 Q 204 190 120 248 Q 36 190 36 140 L 36 58 Z" 
+        fill="#003DA5" stroke="none"/>
+  
+  <!-- Yellow top bar for text -->
+  <rect x="40" y="28" width="160" height="38" fill="#FFD700" rx="3"/>
+  
+  <!-- CIMOL text -->
+  <text x="120" y="57" font-family="Arial, sans-serif" font-size="34" font-weight="bold" 
+        fill="#003DA5" text-anchor="middle" letter-spacing="3">CIMOL</text>
+  
+  <!-- Horizontal divider line -->
+  <line x1="50" y1="75" x2="190" y2="75" stroke="#FFD700" stroke-width="2"/>
+  
+  <!-- Atom symbol -->
+  <g transform="translate(120, 155)">
+    <!-- Central nucleus - larger -->
+    <circle cx="0" cy="0" r="12" fill="#FFD700"/>
+    
+    <!-- Electron orbits - horizontal, diagonal 1, diagonal 2 -->
+    <g stroke="#FFD700" stroke-width="3" fill="none" stroke-linecap="round">
+      <!-- Horizontal orbit -->
+      <ellipse cx="0" cy="0" rx="50" ry="24"/>
+      <!-- Diagonal orbit (60 degrees) -->
+      <ellipse cx="0" cy="0" rx="50" ry="24" transform="rotate(60)"/>
+      <!-- Diagonal orbit (120 degrees) -->
+      <ellipse cx="0" cy="0" rx="50" ry="24" transform="rotate(120)"/>
+    </g>
+    
+    <!-- Electrons - larger circles on orbits -->
+    <g fill="#FFD700">
+      <!-- Electron 1 - right (on horizontal orbit) -->
+      <circle cx="50" cy="0" r="8"/>
+      <!-- Electron 2 - bottom left (on diagonal orbit at 60°) -->
+      <circle cx="-25" cy="43.3" r="8"/>
+      <!-- Electron 3 - top left (on diagonal orbit at 120°) -->
+      <circle cx="-25" cy="-43.3" r="8"/>
+    </g>
+  </g>
+</svg>
