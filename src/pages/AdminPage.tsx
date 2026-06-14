@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Calendar, CalendarDays, Building2, Plus, Edit, Trash2, Eye, LogOut, AlertCircle } from "lucide-react";
+import { AlertCircle, ArrowLeft, Building2, Calendar, CalendarDays, Edit, Eye, LogOut, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -9,13 +9,23 @@ import cimolLogo from "@/assets/cimol-logo.png";
 
 type AdminTab = "horarios" | "eventos" | "setores" | "reorganizacao";
 
+type ReorganizacaoRegistro = {
+  id: number;
+  aluno: string;
+  ano: string;
+  turma: string;
+  curso: string;
+  problema: string;
+  salas: string;
+  data: string;
+};
+
 const sidebarItems = [
   { id: "horarios" as AdminTab, label: "Horários", icon: Calendar },
   { id: "eventos" as AdminTab, label: "Eventos", icon: CalendarDays },
   { id: "setores" as AdminTab, label: "Setores", icon: Building2 },
   { id: "reorganizacao" as AdminTab, label: "Reorganização", icon: AlertCircle },
 ];
-
 
 const ReorganizacaoSection = () => {
   const [alunoMatricula, setAlunoMatricula] = useState("");
@@ -24,35 +34,95 @@ const ReorganizacaoSection = () => {
   const [curso, setCurso] = useState("");
   const [problema, setProblema] = useState("");
   const [salas, setSalas] = useState("");
-  const [registros, setRegistros] = useState<Array<{ id: number; aluno: string; ano: string; turma: string; curso: string; problema: string; salas: string; data: string }>>([
-    { id: 1, aluno: "João Silva", ano: "3º", turma: "62-1", curso: "Informática", problema: "Acessibilidade - Cadeira de rodas", salas: "S101, S205", data: "2025-05-10" },
-    { id: 2, aluno: "Maria Santos", ano: "2º", turma: "71-2", curso: "Mecânica", problema: "Alergia ao látex - Salas com quadros", salas: "S102, S304", data: "2025-05-08" },
-  ]);
+  const [registros, setRegistros] = useState<ReorganizacaoRegistro[]>([]);
+  const [carregando, setCarregando] = useState(true);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
 
-  const handleAdicionar = () => {
-    if (alunoMatricula && ano && turma && curso && problema && salas) {
-      const novoRegistro = {
-        id: registros.length + 1,
-        aluno: alunoMatricula,
-        ano: ano,
-        turma: turma,
-        curso: curso,
-        problema: problema,
-        salas: salas,
-        data: new Date().toISOString().split('T')[0],
-      };
-      setRegistros([...registros, novoRegistro]);
+  const carregarRegistros = async () => {
+    setErro("");
+    setCarregando(true);
+
+    try {
+      const resposta = await fetch("/api/reorganizacao");
+
+      if (!resposta.ok) {
+        throw new Error("Não foi possível carregar os registros.");
+      }
+
+      const dados = await resposta.json();
+      setRegistros(dados);
+    } catch (error) {
+      setErro(error instanceof Error ? error.message : "Erro ao carregar registros.");
+    } finally {
+      setCarregando(false);
+    }
+  };
+
+  useEffect(() => {
+    carregarRegistros();
+  }, []);
+
+  const handleAdicionar = async () => {
+    if (!alunoMatricula || !ano || !turma || !curso || !problema || !salas) {
+      setErro("Preencha todos os campos antes de registrar.");
+      return;
+    }
+
+    setErro("");
+    setSalvando(true);
+
+    try {
+      const resposta = await fetch("/api/reorganizacao", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          aluno: alunoMatricula,
+          ano,
+          turma,
+          curso,
+          problema,
+          salas,
+        }),
+      });
+
+      if (!resposta.ok) {
+        const dados = await resposta.json().catch(() => null);
+        throw new Error(dados?.message || "Não foi possível salvar o registro.");
+      }
+
+      await carregarRegistros();
       setAlunoMatricula("");
       setAno("");
       setTurma("");
       setCurso("");
       setProblema("");
       setSalas("");
+    } catch (error) {
+      setErro(error instanceof Error ? error.message : "Erro ao salvar registro.");
+    } finally {
+      setSalvando(false);
     }
   };
 
-  const handleDeletar = (id: number) => {
-    setRegistros(registros.filter(r => r.id !== id));
+  const handleDeletar = async (id: number) => {
+    setErro("");
+
+    try {
+      const resposta = await fetch(`/api/reorganizacao/${id}`, {
+        method: "DELETE",
+      });
+
+      if (!resposta.ok) {
+        throw new Error("Não foi possível remover o registro.");
+      }
+
+      setRegistros(registros.filter((registro) => registro.id !== id));
+    } catch (error) {
+      setErro(error instanceof Error ? error.message : "Erro ao remover registro.");
+    }
   };
 
   return (
@@ -124,8 +194,9 @@ const ReorganizacaoSection = () => {
               className="rounded-xl"
             />
           </div>
-          <Button onClick={handleAdicionar} className="rounded-xl gap-2 w-full">
-            <Plus className="w-4 h-4" /> Registrar e Reorganizar
+          {erro && <p className="text-sm text-destructive">{erro}</p>}
+          <Button onClick={handleAdicionar} disabled={salvando} className="rounded-xl gap-2 w-full">
+            <Plus className="w-4 h-4" /> {salvando ? "Salvando..." : "Registrar e Reorganizar"}
           </Button>
         </div>
       </div>
@@ -149,6 +220,20 @@ const ReorganizacaoSection = () => {
             </TableRow>
           </TableHeader>
           <TableBody>
+            {carregando && (
+              <TableRow>
+                <TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-8">
+                  Carregando registros...
+                </TableCell>
+              </TableRow>
+            )}
+            {!carregando && registros.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-8">
+                  Nenhum aluno com restrição cadastrado.
+                </TableCell>
+              </TableRow>
+            )}
             {registros.map((reg) => (
               <TableRow key={reg.id} className="hover:bg-muted/30">
                 <TableCell className="font-medium">{reg.aluno}</TableCell>
@@ -166,7 +251,7 @@ const ReorganizacaoSection = () => {
                     <button className="p-2 rounded-lg hover:bg-muted transition-colors">
                       <Edit className="w-4 h-4 text-muted-foreground" />
                     </button>
-                    <button 
+                    <button
                       onClick={() => handleDeletar(reg.id)}
                       className="p-2 rounded-lg hover:bg-destructive/10 transition-colors"
                     >
@@ -182,7 +267,7 @@ const ReorganizacaoSection = () => {
 
       <div className="bg-accent/10 border border-accent/20 rounded-2xl p-4">
         <p className="text-sm text-accent-foreground">
-          <span className="font-medium">💡 Dica:</span> O sistema de reorganização irá automaticamente realocar o aluno para salas acessíveis
+          <span className="font-medium">Dica:</span> O sistema de reorganização irá automaticamente realocar o aluno para salas acessíveis
           conforme os problemas registrados quando implementado.
         </p>
       </div>
@@ -217,10 +302,9 @@ const AdminPageComponent = () => {
   const navigate = useNavigate();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [adminUser, setAdminUser] = useState("");
-  const [activeTab, setActiveTab] = useState<AdminTab>("dashboard");
+  const [activeTab, setActiveTab] = useState<AdminTab>("reorganizacao");
 
   useEffect(() => {
-    // Verificar autenticação no mount
     checkAuth();
   }, []);
 
@@ -231,7 +315,6 @@ const AdminPageComponent = () => {
     setAdminUser(user);
   };
 
-  // Verificar autenticação quando o componente renderiza
   if (!isAuthenticated && localStorage.getItem("admin_logged_in") === "true") {
     checkAuth();
   }
@@ -249,17 +332,20 @@ const AdminPageComponent = () => {
 
   const renderContent = () => {
     switch (activeTab) {
-      case "horarios": return <GenericAdmin title="Horários" description="Gerenciar horários de aula" />;
-      case "eventos": return <GenericAdmin title="Eventos" description="Gerenciar eventos escolares" />;
-      case "setores": return <GenericAdmin title="Setores" description="Gerenciar setores da escola" />;
-      case "reorganizacao": return <ReorganizacaoSection />;
+      case "horarios":
+        return <GenericAdmin title="Horários" description="Gerenciar horários de aula" />;
+      case "eventos":
+        return <GenericAdmin title="Eventos" description="Gerenciar eventos escolares" />;
+      case "setores":
+        return <GenericAdmin title="Setores" description="Gerenciar setores da escola" />;
+      case "reorganizacao":
+        return <ReorganizacaoSection />;
     }
   };
 
   return (
     <div className="min-h-screen bg-background flex">
-      {/* Sidebar */}
-      <aside className="w-64 bg-card border-r border-border flex flex-col shrink-0 hidden md:flex">
+      <aside className="w-64 bg-card border-r border-border flex-col shrink-0 hidden md:flex">
         <div className="p-4 border-b border-border">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg overflow-hidden bg-accent/20 p-0.5">
@@ -312,7 +398,6 @@ const AdminPageComponent = () => {
         </div>
       </aside>
 
-      {/* Mobile header */}
       <div className="md:hidden fixed top-0 left-0 right-0 bg-card border-b border-border p-3 z-30 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg overflow-hidden bg-accent/20 p-0.5">
@@ -320,19 +405,17 @@ const AdminPageComponent = () => {
           </div>
           <span className="font-heading font-bold text-sm">Admin</span>
         </div>
-        <Link to="/" className="text-xs text-primary font-medium">← Voltar</Link>
+        <Link to="/" className="text-xs text-primary font-medium">Voltar</Link>
       </div>
 
-      {/* Main content */}
       <main className="flex-1 p-6 md:p-8 overflow-auto md:mt-0 mt-14">
         <div className="max-w-6xl mx-auto">
           {renderContent()}
         </div>
       </main>
 
-      {/* Mobile bottom nav */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-card border-t border-border flex justify-around p-2 z-30">
-        {sidebarItems.slice(0, 5).map((item) => {
+        {sidebarItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
           return (
