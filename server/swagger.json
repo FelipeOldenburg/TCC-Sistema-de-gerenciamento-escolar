@@ -1,0 +1,259 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "CIMOL - Reorganização de Salas API",
+    "version": "1.0.0",
+    "description": "API para gerenciar a reorganização de salas decorrentes de necessidades de acessibilidade no CIMOL."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3001",
+      "description": "Servidor Local"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key",
+        "description": "Token de autenticação do backend. Padrão: 'cimol_secure_token_abc123'"
+      }
+    },
+    "schemas": {
+      "Reorganizacao": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "example": 1
+          },
+          "aluno": {
+            "type": "string",
+            "example": "Felipe Oldenburg"
+          },
+          "ano": {
+            "type": "string",
+            "example": "2º"
+          },
+          "turma": {
+            "type": "string",
+            "example": "62-1"
+          },
+          "curso": {
+            "type": "string",
+            "example": "Informática"
+          },
+          "problema": {
+            "type": "string",
+            "example": "Fratura na perna esquerda, dificuldade para subir escadas."
+          },
+          "salas": {
+            "type": "string",
+            "example": "S101, S205"
+          },
+          "arquivo_nome": {
+            "type": "string",
+            "nullable": true,
+            "example": "laudo_medico.pdf"
+          },
+          "data": {
+            "type": "string",
+            "format": "date",
+            "example": "2026-06-14"
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ],
+  "paths": {
+    "/api/reorganizacao": {
+      "get": {
+        "summary": "Listar todos os registros de reorganização",
+        "description": "Retorna uma lista de todas as solicitações de reorganização de salas com os dados dos alunos associados (3FN) e as salas agregadas (1FN).",
+        "responses": {
+          "200": {
+            "description": "Lista de registros",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Reorganizacao"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Não autorizado - Chave de API inválida ou ausente"
+          }
+        }
+      },
+      "post": {
+        "summary": "Criar um novo registro de reorganização",
+        "description": "Cria uma nova solicitação de reorganização de salas. Suporta o upload opcional de um documento comprovante (laudo médico, etc.). Os dados do aluno são salvos de forma normalizada.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["aluno", "ano", "turma", "curso", "problema", "salas"],
+                "properties": {
+                  "aluno": {
+                    "type": "string",
+                    "description": "Nome ou número de matrícula do aluno",
+                    "example": "Felipe Oldenburg"
+                  },
+                  "ano": {
+                    "type": "string",
+                    "description": "Ano do aluno (1º, 2º ou 3º)",
+                    "example": "2º"
+                  },
+                  "turma": {
+                    "type": "string",
+                    "description": "Turma do aluno (Ex: 62-1)",
+                    "example": "62-1"
+                  },
+                  "curso": {
+                    "type": "string",
+                    "description": "Curso do aluno",
+                    "example": "Informática"
+                  },
+                  "problema": {
+                    "type": "string",
+                    "description": "Descrição da restrição de acessibilidade",
+                    "example": "Dificuldade de locomoção temporária."
+                  },
+                  "salas": {
+                    "type": "string",
+                    "description": "Lista de salas separadas por vírgula",
+                    "example": "S101, S205"
+                  },
+                  "arquivo": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Documento comprovante em PDF, JPEG, PNG ou Word (máx. 10MB)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Registro criado com sucesso",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer",
+                      "example": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Dados de entrada inválidos ou arquivo não permitido"
+          },
+          "401": {
+            "description": "Não autorizado"
+          }
+        }
+      }
+    },
+    "/api/reorganizacao/{id}/arquivo": {
+      "get": {
+        "summary": "Fazer download do documento de um registro",
+        "description": "Retorna o arquivo binário anexado ao registro especificado. Pode ser autenticado via cabeçalho ou parâmetro de consulta 'key'.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID do registro de reorganização",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "required": false,
+            "description": "Chave de API (alternativa para links diretos de download)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Download do arquivo",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Não autorizado"
+          },
+          "404": {
+            "description": "Registro ou arquivo não encontrado"
+          }
+        }
+      }
+    },
+    "/api/reorganizacao/{id}": {
+      "delete": {
+        "summary": "Remover um registro de reorganização",
+        "description": "Exclui o registro de reorganização indicado. Devido às restrições de chave estrangeira (ON DELETE CASCADE), as salas relacionadas também são limpas automaticamente.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "ID do registro a ser excluído",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Registro removido com sucesso",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "example": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Não autorizado"
+          }
+        }
+      }
+    }
+  }
+}
