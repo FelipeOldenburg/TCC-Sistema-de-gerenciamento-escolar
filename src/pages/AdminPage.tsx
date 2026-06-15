@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { AlertCircle, ArrowLeft, Building2, Calendar, CalendarDays, Edit, Eye, LogOut, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, Building2, Calendar, CalendarDays, Download, Edit, Eye, LogOut, Paperclip, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -17,6 +17,7 @@ type ReorganizacaoRegistro = {
   curso: string;
   problema: string;
   salas: string;
+  arquivo_nome: string | null;
   data: string;
 };
 
@@ -34,17 +35,97 @@ const ReorganizacaoSection = () => {
   const [curso, setCurso] = useState("");
   const [problema, setProblema] = useState("");
   const [salas, setSalas] = useState("");
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const arquivoRef = useRef<HTMLInputElement>(null);
   const [registros, setRegistros] = useState<ReorganizacaoRegistro[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
+
+  const cursosDisponiveis = [
+    "Informática",
+    "Mecânica",
+    "Química",
+    "Eletrônica",
+    "Eletrotécnica",
+    "Móveis",
+    "Design de Móveis",
+    "Meio Ambiente"
+  ];
+
+  const handleAnoChange = (value: string) => {
+    // Se o novo valor for menor que o anterior (deletando), limpa o campo
+    if (value.length < ano.length) {
+      setAno("");
+      return;
+    }
+    // Permite limpar o campo
+    if (!value) {
+      setAno("");
+      return;
+    }
+    // Apenas pega o primeiro dígito numérico digitado
+    const apenasNumeros = value.replace(/\D/g, "");
+    if (!apenasNumeros) {
+      setAno("");
+      return;
+    }
+    // Restringe apenas para 1, 2 ou 3 e adiciona o 'º'
+    const digito = apenasNumeros[0];
+    if (["1", "2", "3"].includes(digito)) {
+      setAno(`${digito}º`);
+    }
+  };
+
+  const handleTurmaChange = (value: string) => {
+    if (!value) {
+      setTurma("");
+      return;
+    }
+    // Remove qualquer caractere não numérico
+    const numeros = value.replace(/\D/g, "");
+    if (!numeros) {
+      setTurma("");
+      return;
+    }
+
+    // O primeiro dígito precisa ser '6'
+    if (numeros[0] !== "6") {
+      return;
+    }
+
+    let formatado = "6";
+
+    // O segundo dígito precisa ser de 1 a 8 (cursos 61 a 68)
+    if (numeros.length >= 2) {
+      const segundo = numeros[1];
+      if (["1", "2", "3", "4", "5", "6", "7", "8"].includes(segundo)) {
+        formatado += segundo;
+      } else {
+        setTurma(formatado);
+        return;
+      }
+    }
+
+    // O terceiro dígito vira o dígito após o hífen: 62-1
+    if (numeros.length >= 3) {
+      const terceiro = numeros[2];
+      formatado += `-${terceiro}`;
+    }
+
+    setTurma(formatado.slice(0, 4));
+  };
 
   const carregarRegistros = async () => {
     setErro("");
     setCarregando(true);
 
     try {
-      const resposta = await fetch("/api/reorganizacao");
+      const resposta = await fetch("/api/reorganizacao", {
+        headers: {
+          "x-api-key": import.meta.env.VITE_API_KEY || "cimol_secure_token_abc123",
+        },
+      });
 
       if (!resposta.ok) {
         throw new Error("Não foi possível carregar os registros.");
@@ -73,19 +154,22 @@ const ReorganizacaoSection = () => {
     setSalvando(true);
 
     try {
+      // Usa FormData para suportar envio de arquivo junto com os dados
+      const formData = new FormData();
+      formData.append("aluno", alunoMatricula);
+      formData.append("ano", ano);
+      formData.append("turma", turma);
+      formData.append("curso", curso);
+      formData.append("problema", problema);
+      formData.append("salas", salas);
+      if (arquivo) formData.append("arquivo", arquivo);
+
       const resposta = await fetch("/api/reorganizacao", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
+          "x-api-key": import.meta.env.VITE_API_KEY || "cimol_secure_token_abc123",
         },
-        body: JSON.stringify({
-          aluno: alunoMatricula,
-          ano,
-          turma,
-          curso,
-          problema,
-          salas,
-        }),
+        body: formData, // sem Content-Type manual — browser define multipart automaticamente
       });
 
       if (!resposta.ok) {
@@ -100,6 +184,8 @@ const ReorganizacaoSection = () => {
       setCurso("");
       setProblema("");
       setSalas("");
+      setArquivo(null);
+      if (arquivoRef.current) arquivoRef.current.value = "";
     } catch (error) {
       setErro(error instanceof Error ? error.message : "Erro ao salvar registro.");
     } finally {
@@ -113,6 +199,9 @@ const ReorganizacaoSection = () => {
     try {
       const resposta = await fetch(`/api/reorganizacao/${id}`, {
         method: "DELETE",
+        headers: {
+          "x-api-key": import.meta.env.VITE_API_KEY || "cimol_secure_token_abc123",
+        },
       });
 
       if (!resposta.ok) {
@@ -151,29 +240,37 @@ const ReorganizacaoSection = () => {
             <div>
               <label className="text-sm font-medium text-foreground mb-1 block">Ano</label>
               <Input
-                placeholder="Ex: 1º, 2º, 3º"
+                placeholder="Ex: 1, 2 ou 3"
                 value={ano}
-                onChange={(e) => setAno(e.target.value)}
+                onChange={(e) => handleAnoChange(e.target.value)}
                 className="rounded-xl"
+                maxLength={2}
               />
             </div>
             <div>
               <label className="text-sm font-medium text-foreground mb-1 block">Turma</label>
               <Input
-                placeholder="Ex: 62-1"
+                placeholder="Ex: 621 (fica 62-1)"
                 value={turma}
-                onChange={(e) => setTurma(e.target.value)}
+                onChange={(e) => handleTurmaChange(e.target.value)}
                 className="rounded-xl"
+                maxLength={4}
               />
             </div>
             <div>
               <label className="text-sm font-medium text-foreground mb-1 block">Curso</label>
-              <Input
-                placeholder="Ex: Informática"
+              <select
                 value={curso}
                 onChange={(e) => setCurso(e.target.value)}
-                className="rounded-xl"
-              />
+                className="flex h-10 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <option value="">Selecione o curso</option>
+                {cursosDisponiveis.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
           <div>
@@ -194,6 +291,50 @@ const ReorganizacaoSection = () => {
               className="rounded-xl"
             />
           </div>
+
+          {/* Upload de documento justificativo */}
+          <div>
+            <label className="text-sm font-medium text-foreground mb-1 block">
+              Documento Justificativo
+              <span className="ml-1 text-xs text-muted-foreground font-normal">(opcional — PDF, imagem ou Word, máx. 10 MB)</span>
+            </label>
+            {arquivo ? (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-primary/40 bg-primary/5">
+                <Paperclip className="w-4 h-4 text-primary shrink-0" />
+                <span className="text-sm text-foreground truncate flex-1">{arquivo.name}</span>
+                <span className="text-xs text-muted-foreground shrink-0">
+                  {(arquivo.size / 1024).toFixed(0)} KB
+                </span>
+                <button
+                  type="button"
+                  onClick={() => { setArquivo(null); if (arquivoRef.current) arquivoRef.current.value = ""; }}
+                  className="p-0.5 rounded hover:bg-destructive/10 transition-colors"
+                  title="Remover arquivo"
+                >
+                  <X className="w-4 h-4 text-destructive" />
+                </button>
+              </div>
+            ) : (
+              <label
+                htmlFor="upload-arquivo"
+                className="flex items-center gap-3 px-4 py-3 rounded-xl border-2 border-dashed border-border hover:border-primary/50 hover:bg-primary/5 cursor-pointer transition-all group"
+              >
+                <Paperclip className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                <span className="text-sm text-muted-foreground group-hover:text-foreground transition-colors">
+                  Clique para anexar um documento de justificativa
+                </span>
+                <input
+                  id="upload-arquivo"
+                  ref={arquivoRef}
+                  type="file"
+                  className="hidden"
+                  accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                  onChange={(e) => setArquivo(e.target.files?.[0] ?? null)}
+                />
+              </label>
+            )}
+          </div>
+
           {erro && <p className="text-sm text-destructive">{erro}</p>}
           <Button onClick={handleAdicionar} disabled={salvando} className="rounded-xl gap-2 w-full">
             <Plus className="w-4 h-4" /> {salvando ? "Salvando..." : "Registrar e Reorganizar"}
@@ -215,6 +356,7 @@ const ReorganizacaoSection = () => {
               <TableHead>Curso</TableHead>
               <TableHead>Problema</TableHead>
               <TableHead>Salas Reorganizadas</TableHead>
+              <TableHead>Documento</TableHead>
               <TableHead>Data</TableHead>
               <TableHead className="text-right">Ações</TableHead>
             </TableRow>
@@ -242,18 +384,35 @@ const ReorganizacaoSection = () => {
                 <TableCell className="text-sm">{reg.curso}</TableCell>
                 <TableCell className="text-sm">{reg.problema}</TableCell>
                 <TableCell className="text-sm text-primary">{reg.salas}</TableCell>
+                <TableCell className="text-sm">
+                  {reg.arquivo_nome ? (
+                    <a
+                      href={`/api/reorganizacao/${reg.id}/arquivo?key=${import.meta.env.VITE_API_KEY || "cimol_secure_token_abc123"}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-primary hover:underline"
+                      title={reg.arquivo_nome}
+                    >
+                      <Download className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate max-w-[120px]">{reg.arquivo_nome}</span>
+                    </a>
+                  ) : (
+                    <span className="text-muted-foreground text-xs">—</span>
+                  )}
+                </TableCell>
                 <TableCell className="text-sm text-muted-foreground">{reg.data}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
-                    <button className="p-2 rounded-lg hover:bg-muted transition-colors">
+                    <button className="p-2 rounded-lg hover:bg-muted transition-colors" title="Visualizar">
                       <Eye className="w-4 h-4 text-muted-foreground" />
                     </button>
-                    <button className="p-2 rounded-lg hover:bg-muted transition-colors">
+                    <button className="p-2 rounded-lg hover:bg-muted transition-colors" title="Editar">
                       <Edit className="w-4 h-4 text-muted-foreground" />
                     </button>
                     <button
                       onClick={() => handleDeletar(reg.id)}
                       className="p-2 rounded-lg hover:bg-destructive/10 transition-colors"
+                      title="Excluir"
                     >
                       <Trash2 className="w-4 h-4 text-destructive" />
                     </button>
