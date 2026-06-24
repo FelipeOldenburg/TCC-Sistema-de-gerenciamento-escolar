@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { AlertCircle, ArrowLeft, Building2, Calendar, CalendarDays, Download, Edit, Eye, LogOut, Paperclip, Plus, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, Building2, CalendarDays, DoorOpen, Download, Edit, Eye, FileUp, LogOut, Paperclip, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import LoginPage from "./LoginPage";
 import cimolLogo from "@/assets/cimol-logo.png";
+import BlocosSection from "@/components/admin/BlocosSection";
+import SalasSection from "@/components/admin/SalasSection";
+import UraniaImportacoesSection from "@/components/admin/UraniaImportacoesSection";
+import { apiFetch, type SessionUser, type UserRole } from "@/lib/api";
 
-type AdminTab = "horarios" | "eventos" | "setores" | "reorganizacao";
+type AdminTab = "horarios" | "blocos" | "salas" | "eventos" | "setores" | "reorganizacao";
 
 type ReorganizacaoRegistro = {
   id: number;
@@ -21,11 +24,13 @@ type ReorganizacaoRegistro = {
   data: string;
 };
 
-const sidebarItems = [
-  { id: "horarios" as AdminTab, label: "Horários", icon: Calendar },
-  { id: "eventos" as AdminTab, label: "Eventos", icon: CalendarDays },
-  { id: "setores" as AdminTab, label: "Setores", icon: Building2 },
-  { id: "reorganizacao" as AdminTab, label: "Reorganização", icon: AlertCircle },
+const sidebarItems: { id: AdminTab; label: string; icon: typeof FileUp; roles: UserRole[] }[] = [
+  { id: "horarios", label: "URÂNIA UP", icon: FileUp, roles: ["ADMIN", "CPD"] },
+  { id: "blocos", label: "Blocos", icon: Building2, roles: ["CPD"] },
+  { id: "salas", label: "Salas", icon: DoorOpen, roles: ["CPD"] },
+  { id: "eventos", label: "Eventos", icon: CalendarDays, roles: ["CPD"] },
+  { id: "setores", label: "Setores", icon: Building2, roles: ["CPD"] },
+  { id: "reorganizacao", label: "Reorganização", icon: AlertCircle, roles: ["CPD"] },
 ];
 
 const ReorganizacaoSection = () => {
@@ -121,11 +126,7 @@ const ReorganizacaoSection = () => {
     setCarregando(true);
 
     try {
-      const resposta = await fetch("/api/reorganizacao", {
-        headers: {
-          "x-api-key": import.meta.env.VITE_API_KEY || "cimol_secure_token_abc123",
-        },
-      });
+      const resposta = await fetch("/api/reorganizacao");
 
       if (!resposta.ok) {
         throw new Error("Não foi possível carregar os registros.");
@@ -166,9 +167,6 @@ const ReorganizacaoSection = () => {
 
       const resposta = await fetch("/api/reorganizacao", {
         method: "POST",
-        headers: {
-          "x-api-key": import.meta.env.VITE_API_KEY || "cimol_secure_token_abc123",
-        },
         body: formData, // sem Content-Type manual — browser define multipart automaticamente
       });
 
@@ -199,9 +197,6 @@ const ReorganizacaoSection = () => {
     try {
       const resposta = await fetch(`/api/reorganizacao/${id}`, {
         method: "DELETE",
-        headers: {
-          "x-api-key": import.meta.env.VITE_API_KEY || "cimol_secure_token_abc123",
-        },
       });
 
       if (!resposta.ok) {
@@ -387,7 +382,7 @@ const ReorganizacaoSection = () => {
                 <TableCell className="text-sm">
                   {reg.arquivo_nome ? (
                     <a
-                      href={`/api/reorganizacao/${reg.id}/arquivo?key=${import.meta.env.VITE_API_KEY || "cimol_secure_token_abc123"}`}
+                      href={`/api/reorganizacao/${reg.id}/arquivo`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center gap-1 text-primary hover:underline"
@@ -459,40 +454,37 @@ const GenericAdmin = ({ title, description }: { title: string; description: stri
 
 const AdminPageComponent = () => {
   const navigate = useNavigate();
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [adminUser, setAdminUser] = useState("");
-  const [activeTab, setActiveTab] = useState<AdminTab>("reorganizacao");
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [activeTab, setActiveTab] = useState<AdminTab>("horarios");
 
   useEffect(() => {
-    checkAuth();
-  }, []);
+    apiFetch<{ user: SessionUser }>("/api/auth/me")
+      .then((response) => setUser(response.user))
+      .catch(() => navigate("/login", { replace: true }))
+      .finally(() => setCheckingAuth(false));
+  }, [navigate]);
 
-  const checkAuth = () => {
-    const loggedIn = localStorage.getItem("admin_logged_in") === "true";
-    const user = localStorage.getItem("admin_user") || "";
-    setIsAuthenticated(loggedIn);
-    setAdminUser(user);
+  const handleLogout = async () => {
+    await apiFetch("/api/auth/logout", { method: "POST", body: JSON.stringify({}) }).catch(() => null);
+    setUser(null);
+    navigate("/", { replace: true });
   };
 
-  if (!isAuthenticated && localStorage.getItem("admin_logged_in") === "true") {
-    checkAuth();
+  if (checkingAuth || !user) {
+    return <div className="min-h-screen bg-background flex items-center justify-center text-muted-foreground">Verificando acesso...</div>;
   }
 
-  const handleLogout = () => {
-    localStorage.removeItem("admin_logged_in");
-    localStorage.removeItem("admin_user");
-    setIsAuthenticated(false);
-    navigate("/");
-  };
-
-  if (!isAuthenticated && localStorage.getItem("admin_logged_in") !== "true") {
-    return <LoginPage />;
-  }
+  const visibleItems = sidebarItems.filter((item) => item.roles.includes(user.papel));
 
   const renderContent = () => {
     switch (activeTab) {
       case "horarios":
-        return <GenericAdmin title="Horários" description="Gerenciar horários de aula" />;
+        return <UraniaImportacoesSection user={user} />;
+      case "blocos":
+        return <BlocosSection />;
+      case "salas":
+        return <SalasSection />;
       case "eventos":
         return <GenericAdmin title="Eventos" description="Gerenciar eventos escolares" />;
       case "setores":
@@ -517,7 +509,7 @@ const AdminPageComponent = () => {
           </div>
         </div>
         <nav className="flex-1 p-3 space-y-1">
-          {sidebarItems.map((item) => {
+          {visibleItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
             return (
@@ -538,7 +530,8 @@ const AdminPageComponent = () => {
         </nav>
         <div className="p-3 border-t border-border space-y-2">
           <div className="text-xs text-muted-foreground px-3 py-2 bg-muted/30 rounded-lg truncate">
-            {adminUser}
+            <span className="font-medium text-foreground">{user.papel === "ADMIN" ? "Operador URÂNIA" : user.nome}</span>
+            <span className="block">{user.papel === "CPD" ? "CPD" : "Somente upload"}</span>
           </div>
           <button
             onClick={handleLogout}
@@ -562,7 +555,7 @@ const AdminPageComponent = () => {
           <div className="w-8 h-8 rounded-lg overflow-hidden bg-accent/20 p-0.5">
             <img src={cimolLogo} alt="CIMOL" className="w-full h-full object-contain" />
           </div>
-          <span className="font-heading font-bold text-sm">Admin</span>
+          <span className="font-heading font-bold text-sm">{user.papel === "CPD" ? "CPD" : "URÂNIA"}</span>
         </div>
         <Link to="/" className="text-xs text-primary font-medium">Voltar</Link>
       </div>
@@ -573,15 +566,15 @@ const AdminPageComponent = () => {
         </div>
       </main>
 
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-card border-t border-border flex justify-around p-2 z-30">
-        {sidebarItems.map((item) => {
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-card border-t border-border flex justify-start overflow-x-auto p-2 z-30">
+        {visibleItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
           return (
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}
-              className={`flex flex-col items-center gap-0.5 p-1.5 rounded-lg text-[10px] ${
+              className={`flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-lg text-[10px] shrink-0 ${
                 isActive ? "text-primary" : "text-muted-foreground"
               }`}
             >

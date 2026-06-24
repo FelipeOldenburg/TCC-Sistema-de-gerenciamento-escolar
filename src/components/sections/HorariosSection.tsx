@@ -1,64 +1,131 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, Armchair, Clock, Cpu, FlaskConical, Leaf, Monitor, Paintbrush, Wrench, Zap } from "lucide-react";
+import { apiFetch } from "@/lib/api";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Monitor, Wrench, FlaskConical, Cpu, Zap, Armchair, Paintbrush, Leaf, ArrowLeft, Clock } from "lucide-react";
 
-const cursos = [
-  { id: "informatica", nome: "Informática", icon: Monitor, cor: "from-blue-500 to-cyan-400" },
-  { id: "mecanica", nome: "Mecânica", icon: Wrench, cor: "from-gray-600 to-gray-400" },
-  { id: "quimica", nome: "Química", icon: FlaskConical, cor: "from-emerald-500 to-teal-400" },
-  { id: "eletronica", nome: "Eletrônica", icon: Cpu, cor: "from-violet-500 to-purple-400" },
-  { id: "eletrotecnica", nome: "Eletrotécnica", icon: Zap, cor: "from-amber-500 to-yellow-400" },
-  { id: "moveis", nome: "Móveis", icon: Armchair, cor: "from-orange-500 to-amber-400" },
-  { id: "design-moveis", nome: "Design de Móveis", icon: Paintbrush, cor: "from-pink-500 to-rose-400" },
-  { id: "meio-ambiente", nome: "Meio Ambiente", icon: Leaf, cor: "from-green-600 to-emerald-400" },
-];
+type ClassOption = { turma: string; curso: string | null; ano: string | null };
+type PublishedSchedule = {
+  id: number;
+  turma: string;
+  curso: string | null;
+  ano: string | null;
+  dia: string;
+  periodo: number;
+  hora_inicio: string | null;
+  disciplina: string;
+  professor: string | null;
+  sala: string | null;
+  bloco: string | null;
+};
+type PublishedResponse = { turmas: ClassOption[]; horarios: PublishedSchedule[] };
 
-const horariosMock = [
-  { horario: "07:30 - 08:20", disciplina: "Matemática", turma: "62-1", sala: "Lab 01", professor: "Prof. Silva" },
-  { horario: "08:20 - 09:10", disciplina: "Programação Web", turma: "62-1", sala: "Lab Info 02", professor: "Prof. Santos" },
-  { horario: "09:10 - 10:00", disciplina: "Banco de Dados", turma: "62-1", sala: "Lab Info 01", professor: "Prof. Oliveira" },
-  { horario: "10:20 - 11:10", disciplina: "Redes", turma: "62-1", sala: "Lab Info 03", professor: "Prof. Costa" },
-  { horario: "11:10 - 12:00", disciplina: "Português", turma: "62-1", sala: "Sala 15", professor: "Prof. Lima" },
-];
+const courseVisuals = {
+  "Informática": { icon: Monitor, color: "from-blue-500 to-cyan-400" },
+  "Mecânica": { icon: Wrench, color: "from-gray-600 to-gray-400" },
+  "Química": { icon: FlaskConical, color: "from-emerald-500 to-teal-400" },
+  "Eletrônica": { icon: Cpu, color: "from-violet-500 to-purple-400" },
+  "Eletrotécnica": { icon: Zap, color: "from-amber-500 to-yellow-400" },
+  "Móveis": { icon: Armchair, color: "from-orange-500 to-amber-400" },
+  "Design de Móveis": { icon: Paintbrush, color: "from-pink-500 to-rose-400" },
+  "Meio Ambiente": { icon: Leaf, color: "from-green-600 to-emerald-400" },
+} as const;
+
+const dayLabels: Record<string, string> = {
+  SEG: "Segunda",
+  TER: "Terça",
+  QUA: "Quarta",
+  QUI: "Quinta",
+  SEX: "Sexta",
+  SAB: "Sábado",
+  DOM: "Domingo",
+};
 
 const HorariosSection = () => {
   const [view, setView] = useState<"cursos" | "tabela">("cursos");
-  const [cursoSelecionado, setCursoSelecionado] = useState("");
-  const [ano, setAno] = useState("");
-  const [turma, setTurma] = useState("");
+  const [options, setOptions] = useState<ClassOption[]>([]);
+  const [schedules, setSchedules] = useState<PublishedSchedule[]>([]);
+  const [course, setCourse] = useState("");
+  const [year, setYear] = useState("");
+  const [className, setClassName] = useState("");
+  const [loadingOptions, setLoadingOptions] = useState(true);
+  const [loadingSchedules, setLoadingSchedules] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    apiFetch<PublishedResponse>("/api/horarios/publicados?apenas_opcoes=1")
+      .then((data) => setOptions(data.turmas))
+      .catch((err) => setError(err instanceof Error ? err.message : "Erro ao carregar horários."))
+      .finally(() => setLoadingOptions(false));
+  }, []);
+
+  useEffect(() => {
+    if (!className) {
+      setSchedules([]);
+      return;
+    }
+    setLoadingSchedules(true);
+    apiFetch<PublishedResponse>(`/api/horarios/publicados?turma=${encodeURIComponent(className)}`)
+      .then((data) => {
+        setSchedules(data.horarios);
+        setError("");
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : "Erro ao carregar a turma."))
+      .finally(() => setLoadingSchedules(false));
+  }, [className]);
+
+  const courses = useMemo(
+    () => [...new Set(options.map((item) => item.curso || "Outros"))].sort((a, b) => a.localeCompare(b, "pt-BR")),
+    [options]
+  );
+  const years = useMemo(
+    () => [...new Set(options.filter((item) => (item.curso || "Outros") === course).map((item) => item.ano || "Não informado"))].sort(),
+    [options, course]
+  );
+  const classes = useMemo(
+    () => options.filter((item) => (item.curso || "Outros") === course && (!year || (item.ano || "Não informado") === year)),
+    [options, course, year]
+  );
+
+  const openCourse = (selectedCourse: string) => {
+    const first = options.find((item) => (item.curso || "Outros") === selectedCourse);
+    setCourse(selectedCourse);
+    setYear(first?.ano || "Não informado");
+    setClassName(first?.turma || "");
+    setView("tabela");
+  };
+
+  const changeCourse = (selectedCourse: string) => {
+    const first = options.find((item) => (item.curso || "Outros") === selectedCourse);
+    setCourse(selectedCourse);
+    setYear(first?.ano || "Não informado");
+    setClassName(first?.turma || "");
+  };
+
+  const changeYear = (selectedYear: string) => {
+    const first = options.find((item) => (item.curso || "Outros") === course && (item.ano || "Não informado") === selectedYear);
+    setYear(selectedYear);
+    setClassName(first?.turma || "");
+  };
 
   if (view === "cursos") {
     return (
       <div className="animate-fade-in">
         <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-            <Clock className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h2 className="text-2xl font-heading font-bold text-foreground">Horários de Aula</h2>
-            <p className="text-sm text-muted-foreground">Selecione o curso para ver os horários</p>
-          </div>
+          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center"><Clock className="w-5 h-5 text-primary" /></div>
+          <div><h2 className="text-2xl font-heading font-bold text-foreground">Horários de Aula</h2><p className="text-sm text-muted-foreground">Somente horários aprovados pelo CPD</p></div>
         </div>
+        {loadingOptions && <div className="glass-card rounded-xl p-12 text-center text-muted-foreground">Carregando horários publicados...</div>}
+        {error && <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">{error}</div>}
+        {!loadingOptions && !error && !courses.length && <div className="glass-card rounded-xl p-12 text-center"><p className="font-medium">Nenhum horário publicado.</p><p className="text-sm text-muted-foreground mt-1">Os horários aparecerão aqui após aprovação do CPD.</p></div>}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {cursos.map((curso, i) => {
-            const Icon = curso.icon;
-            return (
-              <button
-                key={curso.id}
-                onClick={() => {
-                  setCursoSelecionado(curso.id);
-                  setView("tabela");
-                }}
-                className="glass-card glass-card-hover rounded-xl p-6 flex flex-col items-center gap-4 group"
-                style={{ animationDelay: `${i * 60}ms` }}
-              >
-                <div className={`w-14 h-14 rounded-2xl bg-gradient-to-br ${curso.cor} flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-300`}>
-                  <Icon className="w-7 h-7 text-primary-foreground" />
-                </div>
-                <span className="font-semibold text-card-foreground text-sm text-center">{curso.nome}</span>
-              </button>
-            );
+          {courses.map((courseName, index) => {
+            const visual = courseVisuals[courseName as keyof typeof courseVisuals] || { icon: Clock, color: "from-slate-500 to-slate-400" };
+            const Icon = visual.icon;
+            return <button key={courseName} onClick={() => openCourse(courseName)} className="glass-card glass-card-hover rounded-xl p-6 flex flex-col items-center gap-4 group" style={{ animationDelay: `${index * 60}ms` }}>
+              <div className={`w-14 h-14 rounded-2xl bg-gradient-to-br ${visual.color} flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-300`}><Icon className="w-7 h-7 text-primary-foreground" /></div>
+              <span className="font-semibold text-card-foreground text-sm text-center">{courseName}</span>
+            </button>;
           })}
         </div>
       </div>
@@ -67,68 +134,22 @@ const HorariosSection = () => {
 
   return (
     <div className="animate-fade-in">
-      <button
-        onClick={() => setView("cursos")}
-        className="flex items-center gap-2 text-primary hover:text-primary/80 text-sm mb-4 font-medium transition-colors"
-      >
-        <ArrowLeft className="w-4 h-4" />
-        Voltar aos cursos
-      </button>
+      <button onClick={() => setView("cursos")} className="flex items-center gap-2 text-primary hover:text-primary/80 text-sm mb-4 font-medium"><ArrowLeft className="w-4 h-4" /> Voltar aos cursos</button>
       <div className="glass-card rounded-2xl p-6">
         <h2 className="text-xl font-heading font-bold text-card-foreground mb-6">Selecionar a turma</h2>
         <div className="flex flex-wrap gap-4 mb-6">
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Curso</label>
-            <Select value={cursoSelecionado} onValueChange={setCursoSelecionado}>
-              <SelectTrigger className="w-[180px]"><SelectValue placeholder="Selecione" /></SelectTrigger>
-              <SelectContent>
-                {cursos.map(c => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Ano</label>
-            <Select value={ano} onValueChange={setAno}>
-              <SelectTrigger className="w-[140px]"><SelectValue placeholder="Selecione" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1">1° Ano</SelectItem>
-                <SelectItem value="2">2° Ano</SelectItem>
-                <SelectItem value="3">3° Ano</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Turma</label>
-            <Select value={turma} onValueChange={setTurma}>
-              <SelectTrigger className="w-[120px]"><SelectValue placeholder="Selecione" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="62-1">62-1</SelectItem>
-                <SelectItem value="62-2">62-2</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          <div className="space-y-1.5"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Curso</label><Select value={course} onValueChange={changeCourse}><SelectTrigger className="w-[200px]"><SelectValue /></SelectTrigger><SelectContent>{courses.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select></div>
+          <div className="space-y-1.5"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Ano</label><Select value={year} onValueChange={changeYear}><SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger><SelectContent>{years.map((item) => <SelectItem key={item} value={item}>{item === "Não informado" ? item : `${item}º ano`}</SelectItem>)}</SelectContent></Select></div>
+          <div className="space-y-1.5"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Turma</label><Select value={className} onValueChange={setClassName}><SelectTrigger className="w-[180px]"><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent>{classes.map((item) => <SelectItem key={item.turma} value={item.turma}>{item.turma}</SelectItem>)}</SelectContent></Select></div>
         </div>
-        <div className="rounded-xl overflow-hidden border border-border">
+        {error && <p className="text-sm text-destructive mb-4">{error}</p>}
+        <div className="rounded-xl overflow-hidden border border-border overflow-x-auto">
           <Table>
-            <TableHeader>
-              <TableRow className="bg-primary text-primary-foreground">
-                <TableHead className="text-primary-foreground font-semibold">Horário</TableHead>
-                <TableHead className="text-primary-foreground font-semibold">Disciplina</TableHead>
-                <TableHead className="text-primary-foreground font-semibold">Turma</TableHead>
-                <TableHead className="text-primary-foreground font-semibold">Sala</TableHead>
-                <TableHead className="text-primary-foreground font-semibold">Professor</TableHead>
-              </TableRow>
-            </TableHeader>
+            <TableHeader><TableRow className="bg-primary text-primary-foreground"><TableHead className="text-primary-foreground">Dia</TableHead><TableHead className="text-primary-foreground">Horário</TableHead><TableHead className="text-primary-foreground">Disciplina</TableHead><TableHead className="text-primary-foreground">Turma</TableHead><TableHead className="text-primary-foreground">Sala</TableHead><TableHead className="text-primary-foreground">Professor</TableHead></TableRow></TableHeader>
             <TableBody>
-              {horariosMock.map((h, i) => (
-                <TableRow key={i} className="hover:bg-primary/5 transition-colors">
-                  <TableCell className="font-semibold text-primary">{h.horario}</TableCell>
-                  <TableCell className="font-medium">{h.disciplina}</TableCell>
-                  <TableCell>{h.turma}</TableCell>
-                  <TableCell>{h.sala}</TableCell>
-                  <TableCell>{h.professor}</TableCell>
-                </TableRow>
-              ))}
+              {loadingSchedules && <TableRow><TableCell colSpan={6} className="text-center py-8">Carregando...</TableCell></TableRow>}
+              {!loadingSchedules && !schedules.length && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Nenhuma aula encontrada para esta turma.</TableCell></TableRow>}
+              {schedules.map((schedule) => <TableRow key={schedule.id} className="hover:bg-primary/5"><TableCell className="font-medium">{dayLabels[schedule.dia] || schedule.dia}</TableCell><TableCell className="font-semibold text-primary">{schedule.hora_inicio || `${schedule.periodo}ª aula`}</TableCell><TableCell>{schedule.disciplina}</TableCell><TableCell>{schedule.turma}</TableCell><TableCell>{schedule.sala || "—"}</TableCell><TableCell>{schedule.professor || "—"}</TableCell></TableRow>)}
             </TableBody>
           </Table>
         </div>

@@ -43,3 +43,147 @@ CREATE TABLE IF NOT EXISTS reorganizacao_salas_relacionadas (
   PRIMARY KEY (reorganizacao_id, sala),
   FOREIGN KEY (reorganizacao_id) REFERENCES reorganizacoes(id) ON DELETE CASCADE
 );
+
+-- =========================================================================
+-- Usuários e sessões do painel administrativo.
+-- Os usuários iniciais são criados pelo servidor a partir das variáveis de
+-- ambiente, pois senhas nunca devem ser mantidas em texto puro neste arquivo.
+-- =========================================================================
+CREATE TABLE IF NOT EXISTS usuarios (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  nome        VARCHAR(120) NOT NULL,
+  usuario     VARCHAR(80) NOT NULL UNIQUE,
+  senha_hash  VARCHAR(128) NOT NULL,
+  senha_salt  VARCHAR(64) NOT NULL,
+  papel       ENUM('ADMIN', 'CPD') NOT NULL,
+  ativo       BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sessoes (
+  token_hash  CHAR(64) PRIMARY KEY,
+  usuario_id  INT NOT NULL,
+  expires_at  DATETIME NOT NULL,
+  created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_sessoes_usuario (usuario_id),
+  INDEX idx_sessoes_expiracao (expires_at),
+  FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE
+);
+
+-- =========================================================================
+-- Blocos, salas e softwares instalados.
+-- =========================================================================
+CREATE TABLE IF NOT EXISTS blocos (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  nome        VARCHAR(120) NOT NULL UNIQUE,
+  descricao   TEXT NULL,
+  created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS salas (
+  id                    INT AUTO_INCREMENT PRIMARY KEY,
+  bloco_id              INT NOT NULL,
+  nome                   VARCHAR(120) NOT NULL,
+  andar                  VARCHAR(40) NOT NULL,
+  capacidade             INT UNSIGNED NOT NULL,
+  tipo                   VARCHAR(80) NOT NULL,
+  possui_computadores    BOOLEAN NOT NULL DEFAULT FALSE,
+  possui_data_show       BOOLEAN NOT NULL DEFAULT FALSE,
+  possui_internet        BOOLEAN NOT NULL DEFAULT FALSE,
+  possui_ar_condicionado BOOLEAN NOT NULL DEFAULT FALSE,
+  observacoes            TEXT NULL,
+  created_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_salas_bloco_nome (bloco_id, nome),
+  INDEX idx_salas_recursos (possui_computadores, possui_data_show, possui_internet, possui_ar_condicionado),
+  INDEX idx_salas_capacidade (capacidade),
+  FOREIGN KEY (bloco_id) REFERENCES blocos(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS softwares (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  nome        VARCHAR(120) NOT NULL UNIQUE,
+  created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sala_softwares (
+  sala_id      INT NOT NULL,
+  software_id  INT NOT NULL,
+  PRIMARY KEY (sala_id, software_id),
+  FOREIGN KEY (sala_id) REFERENCES salas(id) ON DELETE CASCADE,
+  FOREIGN KEY (software_id) REFERENCES softwares(id) ON DELETE CASCADE
+);
+
+-- =========================================================================
+-- Importações do URÂNIA UP e área temporária de horários.
+-- Cada lote é revisado antes de se tornar a versão pública ativa.
+-- =========================================================================
+CREATE TABLE IF NOT EXISTS importacoes_horarios (
+  id                 INT AUTO_INCREMENT PRIMARY KEY,
+  fonte              ENUM('HTML', 'XML', 'MISTO') NOT NULL,
+  titulo             VARCHAR(255) NOT NULL,
+  escopo_chave       VARCHAR(255) NOT NULL,
+  codigo_escola      VARCHAR(25) NULL,
+  codigo_turno       VARCHAR(3) NULL,
+  nome_turno         VARCHAR(80) NULL,
+  status             ENUM('PENDENTE', 'APROVADA', 'REJEITADA') NOT NULL DEFAULT 'PENDENTE',
+  ativa              BOOLEAN NOT NULL DEFAULT FALSE,
+  lote_hash          CHAR(64) NOT NULL,
+  total_arquivos     INT UNSIGNED NOT NULL DEFAULT 0,
+  total_horarios     INT UNSIGNED NOT NULL DEFAULT 0,
+  total_turmas       INT UNSIGNED NOT NULL DEFAULT 0,
+  avisos_json        JSON NULL,
+  observacoes_envio  TEXT NULL,
+  motivo_rejeicao    TEXT NULL,
+  enviado_por        INT NOT NULL,
+  revisado_por       INT NULL,
+  revisado_em        DATETIME NULL,
+  publicado_em       DATETIME NULL,
+  created_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_importacoes_status_data (status, created_at),
+  INDEX idx_importacoes_publicacao (ativa, status, escopo_chave),
+  INDEX idx_importacoes_hash (lote_hash),
+  FOREIGN KEY (enviado_por) REFERENCES usuarios(id) ON DELETE RESTRICT,
+  FOREIGN KEY (revisado_por) REFERENCES usuarios(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS importacao_arquivos (
+  id             INT AUTO_INCREMENT PRIMARY KEY,
+  importacao_id  INT NOT NULL,
+  nome           VARCHAR(255) NOT NULL,
+  mime_type      VARCHAR(120) NOT NULL,
+  tamanho        INT UNSIGNED NOT NULL,
+  sha256         CHAR(64) NOT NULL,
+  conteudo       LONGBLOB NOT NULL,
+  created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_importacao_arquivos_importacao (importacao_id),
+  FOREIGN KEY (importacao_id) REFERENCES importacoes_horarios(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS horarios_importados (
+  id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+  importacao_id   INT NOT NULL,
+  categoria       ENUM('TURMA', 'COORDENACAO', 'REUNIAO', 'OUTRO') NOT NULL DEFAULT 'TURMA',
+  turma           VARCHAR(120) NOT NULL,
+  curso           VARCHAR(120) NULL,
+  ano             VARCHAR(20) NULL,
+  dia             VARCHAR(3) NOT NULL,
+  periodo         TINYINT UNSIGNED NOT NULL,
+  hora_inicio     TIME NULL,
+  disciplina      VARCHAR(255) NOT NULL,
+  professor       VARCHAR(255) NULL,
+  ambiente        VARCHAR(120) NULL,
+  sala_id         INT NULL,
+  tipo_turma      VARCHAR(20) NULL,
+  tipo_disciplina VARCHAR(30) NULL,
+  valor_original  TEXT NULL,
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_horarios_importacao (importacao_id),
+  INDEX idx_horarios_publicos (categoria, turma, dia, periodo),
+  INDEX idx_horarios_sala (sala_id),
+  FOREIGN KEY (importacao_id) REFERENCES importacoes_horarios(id) ON DELETE CASCADE,
+  FOREIGN KEY (sala_id) REFERENCES salas(id) ON DELETE SET NULL
+);
