@@ -1,16 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { AlertCircle, ArrowLeft, Building2, CalendarDays, DoorOpen, Download, Edit, Eye, FileUp, LogOut, Paperclip, Plus, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, Building2, CalendarDays, DoorOpen, Download, Edit, Eye, FileUp, LogOut, MessageSquareWarning, Paperclip, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import cimolLogo from "@/assets/cimol-logo.png";
 import BlocosSection from "@/components/admin/BlocosSection";
+import EventosAdminSection from "@/components/admin/EventosAdminSection";
+import OuvidoriaAdminSection from "@/components/admin/OuvidoriaAdminSection";
 import SalasSection from "@/components/admin/SalasSection";
+import SetoresAdminSection from "@/components/admin/SetoresAdminSection";
 import UraniaImportacoesSection from "@/components/admin/UraniaImportacoesSection";
-import { apiFetch, type SessionUser, type UserRole } from "@/lib/api";
+import { apiFetch, apiUrl, type SessionUser, type UserRole } from "@/lib/api";
 
-type AdminTab = "horarios" | "blocos" | "salas" | "eventos" | "setores" | "reorganizacao";
+type AdminTab = "horarios" | "blocos" | "salas" | "eventos" | "setores" | "ouvidoria" | "reorganizacao";
 
 type ReorganizacaoRegistro = {
   id: number;
@@ -30,6 +33,7 @@ const sidebarItems: { id: AdminTab; label: string; icon: typeof FileUp; roles: U
   { id: "salas", label: "Salas", icon: DoorOpen, roles: ["CPD"] },
   { id: "eventos", label: "Eventos", icon: CalendarDays, roles: ["CPD"] },
   { id: "setores", label: "Setores", icon: Building2, roles: ["CPD"] },
+  { id: "ouvidoria", label: "Ouvidoria", icon: MessageSquareWarning, roles: ["CPD"] },
   { id: "reorganizacao", label: "Reorganização", icon: AlertCircle, roles: ["CPD"] },
 ];
 
@@ -126,14 +130,14 @@ const ReorganizacaoSection = () => {
     setCarregando(true);
 
     try {
-      const resposta = await fetch("/api/reorganizacao");
+      const resposta = await fetch(apiUrl("/api/reorganizacao?page_size=100"), { credentials: "include" });
 
       if (!resposta.ok) {
         throw new Error("Não foi possível carregar os registros.");
       }
 
       const dados = await resposta.json();
-      setRegistros(dados);
+      setRegistros(Array.isArray(dados) ? dados : dados.items);
     } catch (error) {
       setErro(error instanceof Error ? error.message : "Erro ao carregar registros.");
     } finally {
@@ -165,7 +169,8 @@ const ReorganizacaoSection = () => {
       formData.append("salas", salas);
       if (arquivo) formData.append("arquivo", arquivo);
 
-      const resposta = await fetch("/api/reorganizacao", {
+      const resposta = await fetch(apiUrl("/api/reorganizacao"), {
+        credentials: "include",
         method: "POST",
         body: formData, // sem Content-Type manual — browser define multipart automaticamente
       });
@@ -195,7 +200,8 @@ const ReorganizacaoSection = () => {
     setErro("");
 
     try {
-      const resposta = await fetch(`/api/reorganizacao/${id}`, {
+      const resposta = await fetch(apiUrl(`/api/reorganizacao/${id}`), {
+        credentials: "include",
         method: "DELETE",
       });
 
@@ -382,7 +388,7 @@ const ReorganizacaoSection = () => {
                 <TableCell className="text-sm">
                   {reg.arquivo_nome ? (
                     <a
-                      href={`/api/reorganizacao/${reg.id}/arquivo`}
+                      href={apiUrl(`/api/reorganizacao/${reg.id}/arquivo`)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center gap-1 text-primary hover:underline"
@@ -486,9 +492,11 @@ const AdminPageComponent = () => {
       case "salas":
         return <SalasSection />;
       case "eventos":
-        return <GenericAdmin title="Eventos" description="Gerenciar eventos escolares" />;
+        return <EventosAdminSection />;
       case "setores":
-        return <GenericAdmin title="Setores" description="Gerenciar setores da escola" />;
+        return <SetoresAdminSection />;
+      case "ouvidoria":
+        return <OuvidoriaAdminSection />;
       case "reorganizacao":
         return <ReorganizacaoSection />;
     }
@@ -557,7 +565,13 @@ const AdminPageComponent = () => {
           </div>
           <span className="font-heading font-bold text-sm">{user.papel === "CPD" ? "CPD" : "URÂNIA"}</span>
         </div>
-        <Link to="/" className="text-xs text-primary font-medium">Voltar</Link>
+        <div className="flex items-center gap-3">
+          <button onClick={handleLogout} className="flex items-center gap-1 text-xs text-destructive font-medium">
+            <LogOut className="w-3.5 h-3.5" />
+            Sair
+          </button>
+          <Link to="/" className="text-xs text-primary font-medium">Voltar</Link>
+        </div>
       </div>
 
       <main className="flex-1 p-6 md:p-8 overflow-auto md:mt-0 mt-14">

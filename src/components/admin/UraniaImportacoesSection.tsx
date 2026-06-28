@@ -40,6 +40,11 @@ type ImportSummary = {
   nome_turno: string | null;
 };
 
+type PaginatedResponse<T> = {
+  items: T[];
+  paginacao: { pagina: number; por_pagina: number; total: number };
+};
+
 type Schedule = {
   id: number;
   categoria: string;
@@ -100,7 +105,8 @@ export default function UraniaImportacoesSection({ user }: { user: SessionUser }
   const loadImports = async () => {
     setLoading(true);
     try {
-      setImports(await apiFetch<ImportSummary[]>("/api/importacoes"));
+      const data = await apiFetch<ImportSummary[] | PaginatedResponse<ImportSummary>>("/api/importacoes?page_size=100");
+      setImports(Array.isArray(data) ? data : data.items);
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar importações.");

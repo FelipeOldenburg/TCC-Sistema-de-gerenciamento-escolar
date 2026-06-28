@@ -9,7 +9,7 @@ export default defineConfig(({ mode }) => ({
     host: "::",
     port: 8080,
     proxy: {
-      "/api": "http://localhost:3001",
+      "/api": process.env.VITE_API_PROXY_TARGET || "http://localhost:3001",
     },
     hmr: {
       overlay: false,

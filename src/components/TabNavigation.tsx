@@ -6,7 +6,7 @@ const tabs = [
   { id: "mapa", label: "Mapa", icon: MapPin },
   { id: "eventos", label: "Eventos", icon: CalendarDays },
   { id: "setores", label: "Setores", icon: Building2 },
-  { id: "reclamacoes", label: "Feedback", icon: MessageSquareWarning },
+  { id: "reclamacoes", label: "Ouvidoria", icon: MessageSquareWarning },
 ] as const;
 
 export type TabId = (typeof tabs)[number]["id"];
@@ -35,6 +35,8 @@ const TabNavigation = ({ activeTab, onTabChange }: TabNavigationProps) => {
               key={tab.id}
               ref={isActive ? activeRef : null}
               onClick={() => onTabChange(tab.id)}
+              aria-label={tab.label}
+              aria-pressed={isActive}
               className={`flex items-center gap-2 px-5 py-3.5 text-sm font-medium transition-all relative whitespace-nowrap rounded-t-lg mt-1 ${
                 isActive
                   ? "bg-background text-foreground shadow-sm"

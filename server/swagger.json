@@ -10,6 +10,9 @@
     { "name": "Autenticação" },
     { "name": "URÂNIA UP" },
     { "name": "Horários públicos" },
+    { "name": "Eventos" },
+    { "name": "Setores" },
+    { "name": "Ouvidoria" },
     { "name": "Blocos" },
     { "name": "Salas" },
     { "name": "Reorganização" }
@@ -66,7 +69,49 @@
           "hora_inicio": { "type": "string", "nullable": true, "example": "07:30" },
           "disciplina": { "type": "string" },
           "professor": { "type": "string", "nullable": true },
+          "sala_id": { "type": "integer", "nullable": true },
+          "ambiente": { "type": "string", "nullable": true },
           "sala": { "type": "string", "nullable": true }
+        }
+      },
+      "EventoInput": {
+        "type": "object",
+        "required": ["titulo", "data_evento"],
+        "properties": {
+          "titulo": { "type": "string" },
+          "descricao": { "type": "string", "nullable": true },
+          "data_evento": { "type": "string", "format": "date" },
+          "hora_evento": { "type": "string", "nullable": true, "example": "19:30" },
+          "local": { "type": "string", "nullable": true },
+          "imagem_url": { "type": "string", "nullable": true },
+          "ativo": { "type": "boolean" }
+        }
+      },
+      "SetorInput": {
+        "type": "object",
+        "required": ["nome", "descricao"],
+        "properties": {
+          "nome": { "type": "string" },
+          "descricao": { "type": "string" },
+          "responsavel": { "type": "string", "nullable": true },
+          "localizacao": { "type": "string", "nullable": true },
+          "contato": { "type": "string", "nullable": true },
+          "horario_atendimento": { "type": "string", "nullable": true },
+          "icone": { "type": "string" },
+          "cor": { "type": "string" },
+          "ativo": { "type": "boolean" }
+        }
+      },
+      "OuvidoriaInput": {
+        "type": "object",
+        "required": ["perfil", "categoria", "assunto", "mensagem"],
+        "properties": {
+          "nome": { "type": "string", "nullable": true },
+          "perfil": { "type": "string", "enum": ["ALUNO", "DOCENTE", "RESPONSAVEL", "COMUNIDADE"] },
+          "categoria": { "type": "string", "enum": ["IDEIA", "MELHORIA", "PROBLEMA", "AVISO"] },
+          "setor_id": { "type": "integer", "nullable": true },
+          "assunto": { "type": "string" },
+          "mensagem": { "type": "string" }
         }
       }
     }
@@ -109,6 +154,32 @@
     },
     "/api/horarios/publicados": {
       "get": { "tags": ["Horários públicos"], "summary": "Consultar somente horários aprovados e ativos", "parameters": [{ "in": "query", "name": "turma", "schema": { "type": "string" } }, { "in": "query", "name": "curso", "schema": { "type": "string" } }, { "in": "query", "name": "ano", "schema": { "type": "string" } }, { "in": "query", "name": "dia", "schema": { "type": "string" } }, { "in": "query", "name": "apenas_opcoes", "schema": { "type": "boolean" } }], "responses": { "200": { "description": "Turmas e horários publicados" } } }
+    },
+    "/api/horarios/publicados/{id}/sala": {
+      "patch": { "tags": ["Horários públicos"], "summary": "Configurar sala de um horário publicado", "description": "Somente CPD. Atualiza o vínculo de sala de uma aula publicada e ativa.", "security": [{ "SessionCookie": [] }], "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "sala_id": { "type": "integer", "nullable": true } } } } } }, "responses": { "200": { "description": "Sala configurada" }, "400": { "description": "Sala inválida" }, "401": { "description": "Sem sessão" }, "403": { "description": "Papel não autorizado" }, "404": { "description": "Horário não encontrado" } } }
+    },
+    "/api/eventos": {
+      "get": { "tags": ["Eventos"], "summary": "Listar eventos publicados", "parameters": [{ "in": "query", "name": "incluir_inativos", "schema": { "type": "boolean" } }], "responses": { "200": { "description": "Eventos" } } },
+      "post": { "tags": ["Eventos"], "summary": "Cadastrar evento", "security": [{ "SessionCookie": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventoInput" } } } }, "responses": { "201": { "description": "Criado" } } }
+    },
+    "/api/eventos/{id}": {
+      "put": { "tags": ["Eventos"], "summary": "Atualizar evento", "security": [{ "SessionCookie": [] }], "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventoInput" } } } }, "responses": { "200": { "description": "Atualizado" } } },
+      "delete": { "tags": ["Eventos"], "summary": "Excluir evento", "security": [{ "SessionCookie": [] }], "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } }], "responses": { "200": { "description": "Excluído" } } }
+    },
+    "/api/setores": {
+      "get": { "tags": ["Setores"], "summary": "Listar setores publicados", "parameters": [{ "in": "query", "name": "incluir_inativos", "schema": { "type": "boolean" } }], "responses": { "200": { "description": "Setores" } } },
+      "post": { "tags": ["Setores"], "summary": "Cadastrar setor", "security": [{ "SessionCookie": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SetorInput" } } } }, "responses": { "201": { "description": "Criado" } } }
+    },
+    "/api/setores/{id}": {
+      "put": { "tags": ["Setores"], "summary": "Atualizar setor", "security": [{ "SessionCookie": [] }], "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SetorInput" } } } }, "responses": { "200": { "description": "Atualizado" } } },
+      "delete": { "tags": ["Setores"], "summary": "Excluir setor", "security": [{ "SessionCookie": [] }], "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } }], "responses": { "200": { "description": "Excluído" } } }
+    },
+    "/api/ouvidoria": {
+      "post": { "tags": ["Ouvidoria"], "summary": "Enviar manifestação", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OuvidoriaInput" } } } }, "responses": { "201": { "description": "Recebida" }, "400": { "description": "Texto inválido ou impróprio" } } },
+      "get": { "tags": ["Ouvidoria"], "summary": "Listar manifestações", "description": "Somente CPD.", "security": [{ "SessionCookie": [] }], "parameters": [{ "in": "query", "name": "status", "schema": { "type": "string", "enum": ["NOVA", "EM_ANALISE", "RESOLVIDA", "ARQUIVADA"] } }], "responses": { "200": { "description": "Manifestações" } } }
+    },
+    "/api/ouvidoria/{id}": {
+      "patch": { "tags": ["Ouvidoria"], "summary": "Atualizar status da manifestação", "security": [{ "SessionCookie": [] }], "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["NOVA", "EM_ANALISE", "RESOLVIDA", "ARQUIVADA"] } } } } } }, "responses": { "200": { "description": "Status atualizado" } } }
     },
     "/api/blocos": {
       "get": { "tags": ["Blocos"], "summary": "Listar blocos", "responses": { "200": { "description": "Blocos" } } },

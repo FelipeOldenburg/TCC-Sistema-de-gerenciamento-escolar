@@ -67,6 +67,24 @@ npm run dev
 
 O frontend usa rotas `/api` relativas, encaminhadas ao Express pelo proxy do Vite.
 
+## Deploy em subdominio publico
+
+Para producao, publique o frontend gerado por `npm run build` no subdominio HTTPS, por exemplo `https://horarios.seudominio.edu.br`, e encaminhe `/api` para o processo Node/Express. Esse modelo mantem o frontend e a API no mesmo origin visto pelo navegador e simplifica cookies e CORS.
+
+Variaveis recomendadas no servidor:
+
+```bash
+NODE_ENV=production
+PUBLIC_ORIGIN=https://horarios.seudominio.edu.br
+TRUST_PROXY=1
+COOKIE_SECURE=true
+COOKIE_SAMESITE=Lax
+```
+
+Se a API ficar em outro subdominio, configure `ALLOWED_ORIGINS` no backend e `VITE_API_BASE_URL` no build do frontend. Se quiser rodar tudo em um unico processo Express, execute `npm run build` e use `SERVE_STATIC=true`; nesse modo o Express serve o `dist/` e mantem as rotas `/api`.
+
+Nao use o servidor Vite (`npm run dev` ou `npm run dev:web`) como servidor publico. Ele existe apenas para desenvolvimento.
+
 ## Formatos URÂNIA
 
 O relatório HTML esperado é “Turmas Geral”: primeira linha com turmas, primeira coluna com dias, segunda com horários e células no formato `Disciplina (Professor)`. Colunas `Coord` e `Reun` são preservadas para auditoria, mas não aparecem como turmas públicas. O HTML não contém salas.

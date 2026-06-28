@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Armchair, Clock, Cpu, FlaskConical, Leaf, Monitor, Paintbrush, Wrench, Zap } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { ArrowLeft, Armchair, Clock, Cpu, FlaskConical, Leaf, Monitor, Paintbrush, Settings, Wrench, Zap } from "lucide-react";
+import { toast } from "sonner";
+import { apiFetch, type SessionUser } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 type ClassOption = { turma: string; curso: string | null; ano: string | null };
+type RoomOption = { id: number; nome: string; bloco_nome: string; andar: string; capacidade: number; tipo: string };
 type PublishedSchedule = {
   id: number;
   turma: string;
@@ -15,10 +19,14 @@ type PublishedSchedule = {
   hora_inicio: string | null;
   disciplina: string;
   professor: string | null;
+  sala_id: number | null;
+  ambiente: string | null;
   sala: string | null;
   bloco: string | null;
 };
 type PublishedResponse = { turmas: ClassOption[]; horarios: PublishedSchedule[] };
+
+const NO_ROOM_VALUE = "__usar_ambiente_importado__";
 
 const courseVisuals = {
   "Informática": { icon: Monitor, color: "from-blue-500 to-cyan-400" },
@@ -32,14 +40,16 @@ const courseVisuals = {
 } as const;
 
 const dayLabels: Record<string, string> = {
-  SEG: "Segunda",
-  TER: "Terça",
-  QUA: "Quarta",
-  QUI: "Quinta",
-  SEX: "Sexta",
+  SEG: "Segunda-feira",
+  TER: "Terça-feira",
+  QUA: "Quarta-feira",
+  QUI: "Quinta-feira",
+  SEX: "Sexta-feira",
   SAB: "Sábado",
   DOM: "Domingo",
 };
+
+const weekdayOrder = ["SEG", "TER", "QUA", "QUI", "SEX"];
 
 const HorariosSection = () => {
   const [view, setView] = useState<"cursos" | "tabela">("cursos");
@@ -51,12 +61,28 @@ const HorariosSection = () => {
   const [loadingOptions, setLoadingOptions] = useState(true);
   const [loadingSchedules, setLoadingSchedules] = useState(false);
   const [error, setError] = useState("");
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [rooms, setRooms] = useState<RoomOption[]>([]);
+  const [roomsLoaded, setRoomsLoaded] = useState(false);
+  const [loadingRooms, setLoadingRooms] = useState(false);
+  const [selectedSchedule, setSelectedSchedule] = useState<PublishedSchedule | null>(null);
+  const [roomValue, setRoomValue] = useState(NO_ROOM_VALUE);
+  const [roomError, setRoomError] = useState("");
+  const [savingRoom, setSavingRoom] = useState(false);
+
+  const isCpd = user?.papel === "CPD";
 
   useEffect(() => {
     apiFetch<PublishedResponse>("/api/horarios/publicados?apenas_opcoes=1")
       .then((data) => setOptions(data.turmas))
       .catch((err) => setError(err instanceof Error ? err.message : "Erro ao carregar horários."))
       .finally(() => setLoadingOptions(false));
+  }, []);
+
+  useEffect(() => {
+    apiFetch<{ user: SessionUser }>("/api/auth/me")
+      .then((response) => setUser(response.user))
+      .catch(() => setUser(null));
   }, []);
 
   useEffect(() => {
@@ -86,6 +112,76 @@ const HorariosSection = () => {
     () => options.filter((item) => (item.curso || "Outros") === course && (!year || (item.ano || "Não informado") === year)),
     [options, course, year]
   );
+  const schedulesByDay = useMemo(() => {
+    const extraDays = ["SAB", "DOM"].filter((day) => schedules.some((schedule) => schedule.dia === day));
+    return [...weekdayOrder, ...extraDays].map((day) => ({
+      day,
+      schedules: schedules.filter((schedule) => schedule.dia === day),
+    }));
+  }, [schedules]);
+  const selectedRoom = useMemo(
+    () => rooms.find((room) => String(room.id) === roomValue) || null,
+    [rooms, roomValue]
+  );
+
+  const ensureRoomsLoaded = async () => {
+    if (roomsLoaded || loadingRooms) return;
+    setLoadingRooms(true);
+    setRoomError("");
+    try {
+      const data = await apiFetch<RoomOption[]>("/api/salas");
+      setRooms(data);
+      setRoomsLoaded(true);
+    } catch (err) {
+      setRoomError(err instanceof Error ? err.message : "Erro ao carregar salas.");
+    } finally {
+      setLoadingRooms(false);
+    }
+  };
+
+  const openRoomConfig = (schedule: PublishedSchedule) => {
+    setSelectedSchedule(schedule);
+    setRoomValue(schedule.sala_id ? String(schedule.sala_id) : NO_ROOM_VALUE);
+    setRoomError("");
+    void ensureRoomsLoaded();
+  };
+
+  const closeRoomConfig = () => {
+    if (savingRoom) return;
+    setSelectedSchedule(null);
+    setRoomError("");
+  };
+
+  const saveRoomConfig = async () => {
+    if (!selectedSchedule) return;
+    const salaId = roomValue === NO_ROOM_VALUE ? null : Number(roomValue);
+    setSavingRoom(true);
+    setRoomError("");
+    try {
+      await apiFetch(`/api/horarios/publicados/${selectedSchedule.id}/sala`, {
+        method: "PATCH",
+        body: JSON.stringify({ sala_id: salaId }),
+      });
+      setSchedules((current) =>
+        current.map((schedule) =>
+          schedule.id === selectedSchedule.id
+            ? {
+                ...schedule,
+                sala_id: salaId,
+                sala: selectedRoom?.nome || schedule.ambiente || null,
+                bloco: selectedRoom?.bloco_nome || null,
+              }
+            : schedule
+        )
+      );
+      toast.success("Sala configurada para o horário.");
+      setSelectedSchedule(null);
+    } catch (err) {
+      setRoomError(err instanceof Error ? err.message : "Erro ao configurar a sala.");
+    } finally {
+      setSavingRoom(false);
+    }
+  };
 
   const openCourse = (selectedCourse: string) => {
     const first = options.find((item) => (item.curso || "Outros") === selectedCourse);
@@ -143,17 +239,125 @@ const HorariosSection = () => {
           <div className="space-y-1.5"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Turma</label><Select value={className} onValueChange={setClassName}><SelectTrigger className="w-[180px]"><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent>{classes.map((item) => <SelectItem key={item.turma} value={item.turma}>{item.turma}</SelectItem>)}</SelectContent></Select></div>
         </div>
         {error && <p className="text-sm text-destructive mb-4">{error}</p>}
-        <div className="rounded-xl overflow-hidden border border-border overflow-x-auto">
-          <Table>
-            <TableHeader><TableRow className="bg-primary text-primary-foreground"><TableHead className="text-primary-foreground">Dia</TableHead><TableHead className="text-primary-foreground">Horário</TableHead><TableHead className="text-primary-foreground">Disciplina</TableHead><TableHead className="text-primary-foreground">Turma</TableHead><TableHead className="text-primary-foreground">Sala</TableHead><TableHead className="text-primary-foreground">Professor</TableHead></TableRow></TableHeader>
-            <TableBody>
-              {loadingSchedules && <TableRow><TableCell colSpan={6} className="text-center py-8">Carregando...</TableCell></TableRow>}
-              {!loadingSchedules && !schedules.length && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Nenhuma aula encontrada para esta turma.</TableCell></TableRow>}
-              {schedules.map((schedule) => <TableRow key={schedule.id} className="hover:bg-primary/5"><TableCell className="font-medium">{dayLabels[schedule.dia] || schedule.dia}</TableCell><TableCell className="font-semibold text-primary">{schedule.hora_inicio || `${schedule.periodo}ª aula`}</TableCell><TableCell>{schedule.disciplina}</TableCell><TableCell>{schedule.turma}</TableCell><TableCell>{schedule.sala || "—"}</TableCell><TableCell>{schedule.professor || "—"}</TableCell></TableRow>)}
-            </TableBody>
-          </Table>
-        </div>
+        {loadingSchedules && <div className="rounded-xl border border-border py-10 text-center text-muted-foreground">Carregando...</div>}
+        {!loadingSchedules && !schedules.length && <div className="rounded-xl border border-border py-10 text-center text-muted-foreground">Nenhuma aula encontrada para esta turma.</div>}
+        {!loadingSchedules && !!schedules.length && (
+          <div className="space-y-5">
+            {schedulesByDay.map(({ day, schedules: daySchedules }) => (
+              <section key={day} className="rounded-xl overflow-hidden border border-border">
+                <div className="bg-primary px-4 py-3 text-primary-foreground">
+                  <h3 className="font-heading font-bold">{dayLabels[day] || day}</h3>
+                  <p className="text-xs text-primary-foreground/70">{daySchedules.length} aula(s)</p>
+                </div>
+                {daySchedules.length ? (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="bg-muted/50">
+                          <TableHead>Horário</TableHead>
+                          <TableHead>Disciplina</TableHead>
+                          <TableHead>Sala</TableHead>
+                          <TableHead>Professor</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {daySchedules.map((schedule) => (
+                          <TableRow key={schedule.id} className="hover:bg-primary/5">
+                            <TableCell className="font-semibold text-primary">{schedule.hora_inicio || `${schedule.periodo}ª aula`}</TableCell>
+                            <TableCell className="font-medium">{schedule.disciplina}</TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2 min-w-[9rem]">
+                                <span className="truncate">{schedule.sala || "—"}</span>
+                                {isCpd && (
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => openRoomConfig(schedule)}
+                                    className="h-8 w-8 shrink-0"
+                                    title="Configurar sala"
+                                    aria-label={`Configurar sala de ${schedule.disciplina}`}
+                                  >
+                                    <Settings className="w-4 h-4" />
+                                  </Button>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell>{schedule.professor || "—"}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ) : (
+                  <p className="px-4 py-6 text-sm text-center text-muted-foreground">Nenhuma aula neste dia.</p>
+                )}
+              </section>
+            ))}
+          </div>
+        )}
       </div>
+      <Dialog open={!!selectedSchedule} onOpenChange={(open) => { if (!open) closeRoomConfig(); }}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Configurar sala</DialogTitle>
+            <DialogDescription>
+              Defina a sala vinculada a esta turma e disciplina.
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedSchedule && (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-border bg-muted/40 p-4 text-sm">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <p><span className="font-medium text-foreground">Turma:</span> {selectedSchedule.turma}</p>
+                  <p><span className="font-medium text-foreground">Horário:</span> {dayLabels[selectedSchedule.dia] || selectedSchedule.dia} · {selectedSchedule.hora_inicio || `${selectedSchedule.periodo}ª aula`}</p>
+                  <p className="sm:col-span-2"><span className="font-medium text-foreground">Disciplina:</span> {selectedSchedule.disciplina}</p>
+                  <p className="sm:col-span-2"><span className="font-medium text-foreground">Sala atual:</span> {selectedSchedule.sala || "Sem sala definida"}</p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Sala</label>
+                <Select value={roomValue} onValueChange={setRoomValue} disabled={loadingRooms || savingRoom}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={loadingRooms ? "Carregando salas..." : "Selecione uma sala"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NO_ROOM_VALUE}>
+                      {selectedSchedule.ambiente ? `Usar ambiente importado (${selectedSchedule.ambiente})` : "Sem sala definida"}
+                    </SelectItem>
+                    {rooms.map((room) => (
+                      <SelectItem key={room.id} value={String(room.id)}>
+                        {room.nome} · {room.bloco_nome} · {room.tipo}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {selectedRoom && (
+                  <p className="text-xs text-muted-foreground">
+                    {selectedRoom.bloco_nome}, {selectedRoom.andar} · {selectedRoom.capacidade} lugares · {selectedRoom.tipo}
+                  </p>
+                )}
+                {!loadingRooms && roomsLoaded && !rooms.length && (
+                  <p className="text-xs text-muted-foreground">Nenhuma sala cadastrada no painel do CPD.</p>
+                )}
+              </div>
+
+              {roomError && <p className="text-sm text-destructive">{roomError}</p>}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={closeRoomConfig} disabled={savingRoom}>
+              Cancelar
+            </Button>
+            <Button type="button" onClick={saveRoomConfig} disabled={savingRoom || loadingRooms}>
+              {savingRoom ? "Salvando..." : "Salvar sala"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

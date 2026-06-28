@@ -1,31 +1,23 @@
-import { Bonjour } from "bonjour-service";
 import { createServer } from "vite";
 
-const port = 80;
-const hostname = "cimol-horarios.local";
+const port = Number(process.env.WEB_PORT || 8080);
+const host = process.env.WEB_HOST || "0.0.0.0";
+const allowedHosts = String(process.env.WEB_ALLOWED_HOSTS || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
 
 const vite = await createServer({
   server: {
-    host: "0.0.0.0",
+    host,
     port,
-    strictPort: true,
-    allowedHosts: [hostname],
+    strictPort: false,
+    allowedHosts: allowedHosts.length ? allowedHosts : true,
   },
 });
 
 await vite.listen();
-
-const bonjour = new Bonjour();
-const service = bonjour.publish({
-  name: "CIMOL Horarios",
-  type: "http",
-  protocol: "tcp",
-  host: hostname,
-  port,
-});
-
-console.log("\n  ➜  Local:   http://localhost/");
-console.log(`  ➜  Network: http://${hostname}/\n`);
+vite.printUrls();
 
 let shuttingDown = false;
 
@@ -33,7 +25,6 @@ async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
 
-  service.stop(() => bonjour.destroy());
   await vite.close();
   process.exit(0);
 }

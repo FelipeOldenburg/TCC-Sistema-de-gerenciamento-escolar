@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS alunos (
   ano         VARCHAR(20)  NOT NULL,
   turma       VARCHAR(30)  NOT NULL,
   curso       VARCHAR(80)  NOT NULL,
-  created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_alunos_lookup (nome, ano, turma, curso)
 );
 
 -- =========================================================================
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS reorganizacoes (
   arquivo_dados LONGBLOB NULL,
   data          DATE NOT NULL,
   created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_reorganizacoes_data (data, id),
   FOREIGN KEY (aluno_id) REFERENCES alunos(id) ON DELETE CASCADE
 );
 
@@ -99,6 +101,8 @@ CREATE TABLE IF NOT EXISTS salas (
   UNIQUE KEY uq_salas_bloco_nome (bloco_id, nome),
   INDEX idx_salas_recursos (possui_computadores, possui_data_show, possui_internet, possui_ar_condicionado),
   INDEX idx_salas_capacidade (capacidade),
+  INDEX idx_salas_bloco_andar_nome (bloco_id, andar, nome),
+  INDEX idx_salas_tipo (tipo),
   FOREIGN KEY (bloco_id) REFERENCES blocos(id) ON DELETE RESTRICT
 );
 
@@ -114,6 +118,55 @@ CREATE TABLE IF NOT EXISTS sala_softwares (
   PRIMARY KEY (sala_id, software_id),
   FOREIGN KEY (sala_id) REFERENCES salas(id) ON DELETE CASCADE,
   FOREIGN KEY (software_id) REFERENCES softwares(id) ON DELETE CASCADE
+);
+
+-- =========================================================================
+-- Conteudo publico administrado pelo CPD: eventos e setores.
+-- =========================================================================
+CREATE TABLE IF NOT EXISTS eventos (
+  id           INT AUTO_INCREMENT PRIMARY KEY,
+  titulo       VARCHAR(140) NOT NULL,
+  descricao    TEXT NULL,
+  data_evento  DATE NOT NULL,
+  hora_evento  TIME NULL,
+  local        VARCHAR(140) NULL,
+  imagem_url   VARCHAR(500) NULL,
+  ativo        BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_eventos_publicos (ativo, data_evento, id)
+);
+
+CREATE TABLE IF NOT EXISTS setores (
+  id                   INT AUTO_INCREMENT PRIMARY KEY,
+  nome                 VARCHAR(120) NOT NULL,
+  descricao            VARCHAR(255) NOT NULL,
+  responsavel          VARCHAR(120) NULL,
+  localizacao          VARCHAR(160) NULL,
+  contato              VARCHAR(160) NULL,
+  horario_atendimento  VARCHAR(160) NULL,
+  icone                VARCHAR(40) NOT NULL DEFAULT 'building',
+  cor                  VARCHAR(40) NOT NULL DEFAULT 'blue',
+  ativo                BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_setores_publicos (ativo, nome)
+);
+
+CREATE TABLE IF NOT EXISTS ouvidoria_manifestacoes (
+  id           INT AUTO_INCREMENT PRIMARY KEY,
+  nome         VARCHAR(120) NULL,
+  perfil       ENUM('ALUNO', 'DOCENTE', 'RESPONSAVEL', 'COMUNIDADE') NOT NULL,
+  categoria    ENUM('IDEIA', 'MELHORIA', 'PROBLEMA', 'AVISO') NOT NULL,
+  setor_id     INT NULL,
+  assunto      VARCHAR(120) NOT NULL,
+  mensagem     TEXT NOT NULL,
+  status       ENUM('NOVA', 'EM_ANALISE', 'RESOLVIDA', 'ARQUIVADA') NOT NULL DEFAULT 'NOVA',
+  created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_ouvidoria_status_data (status, created_at),
+  INDEX idx_ouvidoria_categoria (categoria, created_at),
+  FOREIGN KEY (setor_id) REFERENCES setores(id) ON DELETE SET NULL
 );
 
 -- =========================================================================
@@ -183,6 +236,7 @@ CREATE TABLE IF NOT EXISTS horarios_importados (
   created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_horarios_importacao (importacao_id),
   INDEX idx_horarios_publicos (categoria, turma, dia, periodo),
+  INDEX idx_horarios_publicos_importacao (importacao_id, categoria, turma, dia, periodo),
   INDEX idx_horarios_sala (sala_id),
   FOREIGN KEY (importacao_id) REFERENCES importacoes_horarios(id) ON DELETE CASCADE,
   FOREIGN KEY (sala_id) REFERENCES salas(id) ON DELETE SET NULL

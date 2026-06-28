@@ -1,8 +1,11 @@
+import compression from "compression";
 import cors from "cors";
 import crypto from "crypto";
 import "dotenv/config";
 import express from "express";
+import rateLimit from "express-rate-limit";
 import fs from "fs";
+import helmet from "helmet";
 import multer from "multer";
 import mysql from "mysql2/promise";
 import path from "path";
@@ -23,7 +26,42 @@ const app = express();
 const port = Number(process.env.API_PORT || 3001);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const distPath = path.resolve(__dirname, "..", "dist");
 const swaggerDocument = JSON.parse(fs.readFileSync(path.join(__dirname, "swagger.json"), "utf8"));
+const isProduction = process.env.NODE_ENV === "production";
+const serveStaticFrontend =
+  process.env.SERVE_STATIC === "true" && fs.existsSync(path.join(distPath, "index.html"));
+
+const splitEnvList = (...values) =>
+  values
+    .flatMap((value) => String(value || "").split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+const allowedOrigins = new Set(splitEnvList(process.env.PUBLIC_ORIGIN, process.env.ALLOWED_ORIGINS));
+const localhostOriginPattern = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/;
+
+const corsOptions = {
+  credentials: true,
+  origin(origin, callback) {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.has(origin) || (!isProduction && localhostOriginPattern.test(origin))) {
+      return callback(null, true);
+    }
+    return callback(null, false);
+  },
+};
+
+const normalizeTrustProxy = (value) => {
+  if (value == null || value === "") return isProduction ? 1 : false;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : value;
+};
+
+const trustProxy = normalizeTrustProxy(process.env.TRUST_PROXY);
+app.set("trust proxy", trustProxy);
 
 const databaseName = process.env.DB_NAME || "cimol";
 if (!/^[A-Za-z0-9_]+$/.test(databaseName)) {
@@ -59,19 +97,94 @@ const db = mysql.createPool({
   ...databaseConfig,
   database: databaseName,
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit: Number(process.env.DB_CONNECTION_LIMIT || 10),
 });
 
+const ensureOperationalIndexes = async () => {
+  const indexes = [
+    ["alunos", "idx_alunos_lookup", "ALTER TABLE alunos ADD INDEX idx_alunos_lookup (nome, ano, turma, curso)"],
+    ["reorganizacoes", "idx_reorganizacoes_data", "ALTER TABLE reorganizacoes ADD INDEX idx_reorganizacoes_data (data, id)"],
+    ["salas", "idx_salas_bloco_andar_nome", "ALTER TABLE salas ADD INDEX idx_salas_bloco_andar_nome (bloco_id, andar, nome)"],
+    ["salas", "idx_salas_tipo", "ALTER TABLE salas ADD INDEX idx_salas_tipo (tipo)"],
+    [
+      "horarios_importados",
+      "idx_horarios_publicos_importacao",
+      "ALTER TABLE horarios_importados ADD INDEX idx_horarios_publicos_importacao (importacao_id, categoria, turma, dia, periodo)",
+    ],
+  ];
+
+  for (const [tableName, indexName, statement] of indexes) {
+    const [existing] = await db.query(
+      `SELECT 1
+         FROM information_schema.statistics
+        WHERE table_schema = ?
+          AND table_name = ?
+          AND index_name = ?
+        LIMIT 1`,
+      [databaseName, tableName, indexName]
+    );
+    if (!existing.length) await db.query(statement);
+  }
+};
+
+const ensureDefaultPublicContent = async () => {
+  const [sectorCount] = await db.query("SELECT COUNT(*) AS total FROM setores");
+  if (Number(sectorCount[0]?.total || 0) === 0) {
+    await db.query(
+      `INSERT INTO setores
+       (nome, descricao, responsavel, localizacao, contato, horario_atendimento, icone, cor, ativo)
+       VALUES
+       ('Direção', 'Gestão e administração escolar', NULL, 'Prédio administrativo', NULL, NULL, 'building', 'blue', TRUE),
+       ('Coordenação Pedagógica', 'Acompanhamento dos cursos e turmas', NULL, 'Prédio administrativo', NULL, NULL, 'graduation', 'violet', TRUE),
+       ('Biblioteca', 'Acervo, leitura e sala de estudo', NULL, 'Bloco principal', NULL, NULL, 'book', 'amber', TRUE),
+       ('Laboratórios', 'Ambientes técnicos e científicos', NULL, 'Blocos técnicos', NULL, NULL, 'flask', 'emerald', TRUE),
+       ('Oficinas', 'Práticas de mecânica e marcenaria', NULL, 'Área técnica', NULL, NULL, 'wrench', 'slate', TRUE),
+       ('Cantina', 'Alimentação e convivência', NULL, 'Pátio central', NULL, NULL, 'coffee', 'orange', TRUE),
+       ('Portaria', 'Entrada, orientação e segurança', NULL, 'Acesso principal', NULL, NULL, 'shield', 'indigo', TRUE)`
+    );
+  }
+};
+
+await ensureOperationalIndexes();
 await ensureBootstrapUsers(db);
+await ensureDefaultPublicContent();
 
 const { optionalAuth, requireAuth, requireRole } = createAuthMiddleware(db);
 
-app.use(cors());
+app.use((req, res, next) => {
+  req.id = crypto.randomUUID();
+  res.setHeader("X-Request-Id", req.id);
+  next();
+});
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(compression());
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 app.use(express.json({ limit: "1mb" }));
-app.use(optionalAuth);
+app.use(
+  "/api",
+  rateLimit({
+    windowMs: Number(process.env.API_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000),
+    limit: Number(process.env.API_RATE_LIMIT || 600),
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+  })
+);
+app.use("/api", optionalAuth);
 app.use("/api-CIMOL/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
-app.get("/", (_req, res) => res.redirect("/api-CIMOL/docs"));
+if (serveStaticFrontend) {
+  app.use(
+    "/assets",
+    express.static(path.join(distPath, "assets"), {
+      immutable: true,
+      maxAge: "1y",
+    })
+  );
+  app.use(express.static(distPath, { maxAge: "5m" }));
+} else {
+  app.get("/", (_req, res) => res.redirect("/api-CIMOL/docs"));
+}
 app.get("/.well-known/appspecific/com.chrome.devtools.json", (_req, res) => {
   res.set("Cache-Control", "no-store");
   res.status(204).end();
@@ -79,6 +192,11 @@ app.get("/.well-known/appspecific/com.chrome.devtools.json", (_req, res) => {
 
 const httpError = (statusCode, message) => Object.assign(new Error(message), { statusCode });
 const asBoolean = (value) => value === true || value === 1 || value === "1" || value === "true" || value === "on";
+const positiveInt = (value, fallback, { min = 1, max = 500 } = {}) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.trunc(parsed)));
+};
 const parseJson = (value, fallback) => {
   if (value == null) return fallback;
   if (typeof value !== "string") return value;
@@ -94,6 +212,82 @@ const normalizeLookup = (value) =>
     .replace(/[\u0300-\u036f]/g, "")
     .trim()
     .toLowerCase();
+
+const normalizeModerationText = (value) =>
+  normalizeLookup(value)
+    .replace(/0/g, "o")
+    .replace(/@/g, "a")
+    .replace(/[1!|]/g, "i")
+    .replace(/3/g, "e")
+    .replace(/[4]/g, "a")
+    .replace(/[5$]/g, "s")
+    .replace(/7/g, "t");
+
+const inappropriateTerms = new Set([
+  "arrombado",
+  "bosta",
+  "burro",
+  "caralho",
+  "desgracado",
+  "fdp",
+  "foda",
+  "foder",
+  "idiota",
+  "imbecil",
+  "merda",
+  "otario",
+  "porra",
+  "puta",
+  "puto",
+  "vagabundo",
+]);
+
+const hasInappropriateContent = (...values) => {
+  const normalized = normalizeModerationText(values.join(" "));
+  const tokens = normalized.split(/[^a-z]+/).filter(Boolean);
+  if (tokens.some((token) => inappropriateTerms.has(token))) return true;
+  const compact = normalized.replace(/[^a-z]/g, "");
+  return [...inappropriateTerms].some((term) => term.length >= 5 && compact.includes(term));
+};
+
+const sanitizeFreeText = (value, maxLength) =>
+  String(value || "")
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+
+const cacheableJson = (req, res, payload, { maxAge = 60, staleWhileRevalidate = 300 } = {}) => {
+  const body = JSON.stringify(payload);
+  const etag = `"${crypto.createHash("sha256").update(body).digest("base64url")}"`;
+  res.setHeader("Cache-Control", `public, max-age=${maxAge}, stale-while-revalidate=${staleWhileRevalidate}`);
+  res.setHeader("ETag", etag);
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  if (req.headers["if-none-match"] === etag) return res.status(304).end();
+  return res.send(body);
+};
+
+const authRateLimit = rateLimit({
+  windowMs: Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000),
+  limit: Number(process.env.AUTH_RATE_LIMIT || 20),
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+});
+
+const uploadRateLimit = rateLimit({
+  windowMs: Number(process.env.UPLOAD_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000),
+  limit: Number(process.env.UPLOAD_RATE_LIMIT || 30),
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+});
+
+const ouvidoriaRateLimit = rateLimit({
+  windowMs: Number(process.env.OUVIDORIA_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000),
+  limit: Number(process.env.OUVIDORIA_RATE_LIMIT || 8),
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+});
 
 const documentUpload = multer({
   storage: multer.memoryStorage(),
@@ -124,7 +318,7 @@ const uraniaUpload = multer({
 // ---------------------------------------------------------------------------
 // Autenticação e permissões
 // ---------------------------------------------------------------------------
-app.post("/api/auth/login", async (req, res, next) => {
+app.post("/api/auth/login", authRateLimit, async (req, res, next) => {
   try {
     const user = await authenticateUser(db, req.body?.usuario, req.body?.senha);
     if (!user) return res.status(401).json({ message: "Usuário ou senha inválidos." });
@@ -172,8 +366,13 @@ app.get("/api/health", async (_req, res, next) => {
 // ---------------------------------------------------------------------------
 // Módulo existente: reorganização de salas
 // ---------------------------------------------------------------------------
-app.get("/api/reorganizacao", cpdOrLegacyAuth, async (_req, res, next) => {
+app.get("/api/reorganizacao", cpdOrLegacyAuth, async (req, res, next) => {
   try {
+    const paginated = req.query.page || req.query.page_size;
+    const page = positiveInt(req.query.page, 1, { max: 100000 });
+    const pageSize = positiveInt(req.query.page_size, 100, { min: 10, max: 500 });
+    const limitClause = paginated ? "LIMIT ? OFFSET ?" : "";
+    const params = paginated ? [pageSize, (page - 1) * pageSize] : [];
     const [rows] = await db.query(`
       SELECT r.id, a.nome AS aluno, a.ano, a.turma, a.curso, r.problema,
              r.arquivo_nome, DATE_FORMAT(r.data, '%Y-%m-%d') AS data,
@@ -183,8 +382,15 @@ app.get("/api/reorganizacao", cpdOrLegacyAuth, async (_req, res, next) => {
         LEFT JOIN reorganizacao_salas_relacionadas sr ON r.id = sr.reorganizacao_id
        GROUP BY r.id
        ORDER BY r.id DESC
-    `);
-    res.json(rows);
+       ${limitClause}
+    `, params);
+    if (!paginated) return res.json(rows);
+
+    const [countRows] = await db.query("SELECT COUNT(*) AS total FROM reorganizacoes");
+    res.json({
+      items: rows,
+      paginacao: { pagina: page, por_pagina: pageSize, total: Number(countRows[0].total) },
+    });
   } catch (error) {
     next(error);
   }
@@ -192,6 +398,7 @@ app.get("/api/reorganizacao", cpdOrLegacyAuth, async (_req, res, next) => {
 
 app.post(
   "/api/reorganizacao",
+  uploadRateLimit,
   cpdOrLegacyAuth,
   documentUpload.single("arquivo"),
   async (req, res, next) => {
@@ -268,7 +475,7 @@ app.delete("/api/reorganizacao/:id", cpdOrLegacyAuth, async (req, res, next) => 
 // ---------------------------------------------------------------------------
 // Blocos
 // ---------------------------------------------------------------------------
-app.get("/api/blocos", async (_req, res, next) => {
+app.get("/api/blocos", async (req, res, next) => {
   try {
     const [rows] = await db.query(`
       SELECT b.id, b.nome, b.descricao, b.created_at, b.updated_at,
@@ -278,7 +485,8 @@ app.get("/api/blocos", async (_req, res, next) => {
        GROUP BY b.id
        ORDER BY b.nome
     `);
-    res.json(rows);
+    if (req.user) return res.json(rows);
+    return cacheableJson(req, res, rows, { maxAge: 60, staleWhileRevalidate: 300 });
   } catch (error) {
     next(error);
   }
@@ -383,8 +591,36 @@ app.get("/api/salas", async (req, res, next) => {
       params.push(`%${req.query.software}%`);
     }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    const [rows] = await db.query(`${roomSelect} ${where} GROUP BY s.id ORDER BY b.nome, s.nome`, params);
-    res.json(rows.map(serializeRoom));
+    const paginated = req.query.page || req.query.page_size;
+    const page = positiveInt(req.query.page, 1, { max: 100000 });
+    const pageSize = positiveInt(req.query.page_size, 100, { min: 10, max: 500 });
+    const limitClause = paginated ? "LIMIT ? OFFSET ?" : "";
+    const queryParams = paginated ? [...params, pageSize, (page - 1) * pageSize] : params;
+    const [rows] = await db.query(
+      `${roomSelect} ${where} GROUP BY s.id ORDER BY b.nome, s.nome ${limitClause}`,
+      queryParams
+    );
+    const items = rows.map(serializeRoom);
+    if (!paginated) {
+      if (req.user) return res.json(items);
+      return cacheableJson(req, res, items, { maxAge: 60, staleWhileRevalidate: 300 });
+    }
+
+    const [countRows] = await db.query(
+      `SELECT COUNT(DISTINCT s.id) AS total
+         FROM salas s
+         JOIN blocos b ON b.id = s.bloco_id
+         LEFT JOIN sala_softwares ss ON ss.sala_id = s.id
+         LEFT JOIN softwares sw ON sw.id = ss.software_id
+       ${where}`,
+      params
+    );
+    const payload = {
+      items,
+      paginacao: { pagina: page, por_pagina: pageSize, total: Number(countRows[0].total) },
+    };
+    if (req.user) return res.json(payload);
+    return cacheableJson(req, res, payload, { maxAge: 60, staleWhileRevalidate: 300 });
   } catch (error) {
     next(error);
   }
@@ -536,6 +772,322 @@ app.delete("/api/salas/:id", requireRole("CPD"), async (req, res, next) => {
 });
 
 // ---------------------------------------------------------------------------
+// Eventos
+// ---------------------------------------------------------------------------
+const serializeEvent = (row) => ({
+  ...row,
+  ativo: Boolean(row.ativo),
+  data_evento: row.data_evento instanceof Date ? row.data_evento.toISOString().slice(0, 10) : row.data_evento,
+  hora_evento: row.hora_evento ? String(row.hora_evento).slice(0, 5) : null,
+});
+
+const normalizeEventPayload = (body = {}) => ({
+  titulo: sanitizeFreeText(body.titulo, 140),
+  descricao: sanitizeFreeText(body.descricao, 1000) || null,
+  data_evento: String(body.data_evento || "").trim(),
+  hora_evento: String(body.hora_evento || "").trim() || null,
+  local: sanitizeFreeText(body.local, 140) || null,
+  imagem_url: sanitizeFreeText(body.imagem_url, 500) || null,
+  ativo: body.ativo == null ? true : asBoolean(body.ativo),
+});
+
+const validateEvent = (event) => {
+  if (!event.titulo || !event.data_evento) throw httpError(400, "Informe título e data do evento.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(event.data_evento)) throw httpError(400, "Data do evento inválida.");
+  if (event.hora_evento && !/^\d{2}:\d{2}$/.test(event.hora_evento)) throw httpError(400, "Horário do evento inválido.");
+  if (event.imagem_url && !/^https?:\/\//i.test(event.imagem_url)) {
+    throw httpError(400, "Informe uma URL de imagem iniciando com http:// ou https://.");
+  }
+};
+
+app.get("/api/eventos", async (req, res, next) => {
+  try {
+    const includeInactive = req.user?.papel === "CPD" && asBoolean(req.query.incluir_inativos);
+    const where = includeInactive ? "" : "WHERE ativo = TRUE AND data_evento >= CURDATE()";
+    const [rows] = await db.query(
+      `SELECT id, titulo, descricao, data_evento, TIME_FORMAT(hora_evento, '%H:%i') AS hora_evento,
+              local, imagem_url, ativo, created_at, updated_at
+         FROM eventos
+         ${where}
+        ORDER BY data_evento ASC, hora_evento IS NULL, hora_evento ASC, id ASC`
+    );
+    const payload = rows.map(serializeEvent);
+    if (req.user) return res.json(payload);
+    return cacheableJson(req, res, payload, { maxAge: 60, staleWhileRevalidate: 300 });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/eventos", requireRole("CPD"), async (req, res, next) => {
+  const event = normalizeEventPayload(req.body);
+  try {
+    validateEvent(event);
+    const [result] = await db.query(
+      `INSERT INTO eventos (titulo, descricao, data_evento, hora_evento, local, imagem_url, ativo)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [event.titulo, event.descricao, event.data_evento, event.hora_evento, event.local, event.imagem_url, event.ativo]
+    );
+    res.status(201).json({ id: result.insertId });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/eventos/:id", requireRole("CPD"), async (req, res, next) => {
+  const event = normalizeEventPayload(req.body);
+  try {
+    validateEvent(event);
+    const [result] = await db.query(
+      `UPDATE eventos
+          SET titulo = ?, descricao = ?, data_evento = ?, hora_evento = ?, local = ?, imagem_url = ?, ativo = ?
+        WHERE id = ?`,
+      [
+        event.titulo,
+        event.descricao,
+        event.data_evento,
+        event.hora_evento,
+        event.local,
+        event.imagem_url,
+        event.ativo,
+        req.params.id,
+      ]
+    );
+    if (!result.affectedRows) throw httpError(404, "Evento não encontrado.");
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/eventos/:id", requireRole("CPD"), async (req, res, next) => {
+  try {
+    const [result] = await db.query("DELETE FROM eventos WHERE id = ?", [req.params.id]);
+    if (!result.affectedRows) throw httpError(404, "Evento não encontrado.");
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Setores
+// ---------------------------------------------------------------------------
+const allowedSectorIcons = new Set(["building", "graduation", "book", "flask", "wrench", "coffee", "shield", "monitor", "users"]);
+const allowedSectorColors = new Set(["blue", "violet", "amber", "emerald", "slate", "orange", "indigo", "cyan", "rose"]);
+
+const serializeSector = (row) => ({ ...row, ativo: Boolean(row.ativo) });
+
+const normalizeSectorPayload = (body = {}) => ({
+  nome: sanitizeFreeText(body.nome, 120),
+  descricao: sanitizeFreeText(body.descricao, 255),
+  responsavel: sanitizeFreeText(body.responsavel, 120) || null,
+  localizacao: sanitizeFreeText(body.localizacao, 160) || null,
+  contato: sanitizeFreeText(body.contato, 160) || null,
+  horario_atendimento: sanitizeFreeText(body.horario_atendimento, 160) || null,
+  icone: allowedSectorIcons.has(String(body.icone || "")) ? String(body.icone) : "building",
+  cor: allowedSectorColors.has(String(body.cor || "")) ? String(body.cor) : "blue",
+  ativo: body.ativo == null ? true : asBoolean(body.ativo),
+});
+
+const validateSector = (sector) => {
+  if (!sector.nome || !sector.descricao) throw httpError(400, "Informe nome e descrição do setor.");
+};
+
+app.get("/api/setores", async (req, res, next) => {
+  try {
+    const includeInactive = req.user?.papel === "CPD" && asBoolean(req.query.incluir_inativos);
+    const where = includeInactive ? "" : "WHERE ativo = TRUE";
+    const [rows] = await db.query(
+      `SELECT id, nome, descricao, responsavel, localizacao, contato, horario_atendimento,
+              icone, cor, ativo, created_at, updated_at
+         FROM setores
+         ${where}
+        ORDER BY nome`
+    );
+    const payload = rows.map(serializeSector);
+    if (req.user) return res.json(payload);
+    return cacheableJson(req, res, payload, { maxAge: 60, staleWhileRevalidate: 300 });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/setores", requireRole("CPD"), async (req, res, next) => {
+  const sector = normalizeSectorPayload(req.body);
+  try {
+    validateSector(sector);
+    const [result] = await db.query(
+      `INSERT INTO setores
+       (nome, descricao, responsavel, localizacao, contato, horario_atendimento, icone, cor, ativo)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        sector.nome,
+        sector.descricao,
+        sector.responsavel,
+        sector.localizacao,
+        sector.contato,
+        sector.horario_atendimento,
+        sector.icone,
+        sector.cor,
+        sector.ativo,
+      ]
+    );
+    res.status(201).json({ id: result.insertId });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/setores/:id", requireRole("CPD"), async (req, res, next) => {
+  const sector = normalizeSectorPayload(req.body);
+  try {
+    validateSector(sector);
+    const [result] = await db.query(
+      `UPDATE setores
+          SET nome = ?, descricao = ?, responsavel = ?, localizacao = ?, contato = ?,
+              horario_atendimento = ?, icone = ?, cor = ?, ativo = ?
+        WHERE id = ?`,
+      [
+        sector.nome,
+        sector.descricao,
+        sector.responsavel,
+        sector.localizacao,
+        sector.contato,
+        sector.horario_atendimento,
+        sector.icone,
+        sector.cor,
+        sector.ativo,
+        req.params.id,
+      ]
+    );
+    if (!result.affectedRows) throw httpError(404, "Setor não encontrado.");
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/setores/:id", requireRole("CPD"), async (req, res, next) => {
+  try {
+    const [result] = await db.query("DELETE FROM setores WHERE id = ?", [req.params.id]);
+    if (!result.affectedRows) throw httpError(404, "Setor não encontrado.");
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Ouvidoria
+// ---------------------------------------------------------------------------
+const allowedOuvidoriaProfiles = new Set(["ALUNO", "DOCENTE", "RESPONSAVEL", "COMUNIDADE"]);
+const allowedOuvidoriaCategories = new Set(["IDEIA", "MELHORIA", "PROBLEMA", "AVISO"]);
+const allowedOuvidoriaStatuses = new Set(["NOVA", "EM_ANALISE", "RESOLVIDA", "ARQUIVADA"]);
+
+const normalizeOuvidoriaPayload = (body = {}) => ({
+  nome: sanitizeFreeText(body.nome, 120) || null,
+  perfil: String(body.perfil || "").toUpperCase(),
+  categoria: String(body.categoria || "").toUpperCase(),
+  setor_id: body.setor_id ? Number(body.setor_id) : null,
+  assunto: sanitizeFreeText(body.assunto, 120),
+  mensagem: sanitizeFreeText(body.mensagem, 700),
+});
+
+const validateOuvidoria = async (manifestation) => {
+  if (!allowedOuvidoriaProfiles.has(manifestation.perfil)) throw httpError(400, "Selecione seu perfil.");
+  if (!allowedOuvidoriaCategories.has(manifestation.categoria)) throw httpError(400, "Selecione uma categoria válida.");
+  if (!manifestation.assunto || manifestation.assunto.length < 6) throw httpError(400, "Informe um assunto com pelo menos 6 caracteres.");
+  if (!manifestation.mensagem || manifestation.mensagem.length < 20) throw httpError(400, "Descreva a situação com pelo menos 20 caracteres.");
+  if (/https?:\/\/|www\./i.test(`${manifestation.assunto} ${manifestation.mensagem}`)) {
+    throw httpError(400, "Não envie links na manifestação.");
+  }
+  if (/(.)\1{7,}/i.test(`${manifestation.assunto} ${manifestation.mensagem}`)) {
+    throw httpError(400, "Revise o texto antes de enviar.");
+  }
+  if (hasInappropriateContent(manifestation.nome, manifestation.assunto, manifestation.mensagem)) {
+    throw httpError(400, "Revise o texto: a ouvidoria não aceita termos ofensivos ou impróprios.");
+  }
+  if (manifestation.setor_id !== null) {
+    if (!Number.isInteger(manifestation.setor_id) || manifestation.setor_id < 1) {
+      throw httpError(400, "Setor inválido.");
+    }
+    const [rows] = await db.query("SELECT id FROM setores WHERE id = ? AND ativo = TRUE LIMIT 1", [manifestation.setor_id]);
+    if (!rows.length) throw httpError(400, "Setor não encontrado.");
+  }
+};
+
+app.post("/api/ouvidoria", ouvidoriaRateLimit, async (req, res, next) => {
+  const manifestation = normalizeOuvidoriaPayload(req.body);
+  try {
+    await validateOuvidoria(manifestation);
+    const [result] = await db.query(
+      `INSERT INTO ouvidoria_manifestacoes
+       (nome, perfil, categoria, setor_id, assunto, mensagem)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        manifestation.nome,
+        manifestation.perfil,
+        manifestation.categoria,
+        manifestation.setor_id,
+        manifestation.assunto,
+        manifestation.mensagem,
+      ]
+    );
+    res.status(201).json({ id: result.insertId, status: "NOVA" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/ouvidoria", requireRole("CPD"), async (req, res, next) => {
+  try {
+    const status = String(req.query.status || "").toUpperCase();
+    const params = [];
+    const conditions = [];
+    if (allowedOuvidoriaStatuses.has(status)) {
+      conditions.push("o.status = ?");
+      params.push(status);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const page = positiveInt(req.query.page, 1, { max: 100000 });
+    const pageSize = positiveInt(req.query.page_size, 100, { min: 10, max: 200 });
+    const [rows] = await db.query(
+      `SELECT o.id, o.nome, o.perfil, o.categoria, o.setor_id, s.nome AS setor_nome,
+              o.assunto, o.mensagem, o.status, o.created_at, o.updated_at
+         FROM ouvidoria_manifestacoes o
+         LEFT JOIN setores s ON s.id = o.setor_id
+         ${where}
+        ORDER BY FIELD(o.status, 'NOVA', 'EM_ANALISE', 'RESOLVIDA', 'ARQUIVADA'), o.created_at DESC
+        LIMIT ? OFFSET ?`,
+      [...params, pageSize, (page - 1) * pageSize]
+    );
+    const [countRows] = await db.query(`SELECT COUNT(*) AS total FROM ouvidoria_manifestacoes o ${where}`, params);
+    res.json({
+      items: rows,
+      paginacao: { pagina: page, por_pagina: pageSize, total: Number(countRows[0].total) },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/api/ouvidoria/:id", requireRole("CPD"), async (req, res, next) => {
+  try {
+    const status = String(req.body?.status || "").toUpperCase();
+    if (!allowedOuvidoriaStatuses.has(status)) throw httpError(400, "Status inválido.");
+    const [result] = await db.query("UPDATE ouvidoria_manifestacoes SET status = ? WHERE id = ?", [
+      status,
+      req.params.id,
+    ]);
+    if (!result.affectedRows) throw httpError(404, "Manifestação não encontrada.");
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Importações URÂNIA UP
 // ---------------------------------------------------------------------------
 const insertScheduleChunks = async (conn, importId, schedules, roomByName) => {
@@ -589,6 +1141,7 @@ const insertScheduleChunks = async (conn, importId, schedules, roomByName) => {
 
 app.post(
   "/api/importacoes/urania",
+  uploadRateLimit,
   requireRole("ADMIN"),
   uraniaUpload.array("arquivos", 10),
   async (req, res, next) => {
@@ -687,6 +1240,11 @@ app.get("/api/importacoes", requireRole("CPD"), async (req, res, next) => {
     const params = [];
     const where = statuses.includes(status) ? "WHERE i.status = ?" : "";
     if (where) params.push(status);
+    const paginated = req.query.page || req.query.page_size;
+    const page = positiveInt(req.query.page, 1, { max: 100000 });
+    const pageSize = positiveInt(req.query.page_size, 50, { min: 10, max: 200 });
+    const limitClause = paginated ? "LIMIT ? OFFSET ?" : "";
+    const queryParams = paginated ? [...params, pageSize, (page - 1) * pageSize] : params;
     const [rows] = await db.query(
       `SELECT i.id, i.fonte, i.titulo, i.escopo_chave, i.codigo_escola, i.codigo_turno,
               i.nome_turno, i.status, i.ativa, i.total_arquivos, i.total_horarios,
@@ -698,10 +1256,18 @@ app.get("/api/importacoes", requireRole("CPD"), async (req, res, next) => {
          JOIN usuarios sender ON sender.id = i.enviado_por
          LEFT JOIN usuarios reviewer ON reviewer.id = i.revisado_por
          ${where}
-        ORDER BY i.created_at DESC`,
-      params
+        ORDER BY i.created_at DESC
+        ${limitClause}`,
+      queryParams
     );
-    res.json(rows.map((row) => ({ ...row, ativa: Boolean(row.ativa), avisos: parseJson(row.avisos_json, []) })));
+    const items = rows.map((row) => ({ ...row, ativa: Boolean(row.ativa), avisos: parseJson(row.avisos_json, []) }));
+    if (!paginated) return res.json(items);
+
+    const [countRows] = await db.query(`SELECT COUNT(*) AS total FROM importacoes_horarios i ${where}`, params);
+    res.json({
+      items,
+      paginacao: { pagina: page, por_pagina: pageSize, total: Number(countRows[0].total) },
+    });
   } catch (error) {
     next(error);
   }
@@ -832,7 +1398,9 @@ app.get("/api/horarios/publicados", async (req, res, next) => {
         ORDER BY h.curso, h.ano, h.turma`
     );
     if (req.query.apenas_opcoes === "1" || req.query.apenas_opcoes === "true") {
-      return res.json({ turmas: options, horarios: [] });
+      const payload = { turmas: options, horarios: [] };
+      if (req.user) return res.json(payload);
+      return cacheableJson(req, res, payload, { maxAge: 120, staleWhileRevalidate: 600 });
     }
     const conditions = ["i.status = 'APROVADA'", "i.ativa = TRUE", "h.categoria = 'TURMA'"];
     const params = [];
@@ -850,7 +1418,8 @@ app.get("/api/horarios/publicados", async (req, res, next) => {
     const [schedules] = await db.query(
       `SELECT h.id, h.turma, h.curso, h.ano, h.dia, h.periodo,
               TIME_FORMAT(h.hora_inicio, '%H:%i') AS hora_inicio,
-              h.disciplina, h.professor, COALESCE(s.nome, h.ambiente) AS sala,
+              h.disciplina, h.professor, h.sala_id, h.ambiente,
+              COALESCE(s.nome, h.ambiente) AS sala,
               b.nome AS bloco, i.id AS importacao_id, i.publicado_em
          FROM horarios_importados h
          JOIN importacoes_horarios i ON i.id = h.importacao_id
@@ -860,14 +1429,67 @@ app.get("/api/horarios/publicados", async (req, res, next) => {
         ORDER BY h.turma, FIELD(h.dia, 'SEG','TER','QUA','QUI','SEX','SAB','DOM'), h.periodo`,
       params
     );
-    res.json({ turmas: options, horarios: schedules });
+    const payload = { turmas: options, horarios: schedules };
+    if (req.user) return res.json(payload);
+    return cacheableJson(req, res, payload, { maxAge: 120, staleWhileRevalidate: 600 });
   } catch (error) {
     next(error);
   }
 });
 
-app.use((error, _req, res, _next) => {
-  console.error(error);
+app.patch("/api/horarios/publicados/:id/sala", requireRole("CPD"), async (req, res, next) => {
+  const scheduleId = Number(req.params.id);
+  const rawRoomId = req.body?.sala_id;
+  const roomId = rawRoomId === null || rawRoomId === undefined || rawRoomId === "" ? null : Number(rawRoomId);
+
+  if (!Number.isInteger(scheduleId) || scheduleId < 1) {
+    return next(httpError(400, "Horário inválido."));
+  }
+  if (roomId !== null && (!Number.isInteger(roomId) || roomId < 1)) {
+    return next(httpError(400, "Sala inválida."));
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [schedules] = await conn.query(
+      `SELECT h.id
+         FROM horarios_importados h
+         JOIN importacoes_horarios i ON i.id = h.importacao_id
+        WHERE h.id = ?
+          AND h.categoria = 'TURMA'
+          AND i.status = 'APROVADA'
+          AND i.ativa = TRUE
+        FOR UPDATE`,
+      [scheduleId]
+    );
+    if (!schedules.length) throw httpError(404, "Horário publicado não encontrado.");
+
+    if (roomId !== null) {
+      const [rooms] = await conn.query("SELECT id FROM salas WHERE id = ? LIMIT 1", [roomId]);
+      if (!rooms.length) throw httpError(400, "Sala não encontrada.");
+    }
+
+    await conn.query("UPDATE horarios_importados SET sala_id = ? WHERE id = ?", [roomId, scheduleId]);
+    await conn.commit();
+    res.json({ ok: true, id: scheduleId, sala_id: roomId });
+  } catch (error) {
+    await conn.rollback();
+    next(error);
+  } finally {
+    conn.release();
+  }
+});
+
+if (serveStaticFrontend) {
+  app.get("*", (req, res, next) => {
+    if (req.path.startsWith("/api") || req.path.startsWith("/api-CIMOL")) return next();
+    res.sendFile(path.join(distPath, "index.html"));
+  });
+}
+
+app.use((error, req, res, _next) => {
+  console.error({ requestId: req.id, error });
   let status = error.statusCode || 500;
   if (error instanceof multer.MulterError || error.message?.includes("Formato") || error.message?.includes("Tipo")) {
     status = 400;

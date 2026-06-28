@@ -4,6 +4,27 @@ const SESSION_COOKIE = "cimol_session";
 const SESSION_DURATION_MS = 8 * 60 * 60 * 1000;
 
 const normalizeUsername = (value) => String(value || "").trim().toLowerCase();
+const asBoolean = (value) => value === true || value === "true" || value === "1" || value === "on";
+
+const sessionCookieAttributes = () => {
+  const sameSite = ["Strict", "Lax", "None"].includes(process.env.COOKIE_SAMESITE)
+    ? process.env.COOKIE_SAMESITE
+    : "Lax";
+  const secure =
+    process.env.COOKIE_SECURE == null
+      ? process.env.NODE_ENV === "production" || sameSite === "None"
+      : asBoolean(process.env.COOKIE_SECURE);
+  const domain = String(process.env.COOKIE_DOMAIN || "").trim();
+  return [
+    "HttpOnly",
+    `SameSite=${sameSite}`,
+    "Path=/",
+    domain && `Domain=${domain}`,
+    secure && "Secure",
+  ]
+    .filter(Boolean)
+    .join("; ");
+};
 
 const derivePasswordHash = (password, salt) =>
   new Promise((resolve, reject) => {
@@ -51,20 +72,18 @@ const getRequestToken = (req) => {
 };
 
 export const setSessionCookie = (res, token) => {
-  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
   res.setHeader(
     "Set-Cookie",
-    `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(
+    `${SESSION_COOKIE}=${encodeURIComponent(token)}; ${sessionCookieAttributes()}; Max-Age=${Math.floor(
       SESSION_DURATION_MS / 1000
-    )}${secure}`
+    )}`
   );
 };
 
 export const clearSessionCookie = (res) => {
-  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
   res.setHeader(
     "Set-Cookie",
-    `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`
+    `${SESSION_COOKIE}=; ${sessionCookieAttributes()}; Max-Age=0`
   );
 };
 
