@@ -89,8 +89,10 @@ CREATE TABLE IF NOT EXISTS salas (
   bloco_id              INT NOT NULL,
   nome                   VARCHAR(120) NOT NULL,
   andar                  VARCHAR(40) NOT NULL,
-  capacidade             INT UNSIGNED NOT NULL,
+  capacidade             INT UNSIGNED NULL,
   tipo                   VARCHAR(80) NOT NULL,
+  status                 ENUM('ATIVA', 'INATIVA', 'MANUTENCAO') NOT NULL DEFAULT 'ATIVA',
+  acessivel              BOOLEAN NOT NULL DEFAULT FALSE,
   possui_computadores    BOOLEAN NOT NULL DEFAULT FALSE,
   possui_data_show       BOOLEAN NOT NULL DEFAULT FALSE,
   possui_internet        BOOLEAN NOT NULL DEFAULT FALSE,
@@ -240,4 +242,24 @@ CREATE TABLE IF NOT EXISTS horarios_importados (
   INDEX idx_horarios_sala (sala_id),
   FOREIGN KEY (importacao_id) REFERENCES importacoes_horarios(id) ON DELETE CASCADE,
   FOREIGN KEY (sala_id) REFERENCES salas(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS sala_alteracoes (
+  id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
+  horario_id          BIGINT NOT NULL,
+  usuario_id          INT NOT NULL,
+  turma               VARCHAR(120) NOT NULL,
+  dia                 VARCHAR(3) NOT NULL,
+  periodo             TINYINT UNSIGNED NOT NULL,
+  sala_anterior_id    INT NULL,
+  sala_nova_id        INT NULL,
+  quantidade_alunos   INT UNSIGNED NULL,
+  motivo              VARCHAR(255) NULL,
+  created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_sala_alteracoes_data (created_at, id),
+  INDEX idx_sala_alteracoes_horario (horario_id),
+  FOREIGN KEY (horario_id) REFERENCES horarios_importados(id) ON DELETE CASCADE,
+  FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE RESTRICT,
+  FOREIGN KEY (sala_anterior_id) REFERENCES salas(id) ON DELETE SET NULL,
+  FOREIGN KEY (sala_nova_id) REFERENCES salas(id) ON DELETE SET NULL
 );

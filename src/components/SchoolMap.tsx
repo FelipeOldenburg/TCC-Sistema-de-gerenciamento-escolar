@@ -35,8 +35,10 @@ type Room = {
   bloco_id: number;
   bloco_nome: string;
   andar: string;
-  capacidade: number;
+  capacidade: number | null;
   tipo: string;
+  status: "ATIVA" | "INATIVA" | "MANUTENCAO";
+  acessivel: boolean;
   possui_computadores: boolean;
   possui_data_show: boolean;
   possui_internet: boolean;
@@ -44,6 +46,20 @@ type Room = {
   softwares: string[];
   observacoes: string | null;
 };
+
+type RoomOccupancy = {
+  id: number;
+  turma: string;
+  curso: string | null;
+  ano: string | null;
+  dia: string;
+  periodo: number;
+  hora_inicio: string | null;
+  disciplina: string;
+  professor: string | null;
+};
+
+type RoomOccupancyResponse = { horarios: RoomOccupancy[] };
 
 const markerPositions = [
   { left: "20%", top: "58%" },
@@ -57,9 +73,20 @@ const markerPositions = [
 ];
 
 const collator = new Intl.Collator("pt-BR", { numeric: true, sensitivity: "base" });
+const weekdayCodes = ["DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SAB"] as const;
 
 function normalize(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+function minutesFromTime(value: string | null) {
+  if (!value) return null;
+  const [hours, minutes] = value.split(":").map(Number);
+  return Number.isFinite(hours) && Number.isFinite(minutes) ? hours * 60 + minutes : null;
+}
+
+function scheduleLabel(schedule: RoomOccupancy) {
+  return `${schedule.hora_inicio || `${schedule.periodo}ª aula`} · ${schedule.turma} · ${schedule.disciplina}`;
 }
 
 export default function SchoolMap() {
@@ -72,6 +99,9 @@ export default function SchoolMap() {
   const [zoom, setZoom] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [occupancy, setOccupancy] = useState<RoomOccupancy[]>([]);
+  const [occupancyLoading, setOccupancyLoading] = useState(false);
+  const [occupancyError, setOccupancyError] = useState("");
 
   const loadMapData = async () => {
     setLoading(true);
@@ -133,6 +163,59 @@ export default function SchoolMap() {
     [blockRooms, selectedFloor],
   );
   const selectedRoom = rooms.find((room) => room.id === selectedRoomId) ?? null;
+  useEffect(() => {
+    if (!selectedRoomId) {
+      setOccupancy([]);
+      setOccupancyError("");
+      return;
+    }
+
+    let ignore = false;
+    setOccupancyLoading(true);
+    setOccupancyError("");
+    apiFetch<RoomOccupancyResponse>(`/api/salas/${selectedRoomId}/ocupacao`)
+      .then((data) => { if (!ignore) setOccupancy(data.horarios || []); })
+      .catch(() => { if (!ignore) setOccupancyError("Não foi possível carregar a ocupação da sala."); })
+      .finally(() => { if (!ignore) setOccupancyLoading(false); });
+
+    return () => {
+      ignore = true;
+    };
+  }, [selectedRoomId]);
+
+  const roomTimeline = useMemo(() => {
+    const todayCode = weekdayCodes[new Date().getDay()];
+    const today = occupancy
+      .filter((schedule) => schedule.dia === todayCode)
+      .sort((a, b) => (minutesFromTime(a.hora_inicio) ?? a.periodo * 100) - (minutesFromTime(b.hora_inicio) ?? b.periodo * 100));
+    const now = new Date();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    let current: RoomOccupancy | null = null;
+    let next: RoomOccupancy | null = null;
+
+    for (let index = 0; index < today.length; index += 1) {
+      const schedule = today[index];
+      const start = minutesFromTime(schedule.hora_inicio);
+      if (start === null) {
+        if (!next) next = schedule;
+        continue;
+      }
+      const nextStart = minutesFromTime(today[index + 1]?.hora_inicio ?? null);
+      // ponytail: fallback de 60 min até a importação trazer hora final.
+      const end = nextStart ?? start + 60;
+      if (start <= nowMinutes && nowMinutes < end) {
+        current = schedule;
+        next = today[index + 1] ?? null;
+        break;
+      }
+      if (start > nowMinutes) {
+        next = schedule;
+        break;
+      }
+    }
+
+    return { today, current, next };
+  }, [occupancy]);
   const searchResults = useMemo(() => {
     const term = normalize(query.trim());
     if (!term) return [];
@@ -267,7 +350,7 @@ export default function SchoolMap() {
                     <span className="min-w-0">
                       <span className="block truncate text-sm font-bold">{room.nome}</span>
                       <span className="mt-0.5 block truncate text-xs text-muted-foreground">{room.tipo}</span>
-                      <span className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground"><Users className="h-3 w-3" /> {room.capacidade} lugares</span>
+                      <span className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground"><Users className="h-3 w-3" /> {room.capacidade == null ? "Capacidade a conferir" : `${room.capacidade} lugares`}</span>
                     </span>
                   </button>
                 ))}
@@ -301,7 +384,26 @@ export default function SchoolMap() {
               <div className="mt-4 space-y-2 rounded-xl bg-muted/60 p-3 text-sm">
                 <p className="flex items-center gap-2"><Building2 className="h-4 w-4 text-primary" /> {selectedRoom.bloco_nome}</p>
                 <p className="flex items-center gap-2"><Layers3 className="h-4 w-4 text-primary" /> {selectedRoom.andar}</p>
-                <p className="flex items-center gap-2"><Users className="h-4 w-4 text-primary" /> {selectedRoom.capacidade} lugares</p>
+                <p className="flex items-center gap-2"><Users className="h-4 w-4 text-primary" /> {selectedRoom.capacidade == null ? "Capacidade a conferir" : `${selectedRoom.capacidade} lugares`}</p>
+                {selectedRoom.acessivel && <p className="flex items-center gap-2"><Navigation className="h-4 w-4 text-primary" /> Acessível</p>}
+              </div>
+              <div className="mt-4 rounded-xl border bg-background p-3">
+                <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Ocupação hoje</p>
+                {occupancyLoading ? (
+                  <p className="mt-2 text-sm text-muted-foreground">Carregando ocupação...</p>
+                ) : occupancyError ? (
+                  <p className="mt-2 text-sm text-destructive">{occupancyError}</p>
+                ) : (
+                  <div className="mt-2 space-y-2 text-sm">
+                    <p><span className="font-semibold">Agora:</span> {roomTimeline.current ? scheduleLabel(roomTimeline.current) : "Sem aula em andamento"}</p>
+                    <p><span className="font-semibold">Próxima:</span> {roomTimeline.next ? scheduleLabel(roomTimeline.next) : "Nenhuma próxima aula hoje"}</p>
+                    {roomTimeline.today.length > 0 && (
+                      <div className="space-y-1 border-t pt-2 text-xs text-muted-foreground">
+                        {roomTimeline.today.slice(0, 5).map((schedule) => <p key={schedule.id}>{scheduleLabel(schedule)}</p>)}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               <div className="mt-4">
                 <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Recursos</p>

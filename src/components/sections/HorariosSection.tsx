@@ -4,11 +4,21 @@ import { toast } from "sonner";
 import { apiFetch, type SessionUser } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 type ClassOption = { turma: string; curso: string | null; ano: string | null };
-type RoomOption = { id: number; nome: string; bloco_nome: string; andar: string; capacidade: number; tipo: string };
+type RoomOption = {
+  id: number;
+  nome: string;
+  bloco_nome: string;
+  andar: string;
+  capacidade: number | null;
+  tipo: string;
+  status: "ATIVA" | "INATIVA" | "MANUTENCAO";
+  acessivel: boolean;
+};
 type PublishedSchedule = {
   id: number;
   turma: string;
@@ -69,6 +79,8 @@ const HorariosSection = () => {
   const [roomValue, setRoomValue] = useState(NO_ROOM_VALUE);
   const [roomError, setRoomError] = useState("");
   const [savingRoom, setSavingRoom] = useState(false);
+  const [studentCount, setStudentCount] = useState("");
+  const [roomReason, setRoomReason] = useState("");
 
   const isCpd = user?.papel === "CPD";
 
@@ -123,6 +135,9 @@ const HorariosSection = () => {
     () => rooms.find((room) => String(room.id) === roomValue) || null,
     [rooms, roomValue]
   );
+  const selectedRoomCapacity = selectedRoom?.capacidade ?? null;
+  const parsedStudentCount = studentCount ? Number(studentCount) : null;
+  const capacityWarning = selectedRoom && parsedStudentCount && selectedRoomCapacity !== null && parsedStudentCount > selectedRoomCapacity;
 
   const ensureRoomsLoaded = async () => {
     if (roomsLoaded || loadingRooms) return;
@@ -143,6 +158,8 @@ const HorariosSection = () => {
     setSelectedSchedule(schedule);
     setRoomValue(schedule.sala_id ? String(schedule.sala_id) : NO_ROOM_VALUE);
     setRoomError("");
+    setStudentCount("");
+    setRoomReason("");
     void ensureRoomsLoaded();
   };
 
@@ -160,7 +177,11 @@ const HorariosSection = () => {
     try {
       await apiFetch(`/api/horarios/publicados/${selectedSchedule.id}/sala`, {
         method: "PATCH",
-        body: JSON.stringify({ sala_id: salaId }),
+        body: JSON.stringify({
+          sala_id: salaId,
+          quantidade_alunos: studentCount ? Number(studentCount) : null,
+          motivo: roomReason,
+        }),
       });
       setSchedules((current) =>
         current.map((schedule) =>
@@ -328,20 +349,32 @@ const HorariosSection = () => {
                       {selectedSchedule.ambiente ? `Usar ambiente importado (${selectedSchedule.ambiente})` : "Sem sala definida"}
                     </SelectItem>
                     {rooms.map((room) => (
-                      <SelectItem key={room.id} value={String(room.id)}>
-                        {room.nome} · {room.bloco_nome} · {room.tipo}
+                      <SelectItem key={room.id} value={String(room.id)} disabled={room.status !== "ATIVA"}>
+                        {room.nome} · {room.bloco_nome} · {room.tipo}{room.status !== "ATIVA" ? " · indisponível" : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
                 {selectedRoom && (
                   <p className="text-xs text-muted-foreground">
-                    {selectedRoom.bloco_nome}, {selectedRoom.andar} · {selectedRoom.capacidade} lugares · {selectedRoom.tipo}
+                    {selectedRoom.bloco_nome}, {selectedRoom.andar} · {selectedRoom.capacidade == null ? "capacidade a conferir" : `${selectedRoom.capacidade} lugares`} · {selectedRoom.tipo}{selectedRoom.acessivel ? " · acessível" : ""}
                   </p>
                 )}
                 {!loadingRooms && roomsLoaded && !rooms.length && (
                   <p className="text-xs text-muted-foreground">Nenhuma sala cadastrada no painel do CPD.</p>
                 )}
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="text-sm font-medium text-foreground">Quantidade de alunos</label>
+                  <Input type="number" min={1} value={studentCount} onChange={(event) => setStudentCount(event.target.value)} placeholder="Opcional" />
+                  {capacityWarning && <p className="mt-1 text-xs text-destructive">A sala comporta {selectedRoomCapacity} alunos.</p>}
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-foreground">Motivo</label>
+                  <Input value={roomReason} onChange={(event) => setRoomReason(event.target.value)} placeholder="Opcional" />
+                </div>
               </div>
 
               {roomError && <p className="text-sm text-destructive">{roomError}</p>}
@@ -352,7 +385,7 @@ const HorariosSection = () => {
             <Button type="button" variant="outline" onClick={closeRoomConfig} disabled={savingRoom}>
               Cancelar
             </Button>
-            <Button type="button" onClick={saveRoomConfig} disabled={savingRoom || loadingRooms}>
+            <Button type="button" onClick={saveRoomConfig} disabled={savingRoom || loadingRooms || !!capacityWarning}>
               {savingRoom ? "Salvando..." : "Salvar sala"}
             </Button>
           </DialogFooter>

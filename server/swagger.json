@@ -43,12 +43,12 @@
       },
       "SalaInput": {
         "type": "object",
-        "required": ["bloco_id", "nome", "andar", "capacidade", "tipo"],
+        "required": ["bloco_id", "nome", "andar", "tipo"],
         "properties": {
           "bloco_id": { "type": "integer" },
           "nome": { "type": "string" },
           "andar": { "type": "string" },
-          "capacidade": { "type": "integer", "minimum": 1 },
+          "capacidade": { "type": "integer", "minimum": 1, "nullable": true },
           "tipo": { "type": "string" },
           "possui_computadores": { "type": "boolean" },
           "possui_data_show": { "type": "boolean" },

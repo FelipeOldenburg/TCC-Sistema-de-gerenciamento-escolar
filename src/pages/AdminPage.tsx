@@ -28,9 +28,9 @@ type ReorganizacaoRegistro = {
 };
 
 const sidebarItems: { id: AdminTab; label: string; icon: typeof FileUp; roles: UserRole[] }[] = [
-  { id: "horarios", label: "URÂNIA UP", icon: FileUp, roles: ["ADMIN", "CPD"] },
+  { id: "horarios", label: "Turmas e Horários", icon: FileUp, roles: ["ADMIN", "CPD"] },
   { id: "blocos", label: "Blocos", icon: Building2, roles: ["CPD"] },
-  { id: "salas", label: "Salas", icon: DoorOpen, roles: ["CPD"] },
+  { id: "salas", label: "Controle de Salas", icon: DoorOpen, roles: ["CPD"] },
   { id: "eventos", label: "Eventos", icon: CalendarDays, roles: ["CPD"] },
   { id: "setores", label: "Setores", icon: Building2, roles: ["CPD"] },
   { id: "ouvidoria", label: "Ouvidoria", icon: MessageSquareWarning, roles: ["CPD"] },

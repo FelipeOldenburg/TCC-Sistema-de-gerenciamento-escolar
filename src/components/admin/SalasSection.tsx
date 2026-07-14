@@ -1,22 +1,27 @@
-import { useEffect, useState } from "react";
-import { Edit, Plus, Save, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowRightLeft, Edit, History, Plus, Save, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 type Bloco = { id: number; nome: string };
+type RoomStatus = "ATIVA" | "INATIVA" | "MANUTENCAO";
 type Sala = {
   id: number;
   nome: string;
   bloco_id: number;
   bloco_nome: string;
   andar: string;
-  capacidade: number;
+  capacidade: number | null;
   tipo: string;
+  status: RoomStatus;
+  acessivel: boolean;
   possui_computadores: boolean;
   possui_data_show: boolean;
   possui_internet: boolean;
@@ -25,12 +30,46 @@ type Sala = {
   observacoes: string | null;
 };
 
+type Shift = "manha" | "tarde";
+
+type RoomOccupancy = {
+  id: number;
+  sala_id: number | null;
+  turma: string;
+  curso: string | null;
+  ano: string | null;
+  dia: string;
+  periodo: number;
+  hora_inicio: string | null;
+  disciplina: string;
+  professor: string | null;
+  ambiente?: string | null;
+  sala?: string | null;
+  bloco?: string | null;
+};
+
+type ChangeHistory = {
+  id: number;
+  turma: string;
+  dia: string;
+  periodo: number;
+  hora_inicio: string | null;
+  quantidade_alunos: number | null;
+  motivo: string | null;
+  created_at: string;
+  sala_anterior: string | null;
+  sala_nova: string | null;
+  usuario_nome: string;
+};
+
 const emptyForm = {
   bloco_id: "",
   nome: "",
   andar: "",
   capacidade: "",
   tipo: "",
+  status: "ATIVA" as RoomStatus,
+  acessivel: false,
   possui_computadores: false,
   possui_data_show: false,
   possui_internet: false,
@@ -39,36 +78,113 @@ const emptyForm = {
   observacoes: "",
 };
 
+const statusLabel: Record<RoomStatus, string> = {
+  ATIVA: "Ativa",
+  INATIVA: "Inativa",
+  MANUTENCAO: "Manutenção",
+};
+
+const statusClass: Record<RoomStatus, string> = {
+  ATIVA: "bg-emerald-100 text-emerald-800 border-emerald-200",
+  INATIVA: "bg-slate-100 text-slate-700 border-slate-200",
+  MANUTENCAO: "bg-amber-100 text-amber-800 border-amber-200",
+};
+
+const sheetPeriods = [1, 2, 3, 4, 5];
+const dayOrder = ["SEG", "TER", "QUA", "QUI", "SEX", "SAB", "DOM"];
+const dayLabels: Record<string, string> = {
+  SEG: "Segunda",
+  TER: "Terça",
+  QUA: "Quarta",
+  QUI: "Quinta",
+  SEX: "Sexta",
+  SAB: "Sábado",
+  DOM: "Domingo",
+};
+
+const getHour = (time: string | null) => {
+  const hour = Number(time?.slice(0, 2));
+  return Number.isFinite(hour) ? hour : null;
+};
+
+const getShift = (item: RoomOccupancy): Shift => {
+  const hour = getHour(item.hora_inicio);
+  if (hour !== null) return hour >= 12 ? "tarde" : "manha";
+  return item.periodo > 5 ? "tarde" : "manha";
+};
+
+const getSheetPeriod = (item: RoomOccupancy) => ((item.periodo - 1) % 5) + 1;
+const isSameSlot = (item: RoomOccupancy, day: string, shift: Shift, period: number) =>
+  item.dia === day && getShift(item) === shift && getSheetPeriod(item) === period;
+
+const sortOccupancy = (a: RoomOccupancy, b: RoomOccupancy) => {
+  const dayA = dayOrder.indexOf(a.dia);
+  const dayB = dayOrder.indexOf(b.dia);
+  return (dayA === -1 ? 99 : dayA) - (dayB === -1 ? 99 : dayB)
+    || getSheetPeriod(a) - getSheetPeriod(b)
+    || (a.hora_inicio || "").localeCompare(b.hora_inicio || "")
+    || a.turma.localeCompare(b.turma, "pt-BR");
+};
+
 export default function SalasSection() {
   const [blocos, setBlocos] = useState<Bloco[]>([]);
   const [salas, setSalas] = useState<Sala[]>([]);
+  const [ocupacoes, setOcupacoes] = useState<RoomOccupancy[]>([]);
+  const [allSchedules, setAllSchedules] = useState<RoomOccupancy[]>([]);
+  const [historico, setHistorico] = useState<ChangeHistory[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("todas");
+  const [selectedDay, setSelectedDay] = useState("SEG");
+  const [transfer, setTransfer] = useState<{
+    schedule: RoomOccupancy;
+    salaId: string;
+    quantidadeAlunos: string;
+    motivo: string;
+  } | null>(null);
+  const [savingTransfer, setSavingTransfer] = useState(false);
+  const [slotPicker, setSlotPicker] = useState<{
+    sala: Sala;
+    shift: Shift;
+    period: number;
+    scheduleId: string;
+    quantidadeAlunos: string;
+    motivo: string;
+  } | null>(null);
+  const [savingSlot, setSavingSlot] = useState(false);
+  const [slotError, setSlotError] = useState("");
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [blockData, roomData] = await Promise.all([
+      const [blockData, roomData, scheduleData, historyData] = await Promise.all([
         apiFetch<Bloco[]>("/api/blocos"),
         apiFetch<Sala[]>("/api/salas"),
+        apiFetch<{ horarios: RoomOccupancy[] }>(`/api/horarios/publicados?dia=${encodeURIComponent(selectedDay)}`),
+        apiFetch<ChangeHistory[]>("/api/sala-alteracoes?limit=20"),
       ]);
+      const schedules = scheduleData.horarios || [];
       setBlocos(blockData);
       setSalas(roomData);
+      setAllSchedules(schedules);
+      setOcupacoes(schedules.filter((item) => item.sala_id));
+      setHistorico(historyData);
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar salas.");
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedDay]);
 
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
 
   const reset = () => {
     setForm(emptyForm);
@@ -89,8 +205,10 @@ export default function SalasSection() {
       bloco_id: String(sala.bloco_id),
       nome: sala.nome,
       andar: sala.andar,
-      capacidade: String(sala.capacidade),
+      capacidade: sala.capacidade == null ? "" : String(sala.capacidade),
       tipo: sala.tipo,
+      status: sala.status,
+      acessivel: sala.acessivel,
       possui_computadores: sala.possui_computadores,
       possui_data_show: sala.possui_data_show,
       possui_internet: sala.possui_internet,
@@ -113,7 +231,7 @@ export default function SalasSection() {
         body: JSON.stringify({
           ...form,
           bloco_id: Number(form.bloco_id),
-          capacidade: Number(form.capacidade),
+          capacidade: form.capacidade === "" ? null : Number(form.capacidade),
           softwares: form.softwares.split(",").map((value) => value.trim()).filter(Boolean),
         }),
       });
@@ -128,15 +246,179 @@ export default function SalasSection() {
   };
 
   const remove = async (sala: Sala) => {
-    if (!window.confirm(`Excluir a sala “${sala.nome}”?`)) return;
+    if (!window.confirm(`Desativar a sala "${sala.nome}"?`)) return;
     try {
       await apiFetch(`/api/salas/${sala.id}`, { method: "DELETE" });
-      toast.success("Sala excluída.");
+      toast.success("Sala desativada.");
       await load();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erro ao excluir sala.");
+      toast.error(err instanceof Error ? err.message : "Erro ao desativar sala.");
     }
   };
+
+  const ocupacoesPorSala = useMemo(() => {
+    const map = new Map<number, RoomOccupancy[]>();
+    ocupacoes.forEach((item) => {
+      if (!item.sala_id) return;
+      const items = map.get(item.sala_id) || [];
+      items.push(item);
+      map.set(item.sala_id, items);
+    });
+    return map;
+  }, [ocupacoes]);
+
+  const salasFiltradas = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return salas.filter((sala) => {
+      const roomOccupancy = ocupacoesPorSala.get(sala.id) || [];
+      const text = `${sala.nome} ${sala.bloco_nome} ${sala.tipo} ${sala.capacidade ?? ""}`.toLowerCase();
+      if (term && !text.includes(term)) return false;
+      if (filter === "livres" && roomOccupancy.length) return false;
+      if (filter === "ocupadas" && !roomOccupancy.length) return false;
+      if (filter === "laboratorios" && !sala.tipo.toLowerCase().includes("lab")) return false;
+      if (filter === "aulas" && !sala.tipo.toLowerCase().includes("sala")) return false;
+      return true;
+    });
+  }, [filter, ocupacoesPorSala, salas, search]);
+
+  const salasPorBloco = useMemo(() => {
+    const map = new Map<string, Sala[]>();
+    salasFiltradas.forEach((sala) => {
+      const items = map.get(sala.bloco_nome) || [];
+      items.push(sala);
+      map.set(sala.bloco_nome, items);
+    });
+    return [...map.entries()];
+  }, [salasFiltradas]);
+
+  const salasAtivas = useMemo(() => salas.filter((sala) => sala.status === "ATIVA"), [salas]);
+  const targetRoom = transfer ? salas.find((sala) => String(sala.id) === transfer.salaId) || null : null;
+  const targetCapacity = targetRoom?.capacidade ?? null;
+  const studentCount = transfer?.quantidadeAlunos ? Number(transfer.quantidadeAlunos) : null;
+  const capacityWarning = targetRoom && studentCount && targetCapacity !== null && studentCount > targetCapacity;
+  const slotCandidates = useMemo(() => {
+    if (!slotPicker) return [];
+    return allSchedules
+      .filter((item) => isSameSlot(item, selectedDay, slotPicker.shift, slotPicker.period))
+      .sort(sortOccupancy);
+  }, [allSchedules, selectedDay, slotPicker]);
+  const selectedSlotSchedule = slotCandidates.find((item) => String(item.id) === slotPicker?.scheduleId) || null;
+  const slotStudentCount = slotPicker?.quantidadeAlunos ? Number(slotPicker.quantidadeAlunos) : null;
+  const slotCapacityWarning = Boolean(slotPicker && slotStudentCount && slotPicker.sala.capacidade !== null && slotStudentCount > slotPicker.sala.capacidade);
+
+  const openTransfer = (schedule: RoomOccupancy) => {
+    setTransfer({
+      schedule,
+      salaId: schedule.sala_id ? String(schedule.sala_id) : "",
+      quantidadeAlunos: "",
+      motivo: "",
+    });
+  };
+
+  const saveTransfer = async () => {
+    if (!transfer) return;
+    setSavingTransfer(true);
+    try {
+      await apiFetch(`/api/horarios/publicados/${transfer.schedule.id}/sala`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          sala_id: Number(transfer.salaId),
+          quantidade_alunos: transfer.quantidadeAlunos ? Number(transfer.quantidadeAlunos) : null,
+          motivo: transfer.motivo,
+        }),
+      });
+      toast.success("Turma transferida de sala.");
+      setTransfer(null);
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao transferir turma.");
+    } finally {
+      setSavingTransfer(false);
+    }
+  };
+
+  const openSlotPicker = (sala: Sala, shift: Shift, period: number) => {
+    setSlotPicker({ sala, shift, period, scheduleId: "", quantidadeAlunos: "", motivo: "" });
+    setSlotError("");
+  };
+
+  const saveSlotAssignment = async () => {
+    if (!slotPicker || !slotPicker.scheduleId) {
+      setSlotError("Selecione uma turma para este período.");
+      return;
+    }
+    setSavingSlot(true);
+    setSlotError("");
+    try {
+      await apiFetch(`/api/horarios/publicados/${slotPicker.scheduleId}/sala`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          sala_id: slotPicker.sala.id,
+          quantidade_alunos: slotPicker.quantidadeAlunos ? Number(slotPicker.quantidadeAlunos) : null,
+          motivo: slotPicker.motivo,
+        }),
+      });
+      toast.success("Turma definida para o período.");
+      setSlotPicker(null);
+      await load();
+    } catch (err) {
+      setSlotError(err instanceof Error ? err.message : "Erro ao definir turma no período.");
+    } finally {
+      setSavingSlot(false);
+    }
+  };
+
+  const renderShiftGrid = (sala: Sala, roomOccupancy: RoomOccupancy[], shift: Shift) => (
+    <div className="min-w-[28rem] rounded-md border border-slate-300 bg-white text-xs shadow-sm">
+      <div className="grid grid-cols-5 border-b border-slate-300 bg-slate-100 font-semibold text-slate-700">
+        {sheetPeriods.map((period) => (
+          <div key={period} className="border-r border-slate-300 px-2 py-1 text-center last:border-r-0">
+            {period}ª
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-5">
+        {sheetPeriods.map((period) => {
+          const items = roomOccupancy.filter((item) => isSameSlot(item, selectedDay, shift, period));
+          const candidates = allSchedules.filter((item) => isSameSlot(item, selectedDay, shift, period));
+          return (
+            <div key={period} className="min-h-24 border-r border-slate-200 p-1.5 last:border-r-0">
+              {items.length ? (
+                <div className="max-h-28 space-y-1 overflow-y-auto">
+                  {items.map((item) => (
+                    <Button
+                      key={item.id}
+                      type="button"
+                      variant="ghost"
+                      onClick={() => openTransfer(item)}
+                      title={`${item.dia} · ${item.hora_inicio || `${item.periodo}ª aula`} · ${item.turma} · ${item.disciplina}`}
+                      className="h-auto w-full justify-start rounded border border-blue-200 bg-blue-50 px-1.5 py-1 text-left text-[11px] leading-tight text-blue-950 hover:bg-blue-100"
+                    >
+                      <ArrowRightLeft className="mr-1 mt-0.5 h-3 w-3 shrink-0" />
+                      <span className="min-w-0">
+                        <span className="block truncate font-semibold">{item.turma}</span>
+                        <span className="block truncate text-[10px] font-normal text-blue-800">{item.dia} · {item.hora_inicio || `${item.periodo}ª`}</span>
+                      </span>
+                    </Button>
+                  ))}
+                </div>
+              ) : (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={!candidates.length}
+                  onClick={() => openSlotPicker(sala, shift, period)}
+                  className="flex min-h-20 w-full items-center justify-center rounded border border-dashed border-emerald-200 bg-emerald-50 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-100"
+                >
+                  {candidates.length ? "+ Turma" : "Sem aula"}
+                </Button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 
   const resourceFields = [
     ["possui_computadores", "Computadores"],
@@ -149,8 +431,8 @@ export default function SalasSection() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h2 className="text-2xl font-heading font-bold">Salas</h2>
-          <p className="text-sm text-muted-foreground">Gerencie capacidade, tipo e recursos de cada ambiente.</p>
+          <h2 className="text-2xl font-heading font-bold">Controle de Salas</h2>
+          <p className="text-sm text-muted-foreground">Visualize ocupação por bloco e transfira turmas sem conflito de horário.</p>
         </div>
         <Button onClick={openNew} disabled={!blocos.length} className="gap-2">
           <Plus className="w-4 h-4" /> Nova sala
@@ -185,11 +467,27 @@ export default function SalasSection() {
             </div>
             <div><label className="text-sm font-medium mb-1 block">Nome *</label><Input value={form.nome} onChange={(event) => setForm({ ...form, nome: event.target.value })} placeholder="Ex.: C 303" /></div>
             <div><label className="text-sm font-medium mb-1 block">Andar *</label><Input value={form.andar} onChange={(event) => setForm({ ...form, andar: event.target.value })} placeholder="Ex.: 3º andar" /></div>
-            <div><label className="text-sm font-medium mb-1 block">Capacidade *</label><Input type="number" min={1} value={form.capacidade} onChange={(event) => setForm({ ...form, capacidade: event.target.value })} /></div>
+            <div><label className="text-sm font-medium mb-1 block">Capacidade</label><Input type="number" min={1} value={form.capacidade} onChange={(event) => setForm({ ...form, capacidade: event.target.value })} placeholder="Deixe em branco se ilegível" /></div>
             <div><label className="text-sm font-medium mb-1 block">Tipo *</label><Input value={form.tipo} onChange={(event) => setForm({ ...form, tipo: event.target.value })} placeholder="Sala de aula, laboratório..." /></div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Status</label>
+              <select
+                value={form.status}
+                onChange={(event) => setForm({ ...form, status: event.target.value as RoomStatus })}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="ATIVA">Ativa</option>
+                <option value="MANUTENCAO">Manutenção</option>
+                <option value="INATIVA">Inativa</option>
+              </select>
+            </div>
             <div><label className="text-sm font-medium mb-1 block">Softwares instalados</label><Input value={form.softwares} onChange={(event) => setForm({ ...form, softwares: event.target.value })} placeholder="AutoCAD, VS Code, Blender" /></div>
           </div>
           <div className="flex flex-wrap gap-5">
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <Checkbox checked={form.acessivel} onCheckedChange={(checked) => setForm({ ...form, acessivel: checked === true })} />
+              Acessível
+            </label>
             {resourceFields.map(([field, label]) => (
               <label key={field} className="flex items-center gap-2 text-sm cursor-pointer">
                 <Checkbox checked={form[field]} onCheckedChange={(checked) => setForm({ ...form, [field]: checked === true })} />
@@ -205,24 +503,192 @@ export default function SalasSection() {
 
       {error && !showForm && <p className="text-sm text-destructive">{error}</p>}
       <div className="glass-card rounded-2xl overflow-hidden">
-        <div className="p-5 border-b"><h3 className="font-heading font-bold">Salas cadastradas</h3><p className="text-xs text-muted-foreground">{salas.length} registros</p></div>
+        <div className="p-5 border-b space-y-4">
+          <div>
+            <h3 className="font-heading font-bold">Controle de salas</h3>
+            <p className="text-xs text-muted-foreground">{salasFiltradas.length} de {salas.length} registros</p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_160px_220px]">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Pesquisar por sala, bloco, tipo ou capacidade" className="pl-9" />
+            </div>
+            <select value={selectedDay} onChange={(event) => setSelectedDay(event.target.value)} className="h-10 rounded-md border bg-background px-3 text-sm">
+              {dayOrder.map((day) => <option key={day} value={day}>{dayLabels[day]}</option>)}
+            </select>
+            <select value={filter} onChange={(event) => setFilter(event.target.value)} className="h-10 rounded-md border bg-background px-3 text-sm">
+              <option value="todas">Todas</option>
+              <option value="livres">Livres</option>
+              <option value="ocupadas">Ocupadas</option>
+              <option value="laboratorios">Laboratórios</option>
+              <option value="aulas">Salas de aula</option>
+            </select>
+          </div>
+        </div>
+
+        {loading && <div className="py-10 text-center text-sm text-muted-foreground">Carregando...</div>}
+        {!loading && !salasFiltradas.length && <div className="py-10 text-center text-sm text-muted-foreground">Nenhuma sala encontrada.</div>}
+        {!loading && salasPorBloco.map(([bloco, rooms]) => (
+          <section key={bloco} className="border-b last:border-b-0">
+            <div className="bg-muted/40 px-5 py-3">
+              <h4 className="font-heading font-bold">{bloco}</h4>
+              <p className="text-xs text-muted-foreground">{rooms.length} sala(s)</p>
+            </div>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Sala</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Manhã</TableHead>
+                    <TableHead>Tarde</TableHead>
+                    <TableHead className="text-right">Ações</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rooms.map((sala) => {
+                    const resources = [sala.acessivel && "Acessível", sala.possui_computadores && "Computadores", sala.possui_data_show && "Data show", sala.possui_internet && "Internet", sala.possui_ar_condicionado && "Ar"].filter(Boolean);
+                    const roomOccupancy = [...(ocupacoesPorSala.get(sala.id) || [])].sort(sortOccupancy);
+                    return (
+                      <TableRow key={sala.id}>
+                        <TableCell className="min-w-56 align-top">
+                          <p className="font-medium">{sala.nome}</p>
+                          <p className="text-xs text-muted-foreground">{sala.tipo} · {sala.andar}</p>
+                          <p className="text-xs text-muted-foreground">{sala.capacidade == null ? "Capacidade a conferir" : `${sala.capacidade} lugares`}</p>
+                          <p className="mt-2 text-xs text-muted-foreground">{resources.join(", ") || "Sem recursos marcados"}{sala.softwares.length ? ` · ${sala.softwares.join(", ")}` : ""}</p>
+                          {sala.observacoes && <p className="mt-1 max-w-64 text-xs text-muted-foreground">{sala.observacoes}</p>}
+                        </TableCell>
+                        <TableCell className="align-top"><Badge className={statusClass[sala.status]}>{statusLabel[sala.status]}</Badge></TableCell>
+                        <TableCell className="align-top">{renderShiftGrid(sala, roomOccupancy, "manha")}</TableCell>
+                        <TableCell className="align-top">{renderShiftGrid(sala, roomOccupancy, "tarde")}</TableCell>
+                        <TableCell className="align-top">
+                          <div className="flex justify-end gap-1">
+                            <Button variant="ghost" size="icon" onClick={() => edit(sala)}><Edit className="w-4 h-4" /></Button>
+                            {sala.status !== "INATIVA" && <Button variant="ghost" size="icon" onClick={() => remove(sala)} title="Desativar"><Trash2 className="w-4 h-4 text-destructive" /></Button>}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          </section>
+        ))}
+      </div>
+
+      <div className="glass-card rounded-2xl overflow-hidden">
+        <div className="p-5 border-b">
+          <h3 className="font-heading font-bold flex items-center gap-2"><History className="h-4 w-4" /> Histórico de trocas</h3>
+          <p className="text-xs text-muted-foreground">Últimas alterações feitas pelo CPD</p>
+        </div>
         <div className="overflow-x-auto">
           <Table>
-            <TableHeader><TableRow><TableHead>Sala</TableHead><TableHead>Bloco</TableHead><TableHead>Andar</TableHead><TableHead>Tipo</TableHead><TableHead>Capacidade</TableHead><TableHead>Recursos</TableHead><TableHead>Softwares</TableHead><TableHead className="text-right">Ações</TableHead></TableRow></TableHeader>
+            <TableHeader><TableRow><TableHead>Data</TableHead><TableHead>Turma</TableHead><TableHead>Troca</TableHead><TableHead>Responsável</TableHead><TableHead>Motivo</TableHead></TableRow></TableHeader>
             <TableBody>
-              {loading && <TableRow><TableCell colSpan={8} className="text-center py-8">Carregando...</TableCell></TableRow>}
-              {!loading && !salas.length && <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">Nenhuma sala cadastrada.</TableCell></TableRow>}
-              {salas.map((sala) => {
-                const resources = [sala.possui_computadores && "Computadores", sala.possui_data_show && "Data show", sala.possui_internet && "Internet", sala.possui_ar_condicionado && "Ar"].filter(Boolean);
-                return <TableRow key={sala.id}>
-                  <TableCell className="font-medium">{sala.nome}</TableCell><TableCell>{sala.bloco_nome}</TableCell><TableCell>{sala.andar}</TableCell><TableCell>{sala.tipo}</TableCell><TableCell>{sala.capacidade}</TableCell><TableCell className="text-xs max-w-48">{resources.join(", ") || "—"}</TableCell><TableCell className="text-xs max-w-48">{sala.softwares.join(", ") || "—"}</TableCell>
-                  <TableCell><div className="flex justify-end gap-1"><Button variant="ghost" size="icon" onClick={() => edit(sala)}><Edit className="w-4 h-4" /></Button><Button variant="ghost" size="icon" onClick={() => remove(sala)}><Trash2 className="w-4 h-4 text-destructive" /></Button></div></TableCell>
-                </TableRow>;
-              })}
+              {!historico.length && <TableRow><TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">Nenhuma troca registrada.</TableCell></TableRow>}
+              {historico.map((item) => (
+                <TableRow key={item.id}>
+                  <TableCell>{new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(item.created_at))}</TableCell>
+                  <TableCell>{item.turma}<br /><span className="text-xs text-muted-foreground">{item.dia} · {item.hora_inicio || `${item.periodo}ª aula`}{item.quantidade_alunos ? ` · ${item.quantidade_alunos} alunos` : ""}</span></TableCell>
+                  <TableCell>{item.sala_anterior || "Sem sala"} → {item.sala_nova || "Sem sala"}</TableCell>
+                  <TableCell>{item.usuario_nome}</TableCell>
+                  <TableCell className="max-w-72 text-sm">{item.motivo || "—"}</TableCell>
+                </TableRow>
+              ))}
             </TableBody>
           </Table>
         </div>
       </div>
+
+      <Dialog open={!!transfer} onOpenChange={(open) => { if (!open && !savingTransfer) setTransfer(null); }}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Trocar turma de sala</DialogTitle>
+            <DialogDescription>Selecione a nova sala e confirme a alteração no horário público.</DialogDescription>
+          </DialogHeader>
+          {transfer && (
+            <div className="space-y-4">
+              <div className="rounded-xl border bg-muted/40 p-4 text-sm">
+                <p><span className="font-medium">Turma:</span> {transfer.schedule.turma}</p>
+                <p><span className="font-medium">Horário:</span> {transfer.schedule.dia} · {transfer.schedule.hora_inicio || `${transfer.schedule.periodo}ª aula`}</p>
+                <p><span className="font-medium">Disciplina:</span> {transfer.schedule.disciplina}</p>
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Nova sala</label>
+                <select value={transfer.salaId} onChange={(event) => setTransfer({ ...transfer, salaId: event.target.value })} className="h-10 w-full rounded-md border bg-background px-3 text-sm">
+                  {salasAtivas.map((sala) => <option key={sala.id} value={sala.id}>{sala.nome} · {sala.bloco_nome} · {sala.capacidade == null ? "capacidade a conferir" : `${sala.capacidade} lugares`}</option>)}
+                </select>
+                {targetRoom && <p className="mt-1 text-xs text-muted-foreground">{targetRoom.tipo} · {targetRoom.andar}</p>}
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Quantidade de alunos</label>
+                <Input type="number" min={1} value={transfer.quantidadeAlunos} onChange={(event) => setTransfer({ ...transfer, quantidadeAlunos: event.target.value })} placeholder="Opcional para validar capacidade" />
+                {capacityWarning && <p className="mt-1 text-xs text-destructive">A sala comporta {targetCapacity} alunos.</p>}
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Motivo</label>
+                <Textarea value={transfer.motivo} onChange={(event) => setTransfer({ ...transfer, motivo: event.target.value })} rows={3} placeholder="Opcional" />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setTransfer(null)} disabled={savingTransfer}>Cancelar</Button>
+            <Button type="button" onClick={saveTransfer} disabled={savingTransfer || !!capacityWarning}>{savingTransfer ? "Salvando..." : "Confirmar troca"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!slotPicker} onOpenChange={(open) => { if (!open && !savingSlot) setSlotPicker(null); }}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Escolher turma do período</DialogTitle>
+            <DialogDescription>Esta escolha altera a sala no horário publicado para os alunos.</DialogDescription>
+          </DialogHeader>
+          {slotPicker && (
+            <div className="space-y-4">
+              <div className="rounded-xl border bg-muted/40 p-4 text-sm">
+                <p><span className="font-medium">Sala:</span> {slotPicker.sala.nome}</p>
+                <p><span className="font-medium">Horário:</span> {dayLabels[selectedDay]} · {slotPicker.shift === "manha" ? "Manhã" : "Tarde"} · {slotPicker.period}ª período</p>
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Turma</label>
+                <select
+                  value={slotPicker.scheduleId}
+                  onChange={(event) => setSlotPicker({ ...slotPicker, scheduleId: event.target.value })}
+                  disabled={!slotCandidates.length}
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                >
+                  <option value="">Selecione a turma</option>
+                  {slotCandidates.map((schedule) => (
+                    <option key={schedule.id} value={schedule.id}>
+                      {schedule.turma} · {schedule.disciplina} · {schedule.hora_inicio || `${schedule.periodo}ª`}{schedule.sala ? ` · atual: ${schedule.sala}` : " · sem sala"}
+                    </option>
+                  ))}
+                </select>
+                {!slotCandidates.length && <p className="mt-1 text-xs text-muted-foreground">Nenhuma aula publicada para este dia e período.</p>}
+                {selectedSlotSchedule?.sala_id && selectedSlotSchedule.sala_id !== slotPicker.sala.id && (
+                  <p className="mt-1 text-xs text-muted-foreground">A turma sairá de {selectedSlotSchedule.sala || "outra sala"} e irá para {slotPicker.sala.nome}.</p>
+                )}
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Quantidade de alunos</label>
+                <Input type="number" min={1} value={slotPicker.quantidadeAlunos} onChange={(event) => setSlotPicker({ ...slotPicker, quantidadeAlunos: event.target.value })} placeholder="Opcional para validar capacidade" />
+                {slotCapacityWarning && <p className="mt-1 text-xs text-destructive">A sala comporta {slotPicker.sala.capacidade} alunos.</p>}
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Motivo</label>
+                <Textarea value={slotPicker.motivo} onChange={(event) => setSlotPicker({ ...slotPicker, motivo: event.target.value })} rows={3} placeholder="Opcional" />
+              </div>
+              {slotError && <p className="text-sm text-destructive">{slotError}</p>}
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setSlotPicker(null)} disabled={savingSlot}>Cancelar</Button>
+            <Button type="button" onClick={saveSlotAssignment} disabled={savingSlot || !!slotCapacityWarning || !slotCandidates.length}>{savingSlot ? "Salvando..." : "Salvar turma"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

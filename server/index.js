@@ -100,6 +100,39 @@ const db = mysql.createPool({
   connectionLimit: Number(process.env.DB_CONNECTION_LIMIT || 10),
 });
 
+const ensureOperationalColumns = async () => {
+  const columns = [
+    ["salas", "status", "ALTER TABLE salas ADD COLUMN status ENUM('ATIVA', 'INATIVA', 'MANUTENCAO') NOT NULL DEFAULT 'ATIVA' AFTER tipo"],
+    ["salas", "acessivel", "ALTER TABLE salas ADD COLUMN acessivel BOOLEAN NOT NULL DEFAULT FALSE AFTER status"],
+  ];
+
+  for (const [tableName, columnName, statement] of columns) {
+    const [existing] = await db.query(
+      `SELECT 1
+         FROM information_schema.columns
+        WHERE table_schema = ?
+          AND table_name = ?
+          AND column_name = ?
+        LIMIT 1`,
+      [databaseName, tableName, columnName]
+    );
+    if (!existing.length) await db.query(statement);
+  }
+
+  const [capacity] = await db.query(
+    `SELECT IS_NULLABLE AS is_nullable
+       FROM information_schema.columns
+      WHERE table_schema = ?
+        AND table_name = 'salas'
+        AND column_name = 'capacidade'
+      LIMIT 1`,
+    [databaseName]
+  );
+  if (capacity[0]?.is_nullable === "NO") {
+    await db.query("ALTER TABLE salas MODIFY capacidade INT UNSIGNED NULL");
+  }
+};
+
 const ensureOperationalIndexes = async () => {
   const indexes = [
     ["alunos", "idx_alunos_lookup", "ALTER TABLE alunos ADD INDEX idx_alunos_lookup (nome, ano, turma, curso)"],
@@ -145,9 +178,111 @@ const ensureDefaultPublicContent = async () => {
   }
 };
 
+const floorFromRoom = (roomName) => {
+  const match = String(roomName).match(/^[A-E]\s?([1-3])/i);
+  return match ? `${match[1]}º andar` : "A conferir";
+};
+
+const referenceRooms = [
+  ["Bloco A", "A201", "Sala de aula", 38],
+  ["Bloco A", "A202", "Sala de aula", 38],
+  ["Bloco A", "A203", "Sala de aula", 38],
+  ["Bloco A", "A204", "Sala de aula", 38],
+  ["Bloco A", "A205", "Sala de aula", 38],
+  ["Bloco A", "A206", "Sala de aula", 38],
+  ["Bloco A", "A301", "Sala de aula", 29],
+  ["Bloco A", "A302", "Sala de aula", 20],
+  ["Bloco A", "A303", "Sala de aula", 23],
+  ["Bloco A", "A304", "Sala de aula", 30],
+  ["Bloco A", "A305", "Sala de aula", 38],
+  ["Bloco B", "B101", "Sala de aula", 40],
+  ["Bloco B", "B102", "Lab. quimica", null],
+  ["Bloco B", "B103", "Sala de aula", 34],
+  ["Bloco B", "B104", "Sala de aula", 20],
+  ["Bloco B", "B105", "Sala de aula", 20],
+  ["Bloco C", "C106", "Lab. design", null],
+  ["Bloco C", "C108", "Lab. informatica", null],
+  ["Bloco C", "C109", "Sala de aula", 22],
+  ["Bloco C", "C201", "Lab. eletricidade", null],
+  ["Bloco C", "C202", "Sala de aula", 20],
+  ["Bloco C", "C204", "Lab. elo digital", null],
+  ["Bloco C", "C205", "Lab. pratica", null],
+  ["Bloco C", "C207", "Lab. informatica", null],
+  ["Bloco C", "C208", "Lab. prat. prof.", null],
+  ["Bloco C", "C210", "Lab. informatica", null],
+  ["Bloco C", "C211", "Lab. informatica", null],
+  ["Bloco C", "C301", "Lab. materiais", 20],
+  ["Bloco C", "C302", "Sala de aula", 20],
+  ["Bloco C", "C303", "Sala de aula", 20],
+  ["Bloco C", "C304", "Sala de aula", 20],
+  ["Bloco C", "C305", "Sala de aula", 20],
+  ["Bloco C", "C306", "Sala de aula", 20],
+  ["Bloco C", "C307", "Sala de aula", 24],
+  ["Bloco C", "C308", "Sala de aula", 20],
+  ["Bloco C", "C309", "Sala de aula", 20],
+  ["Bloco C", "C311", "Sala de aula", 20],
+  ["Bloco C", "C312", "Sala de aula", 20],
+  ["Bloco C", "C313", "Lab. informatica", null],
+  ["Bloco D", "D101", "Of. mecanica", null],
+  ["Bloco D", "D101(A)", "Soldagem", null],
+  ["Bloco D", "D101(B)", "Sala of. mecanica", null],
+  ["Bloco D", "D101(C)", "CNC", null],
+  ["Bloco D", "D201", "Telefonia", 22],
+  ["Bloco D", "D202", "Lab. informatica", null],
+  ["Bloco D", "D203", "Automacao", null],
+  ["Bloco D", "D204", "Lab. desenho", 24],
+  ["Bloco D", "D205", "Lab. informatica", null],
+  ["Bloco D", "D206", "CLP", null],
+  ["Bloco D", "D208", "Lab. eletro III", null],
+  ["Bloco D", "D209", "Lab. medidas", null],
+  ["Bloco D", "D210", "Lab. eletro II", null],
+  ["Bloco D", "D211", "Lab. instalacoes", null],
+  ["Bloco D", "D212", "Lab. eletronica", null],
+  ["Bloco D", "D213", "Lab. informatica", null],
+  ["Bloco E", "E101", "Lab. informatica", null],
+  ["Bloco E", "E102", "Lab. meio amb.", 20],
+];
+
+const ensureReferenceRooms = async () => {
+  for (const blockName of ["Bloco A", "Bloco B", "Bloco C", "Bloco D", "Bloco E"]) {
+    await db.query(
+      `INSERT INTO blocos (nome, descricao)
+       VALUES (?, 'Cadastro base do quadro fotografado de salas e laboratorios.')
+       ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
+      [blockName]
+    );
+  }
+
+  for (const [blockName, name, type, capacity] of referenceRooms) {
+    const [blocks] = await db.query("SELECT id FROM blocos WHERE nome = ? LIMIT 1", [blockName]);
+    const blockId = blocks[0]?.id;
+    if (!blockId) continue;
+    const [existingRooms] = await db.query(
+      "SELECT id FROM salas WHERE bloco_id = ? AND REPLACE(UPPER(nome), ' ', '') = REPLACE(UPPER(?), ' ', '') LIMIT 1",
+      [blockId, name]
+    );
+    if (existingRooms.length) continue;
+    const notes = [
+      "Cadastro inicial a partir das fotos IMG_4403/IMG_4404.",
+      capacity == null ? "Capacidade ilegivel nas fotos; conferir no CPD." : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    await db.query(
+      `INSERT INTO salas
+       (bloco_id, nome, andar, capacidade, tipo, observacoes)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE nome = nome`,
+      [blockId, name, floorFromRoom(name), capacity, type, notes]
+    );
+  }
+};
+
+await ensureOperationalColumns();
 await ensureOperationalIndexes();
 await ensureBootstrapUsers(db);
 await ensureDefaultPublicContent();
+await ensureReferenceRooms();
 
 const { optionalAuth, requireAuth, requireRole } = createAuthMiddleware(db);
 
@@ -538,7 +673,7 @@ app.delete("/api/blocos/:id", requireRole("CPD"), async (req, res, next) => {
 // ---------------------------------------------------------------------------
 const roomSelect = `
   SELECT s.id, s.nome, s.bloco_id, b.nome AS bloco_nome, s.andar, s.capacidade, s.tipo,
-         s.possui_computadores, s.possui_data_show, s.possui_internet,
+         s.status, s.acessivel, s.possui_computadores, s.possui_data_show, s.possui_internet,
          s.possui_ar_condicionado, s.observacoes, s.created_at, s.updated_at,
          GROUP_CONCAT(sw.nome ORDER BY sw.nome SEPARATOR '||') AS softwares
     FROM salas s
@@ -549,6 +684,7 @@ const roomSelect = `
 
 const serializeRoom = (row) => ({
   ...row,
+  acessivel: Boolean(row.acessivel),
   possui_computadores: Boolean(row.possui_computadores),
   possui_data_show: Boolean(row.possui_data_show),
   possui_internet: Boolean(row.possui_internet),
@@ -571,6 +707,12 @@ app.get("/api/salas", async (req, res, next) => {
     if (req.query.capacidade_minima) {
       conditions.push("s.capacidade >= ?");
       params.push(Number(req.query.capacidade_minima));
+    }
+    if (req.query.status) {
+      conditions.push("s.status = ?");
+      params.push(String(req.query.status).toUpperCase());
+    } else if (!req.user) {
+      conditions.push("s.status = 'ATIVA'");
     }
     for (const resource of [
       "possui_computadores",
@@ -626,11 +768,92 @@ app.get("/api/salas", async (req, res, next) => {
   }
 });
 
+app.get("/api/salas/ocupacoes", async (req, res, next) => {
+  try {
+    const publicStatusFilter = req.user ? "" : "AND s.status = 'ATIVA'";
+    const [rows] = await db.query(
+      `SELECT h.id, h.sala_id, s.nome AS sala_nome, b.nome AS bloco_nome,
+              h.turma, h.curso, h.ano, h.dia, h.periodo,
+              TIME_FORMAT(h.hora_inicio, '%H:%i') AS hora_inicio,
+              h.disciplina, h.professor
+         FROM horarios_importados h
+         JOIN importacoes_horarios i ON i.id = h.importacao_id
+         JOIN salas s ON s.id = h.sala_id
+         JOIN blocos b ON b.id = s.bloco_id
+        WHERE i.status = 'APROVADA'
+          AND i.ativa = TRUE
+          AND h.categoria = 'TURMA'
+          ${publicStatusFilter}
+        ORDER BY b.nome, s.nome, FIELD(h.dia, 'SEG','TER','QUA','QUI','SEX','SAB','DOM'), h.periodo, h.turma`
+    );
+    const payload = { horarios: rows };
+    if (req.user) return res.json(payload);
+    return cacheableJson(req, res, payload, { maxAge: 60, staleWhileRevalidate: 300 });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/salas/:id", async (req, res, next) => {
   try {
-    const [rows] = await db.query(`${roomSelect} WHERE s.id = ? GROUP BY s.id`, [req.params.id]);
+    const publicStatusFilter = req.user ? "" : "AND s.status = 'ATIVA'";
+    const [rows] = await db.query(`${roomSelect} WHERE s.id = ? ${publicStatusFilter} GROUP BY s.id`, [req.params.id]);
     if (!rows.length) throw httpError(404, "Sala não encontrada.");
     res.json(serializeRoom(rows[0]));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/salas/:id/ocupacao", async (req, res, next) => {
+  const roomId = Number(req.params.id);
+  if (!Number.isInteger(roomId) || roomId < 1) return next(httpError(400, "Sala inválida."));
+
+  try {
+    const publicStatusFilter = req.user ? "" : "AND s.status = 'ATIVA'";
+    const [rows] = await db.query(
+      `SELECT h.id, h.turma, h.curso, h.ano, h.dia, h.periodo,
+              TIME_FORMAT(h.hora_inicio, '%H:%i') AS hora_inicio,
+              h.disciplina, h.professor
+         FROM horarios_importados h
+         JOIN importacoes_horarios i ON i.id = h.importacao_id
+         JOIN salas s ON s.id = h.sala_id
+        WHERE i.status = 'APROVADA'
+          AND i.ativa = TRUE
+          AND h.categoria = 'TURMA'
+          AND h.sala_id = ?
+          ${publicStatusFilter}
+        ORDER BY FIELD(h.dia, 'SEG','TER','QUA','QUI','SEX','SAB','DOM'), h.periodo, h.turma`,
+      [roomId]
+    );
+    const payload = { horarios: rows };
+    if (req.user) return res.json(payload);
+    return cacheableJson(req, res, payload, { maxAge: 60, staleWhileRevalidate: 300 });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/sala-alteracoes", requireRole("CPD"), async (req, res, next) => {
+  try {
+    const limit = positiveInt(req.query.limit, 50, { min: 1, max: 200 });
+    const [rows] = await db.query(
+      `SELECT a.id, a.horario_id, a.turma, a.dia, a.periodo, a.quantidade_alunos,
+              TIME_FORMAT(h.hora_inicio, '%H:%i') AS hora_inicio,
+              a.motivo, a.created_at,
+              anterior.nome AS sala_anterior,
+              nova.nome AS sala_nova,
+              u.nome AS usuario_nome
+         FROM sala_alteracoes a
+         JOIN usuarios u ON u.id = a.usuario_id
+         JOIN horarios_importados h ON h.id = a.horario_id
+         LEFT JOIN salas anterior ON anterior.id = a.sala_anterior_id
+         LEFT JOIN salas nova ON nova.id = a.sala_nova_id
+        ORDER BY a.created_at DESC, a.id DESC
+        LIMIT ?`,
+      [limit]
+    );
+    res.json(rows);
   } catch (error) {
     next(error);
   }
@@ -640,12 +863,15 @@ const normalizeRoomPayload = (body = {}) => {
   const softwares = Array.isArray(body.softwares)
     ? body.softwares
     : String(body.softwares || "").split(",");
+  const rawCapacity = body.capacidade === null || body.capacidade === undefined || body.capacidade === "" ? null : Number(body.capacidade);
   return {
     bloco_id: Number(body.bloco_id),
     nome: String(body.nome || "").trim(),
     andar: String(body.andar || "").trim(),
-    capacidade: Number(body.capacidade),
+    capacidade: rawCapacity,
     tipo: String(body.tipo || "").trim(),
+    status: String(body.status || "ATIVA").trim().toUpperCase(),
+    acessivel: asBoolean(body.acessivel),
     possui_computadores: asBoolean(body.possui_computadores),
     possui_data_show: asBoolean(body.possui_data_show),
     possui_internet: asBoolean(body.possui_internet),
@@ -656,8 +882,14 @@ const normalizeRoomPayload = (body = {}) => {
 };
 
 const validateRoom = (room) => {
-  if (!room.bloco_id || !room.nome || !room.andar || !room.tipo || !Number.isInteger(room.capacidade) || room.capacidade < 1) {
-    throw httpError(400, "Preencha bloco, nome, andar, capacidade e tipo da sala.");
+  if (!room.bloco_id || !room.nome || !room.andar || !room.tipo) {
+    throw httpError(400, "Preencha bloco, nome, andar e tipo da sala.");
+  }
+  if (room.capacidade !== null && (!Number.isInteger(room.capacidade) || room.capacidade < 1)) {
+    throw httpError(400, "Informe uma capacidade válida ou deixe em branco para conferência.");
+  }
+  if (!["ATIVA", "INATIVA", "MANUTENCAO"].includes(room.status)) {
+    throw httpError(400, "Status da sala inválido.");
   }
 };
 
@@ -691,15 +923,17 @@ app.post("/api/salas", requireRole("CPD"), async (req, res, next) => {
     await conn.beginTransaction();
     const [result] = await conn.query(
       `INSERT INTO salas
-       (bloco_id, nome, andar, capacidade, tipo, possui_computadores, possui_data_show,
+       (bloco_id, nome, andar, capacidade, tipo, status, acessivel, possui_computadores, possui_data_show,
         possui_internet, possui_ar_condicionado, observacoes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         room.bloco_id,
         room.nome,
         room.andar,
         room.capacidade,
         room.tipo,
+        room.status,
+        room.acessivel,
         room.possui_computadores,
         room.possui_data_show,
         room.possui_internet,
@@ -729,7 +963,7 @@ app.put("/api/salas/:id", requireRole("CPD"), async (req, res, next) => {
   try {
     await conn.beginTransaction();
     const [result] = await conn.query(
-      `UPDATE salas SET bloco_id = ?, nome = ?, andar = ?, capacidade = ?, tipo = ?,
+      `UPDATE salas SET bloco_id = ?, nome = ?, andar = ?, capacidade = ?, tipo = ?, status = ?, acessivel = ?,
        possui_computadores = ?, possui_data_show = ?, possui_internet = ?,
        possui_ar_condicionado = ?, observacoes = ? WHERE id = ?`,
       [
@@ -738,6 +972,8 @@ app.put("/api/salas/:id", requireRole("CPD"), async (req, res, next) => {
         room.andar,
         room.capacidade,
         room.tipo,
+        room.status,
+        room.acessivel,
         room.possui_computadores,
         room.possui_data_show,
         room.possui_internet,
@@ -760,11 +996,8 @@ app.put("/api/salas/:id", requireRole("CPD"), async (req, res, next) => {
 
 app.delete("/api/salas/:id", requireRole("CPD"), async (req, res, next) => {
   try {
-    const [result] = await db.query("DELETE FROM salas WHERE id = ?", [req.params.id]);
+    const [result] = await db.query("UPDATE salas SET status = 'INATIVA' WHERE id = ?", [req.params.id]);
     if (!result.affectedRows) throw httpError(404, "Sala não encontrada.");
-    await db.query(`DELETE FROM softwares WHERE NOT EXISTS (
-      SELECT 1 FROM sala_softwares WHERE sala_softwares.software_id = softwares.id
-    )`);
     res.json({ ok: true });
   } catch (error) {
     next(error);
@@ -1441,6 +1674,12 @@ app.patch("/api/horarios/publicados/:id/sala", requireRole("CPD"), async (req, r
   const scheduleId = Number(req.params.id);
   const rawRoomId = req.body?.sala_id;
   const roomId = rawRoomId === null || rawRoomId === undefined || rawRoomId === "" ? null : Number(rawRoomId);
+  const rawStudentCount = req.body?.quantidade_alunos;
+  const studentCount =
+    rawStudentCount === null || rawStudentCount === undefined || rawStudentCount === ""
+      ? null
+      : Number(rawStudentCount);
+  const reason = sanitizeFreeText(req.body?.motivo, 255) || null;
 
   if (!Number.isInteger(scheduleId) || scheduleId < 1) {
     return next(httpError(400, "Horário inválido."));
@@ -1448,12 +1687,15 @@ app.patch("/api/horarios/publicados/:id/sala", requireRole("CPD"), async (req, r
   if (roomId !== null && (!Number.isInteger(roomId) || roomId < 1)) {
     return next(httpError(400, "Sala inválida."));
   }
+  if (studentCount !== null && (!Number.isInteger(studentCount) || studentCount < 1)) {
+    return next(httpError(400, "Informe uma quantidade de alunos válida."));
+  }
 
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
     const [schedules] = await conn.query(
-      `SELECT h.id
+      `SELECT h.id, h.importacao_id, h.turma, h.dia, h.periodo, h.hora_inicio, h.sala_id
          FROM horarios_importados h
          JOIN importacoes_horarios i ON i.id = h.importacao_id
         WHERE h.id = ?
@@ -1464,13 +1706,68 @@ app.patch("/api/horarios/publicados/:id/sala", requireRole("CPD"), async (req, r
       [scheduleId]
     );
     if (!schedules.length) throw httpError(404, "Horário publicado não encontrado.");
+    const schedule = schedules[0];
 
     if (roomId !== null) {
-      const [rooms] = await conn.query("SELECT id FROM salas WHERE id = ? LIMIT 1", [roomId]);
+      const [rooms] = await conn.query("SELECT id, nome, capacidade, status FROM salas WHERE id = ? LIMIT 1", [roomId]);
       if (!rooms.length) throw httpError(400, "Sala não encontrada.");
+      if (rooms[0].status !== "ATIVA") throw httpError(409, `A sala ${rooms[0].nome} não está ativa.`);
+      if (studentCount !== null && rooms[0].capacidade !== null && studentCount > Number(rooms[0].capacidade)) {
+        throw httpError(409, `A sala ${rooms[0].nome} comporta ${rooms[0].capacidade} alunos.`);
+      }
+
+      const [conflicts] = await conn.query(
+        `SELECT turma, disciplina, professor
+           FROM horarios_importados
+          WHERE importacao_id = ?
+            AND id <> ?
+            AND categoria = 'TURMA'
+            AND dia = ?
+            AND (
+              (? IS NOT NULL AND hora_inicio = ?)
+              OR ((? IS NULL OR hora_inicio IS NULL) AND periodo = ?)
+            )
+            AND sala_id = ?
+          LIMIT 1`,
+        [
+          schedule.importacao_id,
+          scheduleId,
+          schedule.dia,
+          schedule.hora_inicio,
+          schedule.hora_inicio,
+          schedule.hora_inicio,
+          schedule.periodo,
+          roomId,
+        ]
+      );
+      if (conflicts.length) {
+        const conflict = conflicts[0];
+        throw httpError(
+          409,
+          `A sala já está ocupada por ${conflict.turma} em ${conflict.disciplina}${conflict.professor ? ` (${conflict.professor})` : ""}.`
+        );
+      }
     }
 
-    await conn.query("UPDATE horarios_importados SET sala_id = ? WHERE id = ?", [roomId, scheduleId]);
+    if (Number(schedule.sala_id || 0) !== Number(roomId || 0)) {
+      await conn.query("UPDATE horarios_importados SET sala_id = ? WHERE id = ?", [roomId, scheduleId]);
+      await conn.query(
+        `INSERT INTO sala_alteracoes
+         (horario_id, usuario_id, turma, dia, periodo, sala_anterior_id, sala_nova_id, quantidade_alunos, motivo)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          scheduleId,
+          req.user.id,
+          schedule.turma,
+          schedule.dia,
+          schedule.periodo,
+          schedule.sala_id || null,
+          roomId,
+          studentCount,
+          reason,
+        ]
+      );
+    }
     await conn.commit();
     res.json({ ok: true, id: scheduleId, sala_id: roomId });
   } catch (error) {
