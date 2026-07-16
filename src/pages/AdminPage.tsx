@@ -504,7 +504,7 @@ const AdminPageComponent = () => {
 
   return (
     <div className="min-h-screen bg-background flex">
-      <aside className="w-64 bg-card border-r border-border flex-col shrink-0 hidden md:flex">
+      <aside className="sticky top-0 h-screen w-64 bg-card border-r border-border flex-col shrink-0 hidden md:flex">
         <div className="p-4 border-b border-border">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg overflow-hidden bg-accent/20 p-0.5">
@@ -516,7 +516,7 @@ const AdminPageComponent = () => {
             </div>
           </div>
         </div>
-        <nav className="p-3 space-y-1">
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {visibleItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
