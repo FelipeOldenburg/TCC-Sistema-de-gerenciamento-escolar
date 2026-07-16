@@ -516,7 +516,7 @@ const AdminPageComponent = () => {
             </div>
           </div>
         </div>
-        <nav className="flex-1 p-3 space-y-1">
+        <nav className="p-3 space-y-1">
           {visibleItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;

@@ -369,7 +369,7 @@ export default function SalasSection() {
   };
 
   const renderShiftGrid = (sala: Sala, roomOccupancy: RoomOccupancy[], shift: Shift) => (
-    <div className="min-w-[28rem] rounded-md border border-slate-300 bg-white text-xs shadow-sm">
+    <div className="w-full rounded-md border border-slate-300 bg-white text-xs shadow-sm">
       <div className="grid grid-cols-5 border-b border-slate-300 bg-slate-100 font-semibold text-slate-700">
         {sheetPeriods.map((period) => (
           <div key={period} className="border-r border-slate-300 px-2 py-1 text-center last:border-r-0">
@@ -382,9 +382,9 @@ export default function SalasSection() {
           const items = roomOccupancy.filter((item) => isSameSlot(item, selectedDay, shift, period));
           const candidates = allSchedules.filter((item) => isSameSlot(item, selectedDay, shift, period));
           return (
-            <div key={period} className="min-h-24 border-r border-slate-200 p-1.5 last:border-r-0">
+            <div key={period} className="min-h-20 border-r border-slate-200 p-1.5 last:border-r-0">
               {items.length ? (
-                <div className="max-h-28 space-y-1 overflow-y-auto">
+                <div className="space-y-1">
                   {items.map((item) => (
                     <Button
                       key={item.id}
@@ -392,12 +392,12 @@ export default function SalasSection() {
                       variant="ghost"
                       onClick={() => openTransfer(item)}
                       title={`${item.dia} · ${item.hora_inicio || `${item.periodo}ª aula`} · ${item.turma} · ${item.disciplina}`}
-                      className="h-auto w-full justify-start rounded border border-blue-200 bg-blue-50 px-1.5 py-1 text-left text-[11px] leading-tight text-blue-950 hover:bg-blue-100"
+                      className="h-auto w-full justify-start whitespace-normal rounded border border-blue-200 bg-blue-50 px-1.5 py-1 text-left text-[11px] leading-tight text-blue-950 hover:bg-blue-100"
                     >
                       <ArrowRightLeft className="mr-1 mt-0.5 h-3 w-3 shrink-0" />
                       <span className="min-w-0">
-                        <span className="block truncate font-semibold">{item.turma}</span>
-                        <span className="block truncate text-[10px] font-normal text-blue-800">{item.dia} · {item.hora_inicio || `${item.periodo}ª`}</span>
+                        <span className="block break-words font-semibold">{item.turma}</span>
+                        <span className="block break-words text-[10px] font-normal text-blue-800">{item.hora_inicio || `${item.periodo}ª`}</span>
                       </span>
                     </Button>
                   ))}
@@ -408,7 +408,7 @@ export default function SalasSection() {
                   variant="ghost"
                   disabled={!candidates.length}
                   onClick={() => openSlotPicker(sala, shift, period)}
-                  className="flex min-h-20 w-full items-center justify-center rounded border border-dashed border-emerald-200 bg-emerald-50 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-100"
+                  className="flex min-h-16 w-full items-center justify-center whitespace-normal rounded border border-dashed border-emerald-200 bg-emerald-50 px-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-100"
                 >
                   {candidates.length ? "+ Turma" : "Sem aula"}
                 </Button>
@@ -534,44 +534,40 @@ export default function SalasSection() {
               <h4 className="font-heading font-bold">{bloco}</h4>
               <p className="text-xs text-muted-foreground">{rooms.length} sala(s)</p>
             </div>
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Sala</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Manhã</TableHead>
-                    <TableHead>Tarde</TableHead>
-                    <TableHead className="text-right">Ações</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rooms.map((sala) => {
-                    const resources = [sala.acessivel && "Acessível", sala.possui_computadores && "Computadores", sala.possui_data_show && "Data show", sala.possui_internet && "Internet", sala.possui_ar_condicionado && "Ar"].filter(Boolean);
-                    const roomOccupancy = [...(ocupacoesPorSala.get(sala.id) || [])].sort(sortOccupancy);
-                    return (
-                      <TableRow key={sala.id}>
-                        <TableCell className="min-w-56 align-top">
+            <div className="divide-y">
+              {rooms.map((sala) => {
+                const resources = [sala.acessivel && "Acessível", sala.possui_computadores && "Computadores", sala.possui_data_show && "Data show", sala.possui_internet && "Internet", sala.possui_ar_condicionado && "Ar"].filter(Boolean);
+                const roomOccupancy = [...(ocupacoesPorSala.get(sala.id) || [])].sort(sortOccupancy);
+                return (
+                  <div key={sala.id} className="p-4 space-y-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
                           <p className="font-medium">{sala.nome}</p>
-                          <p className="text-xs text-muted-foreground">{sala.tipo} · {sala.andar}</p>
-                          <p className="text-xs text-muted-foreground">{sala.capacidade == null ? "Capacidade a conferir" : `${sala.capacidade} lugares`}</p>
-                          <p className="mt-2 text-xs text-muted-foreground">{resources.join(", ") || "Sem recursos marcados"}{sala.softwares.length ? ` · ${sala.softwares.join(", ")}` : ""}</p>
-                          {sala.observacoes && <p className="mt-1 max-w-64 text-xs text-muted-foreground">{sala.observacoes}</p>}
-                        </TableCell>
-                        <TableCell className="align-top"><Badge className={statusClass[sala.status]}>{statusLabel[sala.status]}</Badge></TableCell>
-                        <TableCell className="align-top">{renderShiftGrid(sala, roomOccupancy, "manha")}</TableCell>
-                        <TableCell className="align-top">{renderShiftGrid(sala, roomOccupancy, "tarde")}</TableCell>
-                        <TableCell className="align-top">
-                          <div className="flex justify-end gap-1">
-                            <Button variant="ghost" size="icon" onClick={() => edit(sala)}><Edit className="w-4 h-4" /></Button>
-                            {sala.status !== "INATIVA" && <Button variant="ghost" size="icon" onClick={() => remove(sala)} title="Desativar"><Trash2 className="w-4 h-4 text-destructive" /></Button>}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+                          <Badge className={statusClass[sala.status]}>{statusLabel[sala.status]}</Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">{sala.tipo} · {sala.andar} · {sala.capacidade == null ? "Capacidade a conferir" : `${sala.capacidade} lugares`}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{resources.join(", ") || "Sem recursos marcados"}{sala.softwares.length ? ` · ${sala.softwares.join(", ")}` : ""}</p>
+                        {sala.observacoes && <p className="mt-1 text-xs text-muted-foreground">{sala.observacoes}</p>}
+                      </div>
+                      <div className="flex shrink-0 justify-end gap-1">
+                        <Button variant="ghost" size="icon" onClick={() => edit(sala)}><Edit className="w-4 h-4" /></Button>
+                        {sala.status !== "INATIVA" && <Button variant="ghost" size="icon" onClick={() => remove(sala)} title="Desativar"><Trash2 className="w-4 h-4 text-destructive" /></Button>}
+                      </div>
+                    </div>
+                    <div className="grid gap-3 xl:grid-cols-2">
+                      <div>
+                        <p className="mb-1 text-xs font-semibold text-muted-foreground">Manhã</p>
+                        {renderShiftGrid(sala, roomOccupancy, "manha")}
+                      </div>
+                      <div>
+                        <p className="mb-1 text-xs font-semibold text-muted-foreground">Tarde</p>
+                        {renderShiftGrid(sala, roomOccupancy, "tarde")}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </section>
         ))}
