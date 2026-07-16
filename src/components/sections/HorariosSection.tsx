@@ -271,7 +271,35 @@ const HorariosSection = () => {
                   <p className="text-xs text-primary-foreground/70">{daySchedules.length} aula(s)</p>
                 </div>
                 {daySchedules.length ? (
-                  <div className="overflow-x-auto">
+                  <>
+                  <div className="space-y-3 p-3 md:hidden">
+                    {daySchedules.map((schedule) => (
+                      <div key={schedule.id} className="rounded-xl border border-border bg-background/70 p-3 text-sm">
+                        <div className="flex items-start justify-between gap-3">
+                          <p className="font-semibold text-primary">{schedule.hora_inicio || `${schedule.periodo}ª aula`}</p>
+                          {isCpd && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openRoomConfig(schedule)}
+                              className="h-8 w-8 shrink-0"
+                              title="Configurar sala"
+                              aria-label={`Configurar sala de ${schedule.disciplina}`}
+                            >
+                              <Settings className="w-4 h-4" />
+                            </Button>
+                          )}
+                        </div>
+                        <p className="mt-1 font-medium text-foreground">{schedule.disciplina}</p>
+                        <div className="mt-3 grid gap-2 text-xs text-muted-foreground">
+                          <p><span className="font-medium text-foreground">Sala:</span> {schedule.sala || "—"}</p>
+                          <p><span className="font-medium text-foreground">Professor:</span> {schedule.professor || "—"}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="hidden md:block">
                     <Table>
                       <TableHeader>
                         <TableRow className="bg-muted/50">
@@ -310,6 +338,7 @@ const HorariosSection = () => {
                       </TableBody>
                     </Table>
                   </div>
+                  </>
                 ) : (
                   <p className="px-4 py-6 text-sm text-center text-muted-foreground">Nenhuma aula neste dia.</p>
                 )}
