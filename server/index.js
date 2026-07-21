@@ -772,13 +772,21 @@ app.get("/api/salas/ocupacoes", async (req, res, next) => {
   try {
     const publicStatusFilter = req.user ? "" : "AND s.status = 'ATIVA'";
     const [rows] = await db.query(
-      `SELECT h.id, h.sala_id, s.nome AS sala_nome, b.nome AS bloco_nome,
+      `SELECT h.id, COALESCE(h.sala_id, s.id) AS sala_id, s.nome AS sala_nome, b.nome AS bloco_nome,
               h.turma, h.curso, h.ano, h.dia, h.periodo,
               TIME_FORMAT(h.hora_inicio, '%H:%i') AS hora_inicio,
               h.disciplina, h.professor
          FROM horarios_importados h
          JOIN importacoes_horarios i ON i.id = h.importacao_id
-         JOIN salas s ON s.id = h.sala_id
+         LEFT JOIN (
+           SELECT MIN(id) AS id, REPLACE(LOWER(TRIM(nome)), ' ', '') AS nome_key
+             FROM salas
+            GROUP BY nome_key
+           HAVING COUNT(*) = 1
+         ) sala_importada ON h.sala_id IS NULL
+                          AND h.ambiente IS NOT NULL
+                          AND sala_importada.nome_key = REPLACE(LOWER(TRIM(h.ambiente)), ' ', '')
+         JOIN salas s ON s.id = COALESCE(h.sala_id, sala_importada.id)
          JOIN blocos b ON b.id = s.bloco_id
         WHERE i.status = 'APROVADA'
           AND i.ativa = TRUE
@@ -1695,7 +1703,7 @@ app.patch("/api/horarios/publicados/:id/sala", requireRole("CPD"), async (req, r
   try {
     await conn.beginTransaction();
     const [schedules] = await conn.query(
-      `SELECT h.id, h.importacao_id, h.turma, h.dia, h.periodo, h.hora_inicio, h.sala_id
+      `SELECT h.id, h.importacao_id, h.turma, h.dia, h.periodo, h.hora_inicio, h.sala_id, h.ambiente
          FROM horarios_importados h
          JOIN importacoes_horarios i ON i.id = h.importacao_id
         WHERE h.id = ?
@@ -1723,21 +1731,23 @@ app.patch("/api/horarios/publicados/:id/sala", requireRole("CPD"), async (req, r
             AND id <> ?
             AND categoria = 'TURMA'
             AND dia = ?
+            AND periodo = ?
             AND (
-              (? IS NOT NULL AND hora_inicio = ?)
-              OR ((? IS NULL OR hora_inicio IS NULL) AND periodo = ?)
+              sala_id = ?
+              OR (
+                sala_id IS NULL
+                AND ambiente IS NOT NULL
+                AND REPLACE(LOWER(TRIM(ambiente)), ' ', '') = REPLACE(LOWER(TRIM(?)), ' ', '')
+              )
             )
-            AND sala_id = ?
           LIMIT 1`,
         [
           schedule.importacao_id,
           scheduleId,
           schedule.dia,
-          schedule.hora_inicio,
-          schedule.hora_inicio,
-          schedule.hora_inicio,
           schedule.periodo,
           roomId,
+          rooms[0].nome,
         ]
       );
       if (conflicts.length) {

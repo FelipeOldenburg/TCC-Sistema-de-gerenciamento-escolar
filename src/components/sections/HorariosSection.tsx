@@ -35,6 +35,8 @@ type PublishedSchedule = {
   bloco: string | null;
 };
 type PublishedResponse = { turmas: ClassOption[]; horarios: PublishedSchedule[] };
+type RoomOccupancy = Pick<PublishedSchedule, "id" | "turma" | "dia" | "periodo" | "hora_inicio" | "disciplina" | "professor" | "sala_id">;
+type RoomOccupancyResponse = { horarios: RoomOccupancy[] };
 
 const NO_ROOM_VALUE = "__usar_ambiente_importado__";
 
@@ -60,6 +62,8 @@ const dayLabels: Record<string, string> = {
 };
 
 const weekdayOrder = ["SEG", "TER", "QUA", "QUI", "SEX"];
+const sameSlot = (a: Pick<PublishedSchedule, "dia" | "periodo" | "hora_inicio">, b: Pick<PublishedSchedule, "dia" | "periodo" | "hora_inicio">) =>
+  a.dia === b.dia && a.periodo === b.periodo;
 
 const HorariosSection = () => {
   const [view, setView] = useState<"cursos" | "tabela">("cursos");
@@ -73,6 +77,7 @@ const HorariosSection = () => {
   const [error, setError] = useState("");
   const [user, setUser] = useState<SessionUser | null>(null);
   const [rooms, setRooms] = useState<RoomOption[]>([]);
+  const [roomOccupancies, setRoomOccupancies] = useState<RoomOccupancy[]>([]);
   const [roomsLoaded, setRoomsLoaded] = useState(false);
   const [loadingRooms, setLoadingRooms] = useState(false);
   const [selectedSchedule, setSelectedSchedule] = useState<PublishedSchedule | null>(null);
@@ -138,14 +143,21 @@ const HorariosSection = () => {
   const selectedRoomCapacity = selectedRoom?.capacidade ?? null;
   const parsedStudentCount = studentCount ? Number(studentCount) : null;
   const capacityWarning = selectedRoom && parsedStudentCount && selectedRoomCapacity !== null && parsedStudentCount > selectedRoomCapacity;
+  const roomConflict = selectedSchedule && selectedRoom
+    ? roomOccupancies.find((item) => item.sala_id === selectedRoom.id && item.id !== selectedSchedule.id && sameSlot(item, selectedSchedule))
+    : null;
 
-  const ensureRoomsLoaded = async () => {
-    if (roomsLoaded || loadingRooms) return;
+  const ensureRoomsLoaded = async (force = false) => {
+    if (loadingRooms || (!force && roomsLoaded)) return;
     setLoadingRooms(true);
     setRoomError("");
     try {
-      const data = await apiFetch<RoomOption[]>("/api/salas");
-      setRooms(data);
+      const [roomData, occupancyData] = await Promise.all([
+        apiFetch<RoomOption[]>("/api/salas"),
+        apiFetch<RoomOccupancyResponse>("/api/salas/ocupacoes"),
+      ]);
+      setRooms(roomData);
+      setRoomOccupancies(occupancyData.horarios || []);
       setRoomsLoaded(true);
     } catch (err) {
       setRoomError(err instanceof Error ? err.message : "Erro ao carregar salas.");
@@ -160,7 +172,7 @@ const HorariosSection = () => {
     setRoomError("");
     setStudentCount("");
     setRoomReason("");
-    void ensureRoomsLoaded();
+    void ensureRoomsLoaded(true);
   };
 
   const closeRoomConfig = () => {
@@ -195,7 +207,7 @@ const HorariosSection = () => {
             : schedule
         )
       );
-      toast.success("Sala configurada para o horário.");
+      toast.success("Sala configurada para este horário.");
       setSelectedSchedule(null);
     } catch (err) {
       setRoomError(err instanceof Error ? err.message : "Erro ao configurar a sala.");
@@ -352,7 +364,7 @@ const HorariosSection = () => {
           <DialogHeader>
             <DialogTitle>Configurar sala</DialogTitle>
             <DialogDescription>
-              Defina a sala vinculada a esta turma e disciplina.
+              Defina a sala desta turma neste horário.
             </DialogDescription>
           </DialogHeader>
 
@@ -375,13 +387,18 @@ const HorariosSection = () => {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value={NO_ROOM_VALUE}>
-                      {selectedSchedule.ambiente ? `Usar ambiente importado (${selectedSchedule.ambiente})` : "Sem sala definida"}
+                      {selectedSchedule.ambiente ? "Usar sala importada" : "Sem sala definida"}
                     </SelectItem>
-                    {rooms.map((room) => (
-                      <SelectItem key={room.id} value={String(room.id)} disabled={room.status !== "ATIVA"}>
-                        {room.nome} · {room.bloco_nome} · {room.tipo}{room.status !== "ATIVA" ? " · indisponível" : ""}
-                      </SelectItem>
-                    ))}
+                    {rooms.map((room) => {
+                      const conflict = selectedSchedule
+                        ? roomOccupancies.find((item) => item.sala_id === room.id && item.id !== selectedSchedule.id && sameSlot(item, selectedSchedule))
+                        : null;
+                      return (
+                        <SelectItem key={room.id} value={String(room.id)} disabled={room.status !== "ATIVA" || !!conflict}>
+                          {room.nome} · {room.bloco_nome} · {room.tipo}{room.status !== "ATIVA" ? " · indisponível" : ""}{conflict ? ` · ocupada por ${conflict.turma}` : ""}
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
                 {selectedRoom && (
@@ -391,6 +408,11 @@ const HorariosSection = () => {
                 )}
                 {!loadingRooms && roomsLoaded && !rooms.length && (
                   <p className="text-xs text-muted-foreground">Nenhuma sala cadastrada no painel do CPD.</p>
+                )}
+                {roomConflict && (
+                  <p className="text-xs text-destructive">
+                    Esta sala já está ocupada por {roomConflict.turma} em {roomConflict.disciplina}.
+                  </p>
                 )}
               </div>
 
@@ -414,7 +436,7 @@ const HorariosSection = () => {
             <Button type="button" variant="outline" onClick={closeRoomConfig} disabled={savingRoom}>
               Cancelar
             </Button>
-            <Button type="button" onClick={saveRoomConfig} disabled={savingRoom || loadingRooms || !!capacityWarning}>
+            <Button type="button" onClick={saveRoomConfig} disabled={savingRoom || loadingRooms || !!capacityWarning || !!roomConflict}>
               {savingRoom ? "Salvando..." : "Salvar sala"}
             </Button>
           </DialogFooter>
