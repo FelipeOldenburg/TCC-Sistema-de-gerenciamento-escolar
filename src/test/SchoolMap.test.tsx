@@ -19,10 +19,29 @@ const rooms = [
     possui_data_show: true,
     possui_internet: true,
     possui_ar_condicionado: false,
+    status: "ATIVA",
+    acessivel: true,
     softwares: ["VS Code"],
     observacoes: "Acesso pelo corredor principal.",
   },
 ];
+
+const weekdayCodes = ["DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SAB"];
+const occupancy = {
+  horarios: [
+    {
+      id: 99,
+      turma: "62-1",
+      curso: "Informática",
+      ano: "2",
+      dia: weekdayCodes[new Date().getDay()],
+      periodo: 1,
+      hora_inicio: null,
+      disciplina: "Banco de Dados",
+      professor: "Professor responsável",
+    },
+  ],
+};
 
 describe("SchoolMap", () => {
   afterEach(() => {
@@ -34,7 +53,7 @@ describe("SchoolMap", () => {
       const url = String(input);
       return {
         ok: true,
-        json: async () => url.endsWith("/api/blocos") ? blocks : rooms,
+        json: async () => url.endsWith("/api/blocos") ? blocks : url.endsWith("/ocupacao") ? occupancy : rooms,
       } as Response;
     }));
 
@@ -51,7 +70,9 @@ describe("SchoolMap", () => {
     const details = screen.getByRole("region", { name: "Detalhes da sala selecionada" });
     expect(within(details).getByText("Sala selecionada")).toBeInTheDocument();
     expect(within(details).getByText("24 lugares")).toBeInTheDocument();
+    expect(within(details).getByText("Acessível")).toBeInTheDocument();
     expect(within(details).getByText("Computadores")).toBeInTheDocument();
+    await waitFor(() => expect(within(details).getAllByText(/62-1/).length).toBeGreaterThan(0));
     expect(within(details).getByText("Acesso pelo corredor principal.")).toBeInTheDocument();
   });
 });

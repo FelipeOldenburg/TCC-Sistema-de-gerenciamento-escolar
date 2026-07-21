@@ -61,3 +61,14 @@ Antes de criar branch ou commit, confirmar que o nome ou a mensagem segue estas 
 ## Destino final
 
 Toda alteração deve ser integrada à branch `main` ao final do fluxo. Antes da integração, executar as validações aplicáveis do repositório e preservar o histórico conforme a estratégia adotada pelo projeto. Depois da integração e de uma verificação final, enviar a `main` ao repositório remoto com `git push origin main`.
+
+## Fluxo de desenvolvimento
+
+- Usar `npm` como gerenciador de pacotes. Manter `package-lock.json` como lockfile canônico e não recriar locks do Bun, Yarn ou pnpm sem pedido explícito.
+- Para desenvolvimento local, `npm run dev` sobe frontend e API; `npm run dev:web` sobe apenas o Vite com proxy de `/api` para `http://localhost:3001`.
+- Antes de commit/push, rodar as validações aplicáveis:
+  - mudanças em frontend ou dependências: `npm run lint`, `npm test` e `npm run build`;
+  - mudanças no parser do URÂNIA: `python server/parsers/test_urania_up.py`;
+  - mudanças apenas em documentação: validação manual do diff é suficiente.
+- Rodar `npm run lint` e `npm test` em comandos separados, não em paralelo, porque o Vitest cria arquivos temporários de config que podem ser lidos pelo ESLint.
+- Evitar adicionar dependências, componentes `ui` ou wrappers globais sem uso real. Reutilizar os componentes existentes em `src/components/ui` e apagar scaffold que não estiver importado.

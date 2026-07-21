@@ -61,10 +61,38 @@ type Schedule = {
   bloco_nome: string | null;
 };
 
+type ComparisonSchedule = {
+  turma: string;
+  dia: string;
+  horario: string;
+  disciplina: string;
+  professor: string | null;
+  sala: string | null;
+};
+
+type ImportComparison = {
+  importacao_ativa_id: number;
+  importacao_ativa_titulo: string;
+  importacao_ativa_publicada_em: string | null;
+  aulas_adicionadas: number;
+  aulas_removidas: number;
+  aulas_alteradas: number;
+  aulas_mudaram: number;
+  salas_alteradas: number;
+  professores_alterados: number;
+  disciplinas_alteradas: number;
+  amostras: {
+    adicionadas: ComparisonSchedule[];
+    removidas: ComparisonSchedule[];
+    alteradas: { antes: ComparisonSchedule; depois: ComparisonSchedule }[];
+  };
+};
+
 type ImportDetail = ImportSummary & {
   turmas: { turma: string; curso: string | null; ano: string | null; categoria: string }[];
   horarios: Schedule[];
   arquivos: { id: number; nome: string; mime_type: string; tamanho: number; sha256: string }[];
+  comparacao: ImportComparison | null;
   paginacao: { pagina: number; por_pagina: number; total: number };
 };
 
@@ -82,6 +110,9 @@ const statusClass: Record<ImportStatus, string> = {
 
 const formatDate = (value: string | null) =>
   value ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value)) : "—";
+
+const comparisonScheduleText = (schedule: ComparisonSchedule) =>
+  `${schedule.turma} · ${schedule.dia} · ${schedule.horario} · ${schedule.disciplina}`;
 
 export default function UraniaImportacoesSection({ user }: { user: SessionUser }) {
   const [imports, setImports] = useState<ImportSummary[]>([]);
@@ -232,6 +263,64 @@ export default function UraniaImportacoesSection({ user }: { user: SessionUser }
               <div className="glass-card rounded-xl p-4"><p className="text-xs text-muted-foreground">Arquivos</p><p className="font-semibold">{detail.total_arquivos}</p></div>
               <div className="glass-card rounded-xl p-4"><p className="text-xs text-muted-foreground">Revisão</p><p className="font-semibold">{detail.revisado_por_nome || "Aguardando CPD"}</p></div>
             </div>
+
+            {detail.status === "PENDENTE" && (
+              <div className="glass-card rounded-2xl p-5 space-y-4">
+                <div>
+                  <h3 className="font-heading font-bold">Comparação com a publicação ativa</h3>
+                  <p className="text-xs text-muted-foreground">
+                    {detail.comparacao
+                      ? `Base: ${detail.comparacao.importacao_ativa_titulo}`
+                      : "Nenhuma publicação ativa encontrada para este escopo."}
+                  </p>
+                </div>
+                {detail.comparacao && (
+                  <>
+                    <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+                      {[
+                        ["Aulas", detail.comparacao.aulas_mudaram],
+                        ["Adicionadas", detail.comparacao.aulas_adicionadas],
+                        ["Removidas", detail.comparacao.aulas_removidas],
+                        ["Alteradas", detail.comparacao.aulas_alteradas],
+                        ["Salas", detail.comparacao.salas_alteradas],
+                        ["Professores", detail.comparacao.professores_alterados],
+                      ].map(([label, value]) => (
+                        <div key={label} className="rounded-xl border bg-background p-3">
+                          <p className="text-xs text-muted-foreground">{label}</p>
+                          <p className="text-xl font-bold">{value}</p>
+                        </div>
+                      ))}
+                    </div>
+                    {!!detail.comparacao.aulas_mudaram && (
+                      <div className="grid gap-3 md:grid-cols-3 text-sm">
+                        <div className="rounded-xl border bg-background p-3">
+                          <p className="mb-2 font-semibold">Alteradas</p>
+                          {detail.comparacao.amostras.alteradas.length
+                            ? detail.comparacao.amostras.alteradas.map((item, index) => (
+                              <p key={index} className="text-muted-foreground">
+                                {comparisonScheduleText(item.depois)}: {item.antes.sala || "—"} → {item.depois.sala || "—"}
+                              </p>
+                            ))
+                            : <p className="text-muted-foreground">Nenhuma na amostra.</p>}
+                        </div>
+                        <div className="rounded-xl border bg-background p-3">
+                          <p className="mb-2 font-semibold">Adicionadas</p>
+                          {detail.comparacao.amostras.adicionadas.length
+                            ? detail.comparacao.amostras.adicionadas.map((item, index) => <p key={index} className="text-muted-foreground">{comparisonScheduleText(item)}</p>)
+                            : <p className="text-muted-foreground">Nenhuma na amostra.</p>}
+                        </div>
+                        <div className="rounded-xl border bg-background p-3">
+                          <p className="mb-2 font-semibold">Removidas</p>
+                          {detail.comparacao.amostras.removidas.length
+                            ? detail.comparacao.amostras.removidas.map((item, index) => <p key={index} className="text-muted-foreground">{comparisonScheduleText(item)}</p>)
+                            : <p className="text-muted-foreground">Nenhuma na amostra.</p>}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
 
             {!!detail.avisos.length && (
               <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 space-y-2">

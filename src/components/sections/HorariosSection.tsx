@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Armchair, Clock, Cpu, FlaskConical, Leaf, Monitor, Paintbrush, Settings, Wrench, Zap } from "lucide-react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { ArrowLeft, Armchair, Clock, Cpu, FlaskConical, Leaf, Monitor, Paintbrush, Search, Settings, Wrench, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch, type SessionUser } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -34,7 +34,7 @@ type PublishedSchedule = {
   sala: string | null;
   bloco: string | null;
 };
-type PublishedResponse = { turmas: ClassOption[]; horarios: PublishedSchedule[] };
+type PublishedResponse = { turmas: ClassOption[]; professores?: string[]; horarios: PublishedSchedule[] };
 type RoomOccupancy = Pick<PublishedSchedule, "id" | "turma" | "dia" | "periodo" | "hora_inicio" | "disciplina" | "professor" | "sala_id">;
 type RoomOccupancyResponse = { horarios: RoomOccupancy[] };
 
@@ -62,16 +62,21 @@ const dayLabels: Record<string, string> = {
 };
 
 const weekdayOrder = ["SEG", "TER", "QUA", "QUI", "SEX"];
+const normalizeSearch = (value: string) =>
+  value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR");
 const sameSlot = (a: Pick<PublishedSchedule, "dia" | "periodo" | "hora_inicio">, b: Pick<PublishedSchedule, "dia" | "periodo" | "hora_inicio">) =>
   a.dia === b.dia && a.periodo === b.periodo;
 
 const HorariosSection = () => {
   const [view, setView] = useState<"cursos" | "tabela">("cursos");
   const [options, setOptions] = useState<ClassOption[]>([]);
+  const [teachers, setTeachers] = useState<string[]>([]);
   const [schedules, setSchedules] = useState<PublishedSchedule[]>([]);
   const [course, setCourse] = useState("");
   const [year, setYear] = useState("");
   const [className, setClassName] = useState("");
+  const [teacherSearch, setTeacherSearch] = useState("");
+  const [teacherQuery, setTeacherQuery] = useState("");
   const [loadingOptions, setLoadingOptions] = useState(true);
   const [loadingSchedules, setLoadingSchedules] = useState(false);
   const [error, setError] = useState("");
@@ -91,7 +96,10 @@ const HorariosSection = () => {
 
   useEffect(() => {
     apiFetch<PublishedResponse>("/api/horarios/publicados?apenas_opcoes=1")
-      .then((data) => setOptions(data.turmas))
+      .then((data) => {
+        setOptions(data.turmas);
+        setTeachers(data.professores || []);
+      })
       .catch((err) => setError(err instanceof Error ? err.message : "Erro ao carregar horários."))
       .finally(() => setLoadingOptions(false));
   }, []);
@@ -103,19 +111,29 @@ const HorariosSection = () => {
   }, []);
 
   useEffect(() => {
-    if (!className) {
+    const query = teacherQuery
+      ? `professor=${encodeURIComponent(teacherQuery)}`
+      : className
+        ? `turma=${encodeURIComponent(className)}`
+        : "";
+    if (!query) {
       setSchedules([]);
       return;
     }
     setLoadingSchedules(true);
-    apiFetch<PublishedResponse>(`/api/horarios/publicados?turma=${encodeURIComponent(className)}`)
+    const teacherFilter = normalizeSearch(teacherQuery);
+    apiFetch<PublishedResponse>(`/api/horarios/publicados?${query}`)
       .then((data) => {
-        setSchedules(data.horarios);
+        setSchedules(
+          teacherQuery
+            ? data.horarios.filter((schedule) => normalizeSearch(schedule.professor || "").includes(teacherFilter))
+            : data.horarios
+        );
         setError("");
       })
-      .catch((err) => setError(err instanceof Error ? err.message : "Erro ao carregar a turma."))
+      .catch((err) => setError(err instanceof Error ? err.message : "Erro ao carregar os horários."))
       .finally(() => setLoadingSchedules(false));
-  }, [className]);
+  }, [className, teacherQuery]);
 
   const courses = useMemo(
     () => [...new Set(options.map((item) => item.curso || "Outros"))].sort((a, b) => a.localeCompare(b, "pt-BR")),
@@ -146,6 +164,16 @@ const HorariosSection = () => {
   const roomConflict = selectedSchedule && selectedRoom
     ? roomOccupancies.find((item) => item.sala_id === selectedRoom.id && item.id !== selectedSchedule.id && sameSlot(item, selectedSchedule))
     : null;
+  const viewingTeacher = !!teacherQuery;
+  const teacherSearchValue = teacherSearch.trim();
+  const teacherSearchTerm = normalizeSearch(teacherSearchValue);
+  const canSearchTeacher = teacherSearchValue.length >= 2;
+  const matchingTeachers = useMemo(
+    () => canSearchTeacher ? teachers.filter((teacher) => normalizeSearch(teacher).includes(teacherSearchTerm)).slice(0, 8) : [],
+    [canSearchTeacher, teachers, teacherSearchTerm]
+  );
+  const classDetails = (schedule: PublishedSchedule) =>
+    [schedule.turma, schedule.curso, schedule.ano ? `${schedule.ano}º ano` : null].filter(Boolean).join(" · ");
 
   const ensureRoomsLoaded = async (force = false) => {
     if (loadingRooms || (!force && roomsLoaded)) return;
@@ -216,8 +244,24 @@ const HorariosSection = () => {
     }
   };
 
+  const submitTeacherSearch = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canSearchTeacher) return;
+    setTeacherQuery(teacherSearchValue);
+    setError("");
+    setView("tabela");
+  };
+
+  const backToCourses = () => {
+    setView("cursos");
+    setTeacherQuery("");
+    setClassName("");
+    setSchedules([]);
+  };
+
   const openCourse = (selectedCourse: string) => {
     const first = options.find((item) => (item.curso || "Outros") === selectedCourse);
+    setTeacherQuery("");
     setCourse(selectedCourse);
     setYear(first?.ano || "Não informado");
     setClassName(first?.turma || "");
@@ -226,6 +270,7 @@ const HorariosSection = () => {
 
   const changeCourse = (selectedCourse: string) => {
     const first = options.find((item) => (item.curso || "Outros") === selectedCourse);
+    setTeacherQuery("");
     setCourse(selectedCourse);
     setYear(first?.ano || "Não informado");
     setClassName(first?.turma || "");
@@ -233,8 +278,14 @@ const HorariosSection = () => {
 
   const changeYear = (selectedYear: string) => {
     const first = options.find((item) => (item.curso || "Outros") === course && (item.ano || "Não informado") === selectedYear);
+    setTeacherQuery("");
     setYear(selectedYear);
     setClassName(first?.turma || "");
+  };
+
+  const changeClassName = (selectedClassName: string) => {
+    setTeacherQuery("");
+    setClassName(selectedClassName);
   };
 
   if (view === "cursos") {
@@ -244,6 +295,26 @@ const HorariosSection = () => {
           <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center"><Clock className="w-5 h-5 text-primary" /></div>
           <div><h2 className="text-2xl font-heading font-bold text-foreground">Horários de Aula</h2><p className="text-sm text-muted-foreground">Somente horários aprovados pelo CPD</p></div>
         </div>
+        <form onSubmit={submitTeacherSearch} className="glass-card rounded-xl p-4 mb-6">
+          <label htmlFor="teacher-search" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Pesquisar professor</label>
+          <div className="mt-2 flex flex-col sm:flex-row gap-3">
+            <Input
+              id="teacher-search"
+              list="teacher-options"
+              value={teacherSearch}
+              onChange={(event) => setTeacherSearch(event.target.value)}
+              placeholder="Nome do professor"
+              autoComplete="off"
+            />
+            <Button type="submit" disabled={!canSearchTeacher} className="sm:w-auto">
+              <Search className="w-4 h-4 mr-2" />
+              Buscar
+            </Button>
+          </div>
+          <datalist id="teacher-options">
+            {matchingTeachers.map((teacher) => <option key={teacher} value={teacher} />)}
+          </datalist>
+        </form>
         {loadingOptions && <div className="glass-card rounded-xl p-12 text-center text-muted-foreground">Carregando horários publicados...</div>}
         {error && <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">{error}</div>}
         {!loadingOptions && !error && !courses.length && <div className="glass-card rounded-xl p-12 text-center"><p className="font-medium">Nenhum horário publicado.</p><p className="text-sm text-muted-foreground mt-1">Os horários aparecerão aqui após aprovação do CPD.</p></div>}
@@ -263,17 +334,40 @@ const HorariosSection = () => {
 
   return (
     <div className="animate-fade-in">
-      <button onClick={() => setView("cursos")} className="flex items-center gap-2 text-primary hover:text-primary/80 text-sm mb-4 font-medium"><ArrowLeft className="w-4 h-4" /> Voltar aos cursos</button>
+      <button onClick={backToCourses} className="flex items-center gap-2 text-primary hover:text-primary/80 text-sm mb-4 font-medium"><ArrowLeft className="w-4 h-4" /> Voltar aos cursos</button>
       <div className="glass-card rounded-2xl p-6">
-        <h2 className="text-xl font-heading font-bold text-card-foreground mb-6">Selecionar a turma</h2>
-        <div className="flex flex-wrap gap-4 mb-6">
-          <div className="space-y-1.5"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Curso</label><Select value={course} onValueChange={changeCourse}><SelectTrigger className="w-[200px]"><SelectValue /></SelectTrigger><SelectContent>{courses.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select></div>
-          <div className="space-y-1.5"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Ano</label><Select value={year} onValueChange={changeYear}><SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger><SelectContent>{years.map((item) => <SelectItem key={item} value={item}>{item === "Não informado" ? item : `${item}º ano`}</SelectItem>)}</SelectContent></Select></div>
-          <div className="space-y-1.5"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Turma</label><Select value={className} onValueChange={setClassName}><SelectTrigger className="w-[180px]"><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent>{classes.map((item) => <SelectItem key={item.turma} value={item.turma}>{item.turma}</SelectItem>)}</SelectContent></Select></div>
-        </div>
+        <h2 className="text-xl font-heading font-bold text-card-foreground mb-6">{viewingTeacher ? `Horários de ${teacherQuery}` : "Selecionar a turma"}</h2>
+        {viewingTeacher ? (
+          <form onSubmit={submitTeacherSearch} className="flex flex-col sm:flex-row gap-3 mb-6">
+            <div className="space-y-1.5 flex-1">
+              <label htmlFor="teacher-search-table" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Professor</label>
+              <Input
+                id="teacher-search-table"
+                list="teacher-options"
+                value={teacherSearch}
+                onChange={(event) => setTeacherSearch(event.target.value)}
+                placeholder="Nome do professor"
+                autoComplete="off"
+              />
+            </div>
+            <Button type="submit" disabled={!canSearchTeacher} className="self-end">
+              <Search className="w-4 h-4 mr-2" />
+              Buscar
+            </Button>
+            <datalist id="teacher-options">
+              {matchingTeachers.map((teacher) => <option key={teacher} value={teacher} />)}
+            </datalist>
+          </form>
+        ) : (
+          <div className="flex flex-wrap gap-4 mb-6">
+            <div className="space-y-1.5"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Curso</label><Select value={course} onValueChange={changeCourse}><SelectTrigger className="w-[200px]"><SelectValue /></SelectTrigger><SelectContent>{courses.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select></div>
+            <div className="space-y-1.5"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Ano</label><Select value={year} onValueChange={changeYear}><SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger><SelectContent>{years.map((item) => <SelectItem key={item} value={item}>{item === "Não informado" ? item : `${item}º ano`}</SelectItem>)}</SelectContent></Select></div>
+            <div className="space-y-1.5"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Turma</label><Select value={className} onValueChange={changeClassName}><SelectTrigger className="w-[180px]"><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent>{classes.map((item) => <SelectItem key={item.turma} value={item.turma}>{item.turma}</SelectItem>)}</SelectContent></Select></div>
+          </div>
+        )}
         {error && <p className="text-sm text-destructive mb-4">{error}</p>}
         {loadingSchedules && <div className="rounded-xl border border-border py-10 text-center text-muted-foreground">Carregando...</div>}
-        {!loadingSchedules && !schedules.length && <div className="rounded-xl border border-border py-10 text-center text-muted-foreground">Nenhuma aula encontrada para esta turma.</div>}
+        {!loadingSchedules && !schedules.length && <div className="rounded-xl border border-border py-10 text-center text-muted-foreground">{viewingTeacher ? "Nenhuma aula encontrada para este professor." : "Nenhuma aula encontrada para esta turma."}</div>}
         {!loadingSchedules && !!schedules.length && (
           <div className="space-y-5">
             {schedulesByDay.map(({ day, schedules: daySchedules }) => (
@@ -305,6 +399,7 @@ const HorariosSection = () => {
                         </div>
                         <p className="mt-1 font-medium text-foreground">{schedule.disciplina}</p>
                         <div className="mt-3 grid gap-2 text-xs text-muted-foreground">
+                          {viewingTeacher && <p><span className="font-medium text-foreground">Turma:</span> {classDetails(schedule)}</p>}
                           <p><span className="font-medium text-foreground">Sala:</span> {schedule.sala || "—"}</p>
                           <p><span className="font-medium text-foreground">Professor:</span> {schedule.professor || "—"}</p>
                         </div>
@@ -316,6 +411,7 @@ const HorariosSection = () => {
                       <TableHeader>
                         <TableRow className="bg-muted/50">
                           <TableHead>Horário</TableHead>
+                          {viewingTeacher && <TableHead>Turma</TableHead>}
                           <TableHead>Disciplina</TableHead>
                           <TableHead>Sala</TableHead>
                           <TableHead>Professor</TableHead>
@@ -325,6 +421,7 @@ const HorariosSection = () => {
                         {daySchedules.map((schedule) => (
                           <TableRow key={schedule.id} className="hover:bg-primary/5">
                             <TableCell className="font-semibold text-primary">{schedule.hora_inicio || `${schedule.periodo}ª aula`}</TableCell>
+                            {viewingTeacher && <TableCell>{classDetails(schedule)}</TableCell>}
                             <TableCell className="font-medium">{schedule.disciplina}</TableCell>
                             <TableCell>
                               <div className="flex items-center gap-2 min-w-[9rem]">

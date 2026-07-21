@@ -327,7 +327,7 @@ export default function SalasSection() {
           motivo: transfer.motivo,
         }),
       });
-      toast.success("Turma transferida de sala.");
+      toast.success("Turma transferida neste horário.");
       setTransfer(null);
       await load();
     } catch (err) {
@@ -601,7 +601,7 @@ export default function SalasSection() {
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>Trocar turma de sala</DialogTitle>
-            <DialogDescription>Selecione a nova sala e confirme a alteração no horário público.</DialogDescription>
+            <DialogDescription>Selecione a nova sala e confirme a alteração neste horário específico.</DialogDescription>
           </DialogHeader>
           {transfer && (
             <div className="space-y-4">
@@ -639,7 +639,7 @@ export default function SalasSection() {
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>Escolher turma do período</DialogTitle>
-            <DialogDescription>Esta escolha altera a sala no horário publicado para os alunos.</DialogDescription>
+            <DialogDescription>Esta escolha altera a sala da turma neste horário específico.</DialogDescription>
           </DialogHeader>
           {slotPicker && (
             <div className="space-y-4">

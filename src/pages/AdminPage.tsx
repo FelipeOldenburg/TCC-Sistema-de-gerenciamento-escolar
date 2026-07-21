@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { AlertCircle, ArrowLeft, Building2, CalendarDays, DoorOpen, Download, Edit, Eye, FileUp, LogOut, MessageSquareWarning, Paperclip, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import cimolLogo from "@/assets/cimol-logo.png";
@@ -27,6 +28,27 @@ type ReorganizacaoRegistro = {
   data: string;
 };
 
+type ReorganizacaoTroca = {
+  horario_id: number;
+  dia: string;
+  periodo: number;
+  hora_inicio: string | null;
+  disciplina: string;
+  sala_anterior: string | null;
+  sala_nova?: string;
+  motivo?: string;
+};
+
+type ReorganizacaoResposta = {
+  id: number;
+  reorganizacao: {
+    avaliadas: number;
+    candidatas: number;
+    aplicadas: ReorganizacaoTroca[];
+    nao_aplicadas: ReorganizacaoTroca[];
+  } | null;
+};
+
 const sidebarItems: { id: AdminTab; label: string; icon: typeof FileUp; roles: UserRole[] }[] = [
   { id: "horarios", label: "Turmas e Horários", icon: FileUp, roles: ["ADMIN", "CPD"] },
   { id: "blocos", label: "Blocos", icon: Building2, roles: ["CPD"] },
@@ -44,12 +66,15 @@ const ReorganizacaoSection = () => {
   const [curso, setCurso] = useState("");
   const [problema, setProblema] = useState("");
   const [salas, setSalas] = useState("");
+  const [quantidadeAlunos, setQuantidadeAlunos] = useState("");
+  const [restricaoAndarSuperior, setRestricaoAndarSuperior] = useState(true);
   const [arquivo, setArquivo] = useState<File | null>(null);
   const arquivoRef = useRef<HTMLInputElement>(null);
   const [registros, setRegistros] = useState<ReorganizacaoRegistro[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
+  const [resultado, setResultado] = useState<ReorganizacaoResposta | null>(null);
 
   const cursosDisponiveis = [
     "Informática",
@@ -150,12 +175,13 @@ const ReorganizacaoSection = () => {
   }, []);
 
   const handleAdicionar = async () => {
-    if (!alunoMatricula || !ano || !turma || !curso || !problema || !salas) {
+    if (!alunoMatricula || !ano || !turma || !curso || !problema) {
       setErro("Preencha todos os campos antes de registrar.");
       return;
     }
 
     setErro("");
+    setResultado(null);
     setSalvando(true);
 
     try {
@@ -167,6 +193,8 @@ const ReorganizacaoSection = () => {
       formData.append("curso", curso);
       formData.append("problema", problema);
       formData.append("salas", salas);
+      formData.append("restricao_andar_superior", restricaoAndarSuperior ? "1" : "0");
+      if (quantidadeAlunos) formData.append("quantidade_alunos", quantidadeAlunos);
       if (arquivo) formData.append("arquivo", arquivo);
 
       const resposta = await fetch(apiUrl("/api/reorganizacao"), {
@@ -180,6 +208,8 @@ const ReorganizacaoSection = () => {
         throw new Error(dados?.message || "Não foi possível salvar o registro.");
       }
 
+      const dados = await resposta.json() as ReorganizacaoResposta;
+      setResultado(dados);
       await carregarRegistros();
       setAlunoMatricula("");
       setAno("");
@@ -187,6 +217,7 @@ const ReorganizacaoSection = () => {
       setCurso("");
       setProblema("");
       setSalas("");
+      setQuantidadeAlunos("");
       setArquivo(null);
       if (arquivoRef.current) arquivoRef.current.value = "";
     } catch (error) {
@@ -214,6 +245,9 @@ const ReorganizacaoSection = () => {
       setErro(error instanceof Error ? error.message : "Erro ao remover registro.");
     }
   };
+
+  const trocaLabel = (troca: ReorganizacaoTroca) =>
+    `${troca.dia} · ${troca.hora_inicio || `${troca.periodo}ª aula`} · ${troca.disciplina}`;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -286,11 +320,35 @@ const ReorganizacaoSection = () => {
           <div>
             <label className="text-sm font-medium text-foreground mb-1 block">Salas a Reorganizar</label>
             <Input
-              placeholder="Ex: S101, S205, S304"
+              placeholder="Opcional: S201, C303"
               value={salas}
               onChange={(e) => setSalas(e.target.value)}
               className="rounded-xl"
             />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_220px] gap-3">
+            <label className="flex items-start gap-3 rounded-xl border border-border bg-background/60 p-3 text-sm">
+              <Checkbox
+                checked={restricaoAndarSuperior}
+                onCheckedChange={(checked) => setRestricaoAndarSuperior(checked === true)}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="block font-medium text-foreground">Trocar aulas de andares superiores</span>
+                <span className="block text-xs text-muted-foreground">Usa salas livres do 1º andar em cada horário da turma.</span>
+              </span>
+            </label>
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1 block">Quantidade de alunos</label>
+              <Input
+                type="number"
+                min={1}
+                placeholder="Opcional"
+                value={quantidadeAlunos}
+                onChange={(e) => setQuantidadeAlunos(e.target.value)}
+                className="rounded-xl"
+              />
+            </div>
           </div>
 
           {/* Upload de documento justificativo */}
@@ -336,6 +394,31 @@ const ReorganizacaoSection = () => {
             )}
           </div>
 
+          {resultado?.reorganizacao && (
+            <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 text-sm">
+              <p className="font-semibold text-foreground">
+                {resultado.reorganizacao.aplicadas.length} troca(s) aplicada(s), {resultado.reorganizacao.nao_aplicadas.length} pendente(s)
+              </p>
+              {resultado.reorganizacao.aplicadas.length > 0 && (
+                <div className="mt-2 space-y-1 text-muted-foreground">
+                  {resultado.reorganizacao.aplicadas.slice(0, 4).map((troca) => (
+                    <p key={troca.horario_id}>{trocaLabel(troca)}: {troca.sala_anterior || "sem sala"} → {troca.sala_nova}</p>
+                  ))}
+                </div>
+              )}
+              {resultado.reorganizacao.nao_aplicadas.length > 0 && (
+                <div className="mt-2 space-y-1 text-destructive">
+                  {resultado.reorganizacao.nao_aplicadas.slice(0, 3).map((troca) => (
+                    <p key={troca.horario_id}>{trocaLabel(troca)}: {troca.motivo}</p>
+                  ))}
+                </div>
+              )}
+              {!resultado.reorganizacao.avaliadas && (
+                <p className="mt-2 text-muted-foreground">Nenhuma aula da turma estava em andar superior.</p>
+              )}
+            </div>
+          )}
+
           {erro && <p className="text-sm text-destructive">{erro}</p>}
           <Button onClick={handleAdicionar} disabled={salvando} className="rounded-xl gap-2 w-full">
             <Plus className="w-4 h-4" /> {salvando ? "Salvando..." : "Registrar e Reorganizar"}
@@ -365,14 +448,14 @@ const ReorganizacaoSection = () => {
           <TableBody>
             {carregando && (
               <TableRow>
-                <TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-8">
+                <TableCell colSpan={9} className="text-center text-sm text-muted-foreground py-8">
                   Carregando registros...
                 </TableCell>
               </TableRow>
             )}
             {!carregando && registros.length === 0 && (
               <TableRow>
-                <TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-8">
+                <TableCell colSpan={9} className="text-center text-sm text-muted-foreground py-8">
                   Nenhum aluno com restrição cadastrado.
                 </TableCell>
               </TableRow>
@@ -384,7 +467,7 @@ const ReorganizacaoSection = () => {
                 <TableCell className="text-sm">{reg.turma}</TableCell>
                 <TableCell className="text-sm">{reg.curso}</TableCell>
                 <TableCell className="text-sm">{reg.problema}</TableCell>
-                <TableCell className="text-sm text-primary">{reg.salas}</TableCell>
+                <TableCell className="text-sm text-primary">{reg.salas || "—"}</TableCell>
                 <TableCell className="text-sm">
                   {reg.arquivo_nome ? (
                     <a
@@ -427,8 +510,7 @@ const ReorganizacaoSection = () => {
 
       <div className="bg-accent/10 border border-accent/20 rounded-2xl p-4">
         <p className="text-sm text-accent-foreground">
-          <span className="font-medium">Dica:</span> O sistema de reorganização irá automaticamente realocar o aluno para salas acessíveis
-          conforme os problemas registrados quando implementado.
+          <span className="font-medium">Dica:</span> As trocas aplicadas aqui também aparecem no histórico do controle de salas.
         </p>
       </div>
     </div>
