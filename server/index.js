@@ -39,6 +39,8 @@ const splitEnvList = (...values) =>
     .map((value) => value.trim())
     .filter(Boolean);
 
+const asBoolean = (value) => value === true || value === 1 || value === "1" || value === "true" || value === "on";
+
 const allowedOrigins = new Set(splitEnvList(process.env.PUBLIC_ORIGIN, process.env.ALLOWED_ORIGINS));
 const localhostOriginPattern = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/;
 
@@ -69,11 +71,15 @@ if (!/^[A-Za-z0-9_]+$/.test(databaseName)) {
   throw new Error("DB_NAME contém caracteres inválidos.");
 }
 
+const databaseSsl = asBoolean(process.env.DB_SSL)
+  ? { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false" }
+  : undefined;
 const databaseConfig = {
   host: process.env.DB_HOST || "localhost",
   port: Number(process.env.DB_PORT || 3306),
   user: process.env.DB_USER || "root",
   password: process.env.DB_PASSWORD || "",
+  ssl: databaseSsl,
 };
 
 const initializeSchema = async () => {
@@ -98,7 +104,7 @@ const db = mysql.createPool({
   ...databaseConfig,
   database: databaseName,
   waitForConnections: true,
-  connectionLimit: Number(process.env.DB_CONNECTION_LIMIT || 10),
+  connectionLimit: Number(process.env.DB_CONNECTION_LIMIT || (process.env.VERCEL ? 4 : 10)),
 });
 
 const ensureOperationalColumns = async () => {
@@ -334,7 +340,6 @@ app.get("/.well-known/appspecific/com.chrome.devtools.json", (_req, res) => {
 });
 
 const httpError = (statusCode, message) => Object.assign(new Error(message), { statusCode });
-const asBoolean = (value) => value === true || value === 1 || value === "1" || value === "true" || value === "on";
 const positiveInt = (value, fallback, { min = 1, max = 500 } = {}) => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
@@ -2269,14 +2274,18 @@ app.use((error, req, res, _next) => {
   });
 });
 
-const server = app.listen(port);
-server.on("listening", () => {
-  console.log(`API rodando em http://localhost:${port}`);
-});
-server.on("error", (error) => {
-  if (error.code === "EADDRINUSE") {
-    console.error(`Porta ${port} já está em uso. Encerre o outro servidor ou defina API_PORT para outra porta.`);
-    process.exit(1);
-  }
-  throw error;
-});
+if (!process.env.VERCEL) {
+  const server = app.listen(port);
+  server.on("listening", () => {
+    console.log(`API rodando em http://localhost:${port}`);
+  });
+  server.on("error", (error) => {
+    if (error.code === "EADDRINUSE") {
+      console.error(`Porta ${port} já está em uso. Encerre o outro servidor ou defina API_PORT para outra porta.`);
+      process.exit(1);
+    }
+    throw error;
+  });
+}
+
+export default app;

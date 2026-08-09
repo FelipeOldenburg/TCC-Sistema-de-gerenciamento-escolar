@@ -1,0 +1,17 @@
+{
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api"
+    },
+    {
+      "source": "/api-CIMOL/(.*)",
+      "destination": "/api"
+    }
+  ]
+}
