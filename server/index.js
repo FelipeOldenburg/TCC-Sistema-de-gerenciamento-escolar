@@ -66,7 +66,10 @@ const normalizeTrustProxy = (value) => {
 const trustProxy = normalizeTrustProxy(process.env.TRUST_PROXY);
 app.set("trust proxy", trustProxy);
 
-const databaseName = process.env.DB_NAME || "cimol";
+const databaseUrl = process.env.DATABASE_URL || process.env.MYSQL_URL || "";
+const parsedDatabaseUrl = databaseUrl ? new URL(databaseUrl) : null;
+const databaseName =
+  process.env.DB_NAME || parsedDatabaseUrl?.pathname.replace(/^\/+/, "").split("?")[0] || "cimol";
 if (!/^[A-Za-z0-9_]+$/.test(databaseName)) {
   throw new Error("DB_NAME contém caracteres inválidos.");
 }
@@ -75,20 +78,28 @@ const databaseSsl = asBoolean(process.env.DB_SSL)
   ? { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false" }
   : undefined;
 const databaseConfig = {
-  host: process.env.DB_HOST || "localhost",
-  port: Number(process.env.DB_PORT || 3306),
-  user: process.env.DB_USER || "root",
-  password: process.env.DB_PASSWORD || "",
+  host: parsedDatabaseUrl?.hostname || process.env.DB_HOST || "localhost",
+  port: Number(parsedDatabaseUrl?.port || process.env.DB_PORT || 3306),
+  user: parsedDatabaseUrl ? decodeURIComponent(parsedDatabaseUrl.username) : process.env.DB_USER || "root",
+  password: parsedDatabaseUrl ? decodeURIComponent(parsedDatabaseUrl.password) : process.env.DB_PASSWORD || "",
   ssl: databaseSsl,
 };
+const shouldCreateDatabase =
+  process.env.DB_CREATE_DATABASE == null ? !parsedDatabaseUrl : asBoolean(process.env.DB_CREATE_DATABASE);
 
 const initializeSchema = async () => {
-  const connection = await mysql.createConnection({ ...databaseConfig, multipleStatements: true });
+  const connection = await mysql.createConnection({
+    ...databaseConfig,
+    database: shouldCreateDatabase ? undefined : databaseName,
+    multipleStatements: true,
+  });
   try {
-    await connection.query(
-      `CREATE DATABASE IF NOT EXISTS \`${databaseName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
-    );
-    await connection.changeUser({ database: databaseName });
+    if (shouldCreateDatabase) {
+      await connection.query(
+        `CREATE DATABASE IF NOT EXISTS \`${databaseName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+      );
+      await connection.changeUser({ database: databaseName });
+    }
     const schema = fs
       .readFileSync(path.join(__dirname, "schema.sql"), "utf8")
       .replace(/CREATE DATABASE IF NOT EXISTS[\s\S]*?USE\s+[A-Za-z0-9_]+\s*;/i, "");
