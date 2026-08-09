@@ -17,6 +17,7 @@ __pycache__/
 *.py[cod]
 .venv/
 AGENTS.md
+Segundo-Cerebro-TCC
 
 # Editor directories and files
 .vscode/*

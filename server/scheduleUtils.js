@@ -58,11 +58,13 @@ export const buildScheduleComparison = (candidateSchedules, activeSchedules, act
   const added = [];
   const removed = [];
   const changed = [];
+  const affectedClasses = new Set();
 
   for (const [key, schedule] of candidateByKey) {
     const previous = activeByKey.get(key);
     if (!previous) {
       added.push(schedule);
+      affectedClasses.add(schedule.turma);
     } else if (scheduleFingerprint(previous) !== scheduleFingerprint(schedule)) {
       changed.push({
         antes: summary(previous),
@@ -71,11 +73,15 @@ export const buildScheduleComparison = (candidateSchedules, activeSchedules, act
         professor_alterado: (previous.professor || "") !== (schedule.professor || ""),
         disciplina_alterada: (previous.disciplina || "") !== (schedule.disciplina || ""),
       });
+      affectedClasses.add(schedule.turma);
     }
   }
 
   for (const [key, schedule] of activeByKey) {
-    if (!candidateByKey.has(key)) removed.push(schedule);
+    if (!candidateByKey.has(key)) {
+      removed.push(schedule);
+      affectedClasses.add(schedule.turma);
+    }
   }
 
   return {
@@ -86,6 +92,7 @@ export const buildScheduleComparison = (candidateSchedules, activeSchedules, act
     aulas_removidas: removed.length,
     aulas_alteradas: changed.length,
     aulas_mudaram: added.length + removed.length + changed.length,
+    turmas_afetadas: [...affectedClasses].sort((a, b) => a.localeCompare(b, "pt-BR")),
     salas_alteradas: changed.filter((item) => item.sala_alterada).length,
     professores_alterados: changed.filter((item) => item.professor_alterado).length,
     disciplinas_alteradas: changed.filter((item) => item.disciplina_alterada).length,

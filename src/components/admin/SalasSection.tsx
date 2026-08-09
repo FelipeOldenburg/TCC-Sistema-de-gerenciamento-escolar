@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRightLeft, Edit, History, Plus, Save, Search, Trash2, X } from "lucide-react";
+import { ArrowRightLeft, Edit, History, Plus, PowerOff, Save, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
@@ -91,6 +91,7 @@ const statusClass: Record<RoomStatus, string> = {
 };
 
 const sheetPeriods = [1, 2, 3, 4, 5];
+const WITHOUT_ROOM_VALUE = "__sem_sala__";
 const dayOrder = ["SEG", "TER", "QUA", "QUI", "SEX", "SAB", "DOM"];
 const dayLabels: Record<string, string> = {
   SEG: "Segunda",
@@ -256,6 +257,17 @@ export default function SalasSection() {
     }
   };
 
+  const deletePermanently = async (sala: Sala) => {
+    if (!window.confirm(`Excluir definitivamente a sala "${sala.nome}"?`)) return;
+    try {
+      await apiFetch(`/api/salas/${sala.id}?definitivo=1`, { method: "DELETE" });
+      toast.success("Sala excluída.");
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao excluir sala.");
+    }
+  };
+
   const ocupacoesPorSala = useMemo(() => {
     const map = new Map<number, RoomOccupancy[]>();
     ocupacoes.forEach((item) => {
@@ -292,7 +304,7 @@ export default function SalasSection() {
   }, [salasFiltradas]);
 
   const salasAtivas = useMemo(() => salas.filter((sala) => sala.status === "ATIVA"), [salas]);
-  const targetRoom = transfer ? salas.find((sala) => String(sala.id) === transfer.salaId) || null : null;
+  const targetRoom = transfer && transfer.salaId !== WITHOUT_ROOM_VALUE ? salas.find((sala) => String(sala.id) === transfer.salaId) || null : null;
   const targetCapacity = targetRoom?.capacidade ?? null;
   const studentCount = transfer?.quantidadeAlunos ? Number(transfer.quantidadeAlunos) : null;
   const capacityWarning = targetRoom && studentCount && targetCapacity !== null && studentCount > targetCapacity;
@@ -309,7 +321,7 @@ export default function SalasSection() {
   const openTransfer = (schedule: RoomOccupancy) => {
     setTransfer({
       schedule,
-      salaId: schedule.sala_id ? String(schedule.sala_id) : "",
+      salaId: schedule.sala_id ? String(schedule.sala_id) : WITHOUT_ROOM_VALUE,
       quantidadeAlunos: "",
       motivo: "",
     });
@@ -317,17 +329,18 @@ export default function SalasSection() {
 
   const saveTransfer = async () => {
     if (!transfer) return;
+    const salaId = transfer.salaId === WITHOUT_ROOM_VALUE ? null : Number(transfer.salaId);
     setSavingTransfer(true);
     try {
       await apiFetch(`/api/horarios/publicados/${transfer.schedule.id}/sala`, {
         method: "PATCH",
         body: JSON.stringify({
-          sala_id: Number(transfer.salaId),
+          sala_id: salaId,
           quantidade_alunos: transfer.quantidadeAlunos ? Number(transfer.quantidadeAlunos) : null,
           motivo: transfer.motivo,
         }),
       });
-      toast.success("Turma transferida neste horário.");
+      toast.success(salaId === null ? "Sala removida deste horário." : "Turma transferida neste horário.");
       setTransfer(null);
       await load();
     } catch (err) {
@@ -529,8 +542,8 @@ export default function SalasSection() {
         {loading && <div className="py-10 text-center text-sm text-muted-foreground">Carregando...</div>}
         {!loading && !salasFiltradas.length && <div className="py-10 text-center text-sm text-muted-foreground">Nenhuma sala encontrada.</div>}
         {!loading && salasPorBloco.map(([bloco, rooms]) => (
-          <section key={bloco} className="border-b last:border-b-0">
-            <div className="bg-muted/40 px-5 py-3">
+          <section key={bloco} className="border-b-4 border-border/70 last:border-b-0">
+            <div className="border-b border-primary/15 bg-primary/10 px-5 py-3">
               <h4 className="font-heading font-bold">{bloco}</h4>
               <p className="text-xs text-muted-foreground">{rooms.length} sala(s)</p>
             </div>
@@ -552,7 +565,8 @@ export default function SalasSection() {
                       </div>
                       <div className="flex shrink-0 justify-end gap-1">
                         <Button variant="ghost" size="icon" onClick={() => edit(sala)}><Edit className="w-4 h-4" /></Button>
-                        {sala.status !== "INATIVA" && <Button variant="ghost" size="icon" onClick={() => remove(sala)} title="Desativar"><Trash2 className="w-4 h-4 text-destructive" /></Button>}
+                        {sala.status !== "INATIVA" && <Button variant="ghost" size="icon" onClick={() => remove(sala)} title="Desativar"><PowerOff className="w-4 h-4 text-amber-600" /></Button>}
+                        <Button variant="ghost" size="icon" onClick={() => deletePermanently(sala)} title="Excluir definitivamente"><Trash2 className="w-4 h-4 text-destructive" /></Button>
                       </div>
                     </div>
                     <div className="grid gap-3 xl:grid-cols-2">
@@ -613,9 +627,11 @@ export default function SalasSection() {
               <div>
                 <label className="text-sm font-medium mb-1 block">Nova sala</label>
                 <select value={transfer.salaId} onChange={(event) => setTransfer({ ...transfer, salaId: event.target.value })} className="h-10 w-full rounded-md border bg-background px-3 text-sm">
+                  <option value={WITHOUT_ROOM_VALUE}>Sem sala definida</option>
                   {salasAtivas.map((sala) => <option key={sala.id} value={sala.id}>{sala.nome} · {sala.bloco_nome} · {sala.capacidade == null ? "capacidade a conferir" : `${sala.capacidade} lugares`}</option>)}
                 </select>
                 {targetRoom && <p className="mt-1 text-xs text-muted-foreground">{targetRoom.tipo} · {targetRoom.andar}</p>}
+                {!targetRoom && <p className="mt-1 text-xs text-muted-foreground">A turma ficará sem sala definida neste horário.</p>}
               </div>
               <div>
                 <label className="text-sm font-medium mb-1 block">Quantidade de alunos</label>

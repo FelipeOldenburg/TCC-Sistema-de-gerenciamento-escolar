@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { AlertCircle, ArrowLeft, Building2, CalendarDays, DoorOpen, Download, Edit, Eye, FileUp, LogOut, MessageSquareWarning, Paperclip, Plus, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, Building2, CalendarDays, DoorOpen, Download, FileUp, LogOut, MessageSquareWarning, Paperclip, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -487,12 +487,6 @@ const ReorganizacaoSection = () => {
                 <TableCell className="text-sm text-muted-foreground">{reg.data}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
-                    <button className="p-2 rounded-lg hover:bg-muted transition-colors" title="Visualizar">
-                      <Eye className="w-4 h-4 text-muted-foreground" />
-                    </button>
-                    <button className="p-2 rounded-lg hover:bg-muted transition-colors" title="Editar">
-                      <Edit className="w-4 h-4 text-muted-foreground" />
-                    </button>
                     <button
                       onClick={() => handleDeletar(reg.id)}
                       className="p-2 rounded-lg hover:bg-destructive/10 transition-colors"
@@ -516,29 +510,6 @@ const ReorganizacaoSection = () => {
     </div>
   );
 };
-
-const GenericAdmin = ({ title, description }: { title: string; description: string }) => (
-  <div className="space-y-6 animate-fade-in">
-    <div className="flex items-center justify-between flex-wrap gap-4">
-      <div>
-        <h2 className="text-2xl font-heading font-bold text-foreground">{title}</h2>
-        <p className="text-muted-foreground text-sm">{description}</p>
-      </div>
-      <Button className="rounded-xl gap-2">
-        <Plus className="w-4 h-4" /> Adicionar
-      </Button>
-    </div>
-    <div className="glass-card rounded-2xl p-6">
-      <div className="relative mb-4">
-        <Input placeholder={`Buscar em ${title.toLowerCase()}...`} className="rounded-xl" />
-      </div>
-      <div className="text-center py-12 text-muted-foreground">
-        <p className="text-sm">Nenhum registro encontrado.</p>
-        <p className="text-xs mt-1">Clique em "Adicionar" para criar o primeiro.</p>
-      </div>
-    </div>
-  </div>
-);
 
 const AdminPageComponent = () => {
   const navigate = useNavigate();

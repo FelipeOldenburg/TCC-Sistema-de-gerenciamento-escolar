@@ -105,6 +105,8 @@ const ensureOperationalColumns = async () => {
   const columns = [
     ["salas", "status", "ALTER TABLE salas ADD COLUMN status ENUM('ATIVA', 'INATIVA', 'MANUTENCAO') NOT NULL DEFAULT 'ATIVA' AFTER tipo"],
     ["salas", "acessivel", "ALTER TABLE salas ADD COLUMN acessivel BOOLEAN NOT NULL DEFAULT FALSE AFTER status"],
+    ["horario_notificacoes", "confirmacao_token_hash", "ALTER TABLE horario_notificacoes ADD COLUMN confirmacao_token_hash CHAR(64) NULL AFTER ativo"],
+    ["horario_notificacoes", "confirmacao_expira_em", "ALTER TABLE horario_notificacoes ADD COLUMN confirmacao_expira_em DATETIME NULL AFTER confirmacao_token_hash"],
   ];
 
   for (const [tableName, columnName, statement] of columns) {
@@ -144,6 +146,11 @@ const ensureOperationalIndexes = async () => {
       "horarios_importados",
       "idx_horarios_publicos_importacao",
       "ALTER TABLE horarios_importados ADD INDEX idx_horarios_publicos_importacao (importacao_id, categoria, turma, dia, periodo)",
+    ],
+    [
+      "horario_notificacoes",
+      "idx_horario_notificacoes_token",
+      "ALTER TABLE horario_notificacoes ADD INDEX idx_horario_notificacoes_token (confirmacao_token_hash)",
     ],
   ];
 
@@ -403,6 +410,35 @@ const cacheableJson = (req, res, payload, { maxAge = 60, staleWhileRevalidate = 
   return res.send(body);
 };
 
+const normalizeEmail = (value) => String(value || "").trim().toLowerCase();
+const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+const hashToken = (value) => crypto.createHash("sha256").update(value).digest("hex");
+
+const publicBaseUrl = (req) =>
+  String(process.env.PUBLIC_ORIGIN || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
+
+const sendEmail = async ({ to, subject, text }) => {
+  if (!process.env.SMTP_HOST) return { sent: false, reason: "SMTP_HOST ausente" };
+  if (!process.env.SMTP_FROM && !process.env.SMTP_USER) return { sent: false, reason: "SMTP_FROM ausente" };
+  const nodemailer = (await import("nodemailer")).default;
+  const port = Number(process.env.SMTP_PORT || 587);
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port,
+    secure: process.env.SMTP_SECURE ? asBoolean(process.env.SMTP_SECURE) : port === 465,
+    auth: process.env.SMTP_USER
+      ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS || "" }
+      : undefined,
+  });
+  await transporter.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to,
+    subject,
+    text,
+  });
+  return { sent: true };
+};
+
 const authRateLimit = rateLimit({
   windowMs: Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000),
   limit: Number(process.env.AUTH_RATE_LIMIT || 20),
@@ -421,6 +457,13 @@ const uploadRateLimit = rateLimit({
 const ouvidoriaRateLimit = rateLimit({
   windowMs: Number(process.env.OUVIDORIA_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000),
   limit: Number(process.env.OUVIDORIA_RATE_LIMIT || 8),
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+});
+
+const notificationRateLimit = rateLimit({
+  windowMs: Number(process.env.NOTIFICATION_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000),
+  limit: Number(process.env.NOTIFICATION_RATE_LIMIT || 10),
   standardHeaders: "draft-7",
   legacyHeaders: false,
 });
@@ -1210,6 +1253,23 @@ app.put("/api/salas/:id", requireRole("CPD"), async (req, res, next) => {
 
 app.delete("/api/salas/:id", requireRole("CPD"), async (req, res, next) => {
   try {
+    if (asBoolean(req.query.definitivo)) {
+      const [activeSchedules] = await db.query(
+        `SELECT COUNT(*) AS total
+           FROM horarios_importados h
+           JOIN importacoes_horarios i ON i.id = h.importacao_id
+          WHERE h.sala_id = ?
+            AND i.status = 'APROVADA'
+            AND i.ativa = TRUE`,
+        [req.params.id]
+      );
+      if (Number(activeSchedules[0]?.total || 0) > 0) {
+        throw httpError(409, "Remova a sala dos horários publicados antes de excluir definitivamente.");
+      }
+      const [result] = await db.query("DELETE FROM salas WHERE id = ?", [req.params.id]);
+      if (!result.affectedRows) throw httpError(404, "Sala não encontrada.");
+      return res.json({ ok: true, deleted: true });
+    }
     const [result] = await db.query("UPDATE salas SET status = 'INATIVA' WHERE id = ?", [req.params.id]);
     if (!result.affectedRows) throw httpError(404, "Sala não encontrada.");
     res.json({ ok: true });
@@ -1586,6 +1646,30 @@ const insertScheduleChunks = async (conn, importId, schedules, roomByName) => {
   }
 };
 
+const preserveRoomsFromActiveImport = async (conn, importId, scopeKey) => {
+  const [result] = await conn.query(
+    `UPDATE horarios_importados candidate
+       JOIN importacoes_horarios active_import
+         ON active_import.escopo_chave = ?
+        AND active_import.status = 'APROVADA'
+        AND active_import.ativa = TRUE
+        AND active_import.id <> candidate.importacao_id
+       JOIN horarios_importados active
+         ON active.importacao_id = active_import.id
+        AND active.categoria = candidate.categoria
+        AND active.turma = candidate.turma
+        AND active.dia = candidate.dia
+        AND active.periodo = candidate.periodo
+        AND active.sala_id IS NOT NULL
+        SET candidate.sala_id = active.sala_id
+      WHERE candidate.importacao_id = ?
+        AND candidate.categoria = 'TURMA'
+        AND candidate.sala_id IS NULL`,
+    [scopeKey, importId]
+  );
+  return result.affectedRows || 0;
+};
+
 app.post(
   "/api/importacoes/urania",
   uploadRateLimit,
@@ -1657,6 +1741,7 @@ app.post(
           ]);
         }
         await insertScheduleChunks(conn, importId, parsed.horarios, roomByName);
+        await preserveRoomsFromActiveImport(conn, importId, parsed.escopo_chave);
         await conn.commit();
         res.status(201).json({
           id: importId,
@@ -1720,6 +1805,75 @@ app.get("/api/importacoes", requireRole("CPD"), async (req, res, next) => {
   }
 });
 
+const scheduleComparisonSelect = `
+  SELECT h.categoria, h.turma, h.dia, h.periodo,
+         TIME_FORMAT(h.hora_inicio, '%H:%i') AS hora_inicio,
+         h.disciplina, h.professor, h.ambiente,
+         s.nome AS sala_nome, h.tipo_disciplina
+    FROM horarios_importados h
+    LEFT JOIN salas s ON s.id = h.sala_id
+   WHERE h.importacao_id = ?
+     AND h.categoria = 'TURMA'
+   ORDER BY h.turma, FIELD(h.dia, 'SEG','TER','QUA','QUI','SEX','SAB','DOM'), h.periodo`;
+
+const loadScheduleComparison = async (conn, importId, scopeKey) => {
+  const [activeImports] = await conn.query(
+    `SELECT id, titulo, publicado_em
+       FROM importacoes_horarios
+      WHERE escopo_chave = ?
+        AND status = 'APROVADA'
+        AND ativa = TRUE
+        AND id <> ?
+      ORDER BY publicado_em DESC, id DESC
+      LIMIT 1`,
+    [scopeKey, importId]
+  );
+  if (!activeImports.length) return null;
+  const [candidateSchedules] = await conn.query(scheduleComparisonSelect, [importId]);
+  const [activeSchedules] = await conn.query(scheduleComparisonSelect, [activeImports[0].id]);
+  return buildScheduleComparison(candidateSchedules, activeSchedules, activeImports[0]);
+};
+
+const loadScheduleNotificationSubscribers = async (conn, classes) => {
+  if (!classes.length) return [];
+  const [rows] = await conn.query(
+    `SELECT email, turma
+       FROM horario_notificacoes
+      WHERE ativo = TRUE
+        AND turma IN (${classes.map(() => "?").join(",")})`,
+    classes
+  );
+  return rows;
+};
+
+const notifyScheduleSubscribers = async ({ subscribers, comparison }) => {
+  const result = { tentadas: subscribers.length, enviadas: 0, sem_smtp: 0, falhas: 0 };
+  const changedClasses = new Set(comparison.turmas_afetadas);
+  for (const subscriber of subscribers) {
+    if (!changedClasses.has(subscriber.turma)) continue;
+    try {
+      const sent = await sendEmail({
+        to: subscriber.email,
+        subject: `Horário atualizado - turma ${subscriber.turma}`,
+        text: [
+          `A grade da turma ${subscriber.turma} foi atualizada.`,
+          "",
+          `Aulas com mudança: ${comparison.aulas_mudaram}`,
+          `Turmas afetadas: ${comparison.turmas_afetadas.join(", ")}`,
+          "",
+          "Acesse o site do CIMOL para conferir os horários publicados.",
+        ].join("\n"),
+      });
+      if (sent.sent) result.enviadas += 1;
+      else result.sem_smtp += 1;
+    } catch (error) {
+      result.falhas += 1;
+      console.error({ error, email: subscriber.email, turma: subscriber.turma }, "Falha ao enviar notificação de horário");
+    }
+  }
+  return result;
+};
+
 app.get("/api/importacoes/:id", requireRole("CPD"), async (req, res, next) => {
   try {
     const [imports] = await db.query(
@@ -1769,32 +1923,7 @@ app.get("/api/importacoes/:id", requireRole("CPD"), async (req, res, next) => {
     const item = imports[0];
     let comparison = null;
     if (item.status === "PENDENTE") {
-      const [activeImports] = await db.query(
-        `SELECT id, titulo, publicado_em
-           FROM importacoes_horarios
-          WHERE escopo_chave = ?
-            AND status = 'APROVADA'
-            AND ativa = TRUE
-            AND id <> ?
-          ORDER BY publicado_em DESC, id DESC
-          LIMIT 1`,
-        [item.escopo_chave, item.id]
-      );
-      if (activeImports.length) {
-        const scheduleComparisonSelect = `
-          SELECT h.categoria, h.turma, h.dia, h.periodo,
-                 TIME_FORMAT(h.hora_inicio, '%H:%i') AS hora_inicio,
-                 h.disciplina, h.professor, h.ambiente,
-                 s.nome AS sala_nome, h.tipo_disciplina
-            FROM horarios_importados h
-            LEFT JOIN salas s ON s.id = h.sala_id
-           WHERE h.importacao_id = ?
-             AND h.categoria = 'TURMA'
-           ORDER BY h.turma, FIELD(h.dia, 'SEG','TER','QUA','QUI','SEX','SAB','DOM'), h.periodo`;
-        const [candidateSchedules] = await db.query(scheduleComparisonSelect, [item.id]);
-        const [activeSchedules] = await db.query(scheduleComparisonSelect, [activeImports[0].id]);
-        comparison = buildScheduleComparison(candidateSchedules, activeSchedules, activeImports[0]);
-      }
+      comparison = await loadScheduleComparison(db, item.id, item.escopo_chave);
     }
     res.json({
       ...item,
@@ -1811,8 +1940,81 @@ app.get("/api/importacoes/:id", requireRole("CPD"), async (req, res, next) => {
   }
 });
 
+app.patch("/api/importacoes/horarios/:id/sala", requireRole("CPD"), async (req, res, next) => {
+  const scheduleId = Number(req.params.id);
+  const rawRoomId = req.body?.sala_id;
+  const roomId = rawRoomId === null || rawRoomId === undefined || rawRoomId === "" ? null : Number(rawRoomId);
+  if (!Number.isInteger(scheduleId) || scheduleId < 1) return next(httpError(400, "Horário inválido."));
+  if (roomId !== null && (!Number.isInteger(roomId) || roomId < 1)) return next(httpError(400, "Sala inválida."));
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [schedules] = await conn.query(
+      `SELECT h.id, h.importacao_id, h.turma, h.dia, h.periodo, h.disciplina
+         FROM horarios_importados h
+         JOIN importacoes_horarios i ON i.id = h.importacao_id
+        WHERE h.id = ?
+          AND h.categoria = 'TURMA'
+          AND i.status = 'PENDENTE'
+        FOR UPDATE`,
+      [scheduleId]
+    );
+    if (!schedules.length) throw httpError(404, "Horário pendente não encontrado.");
+
+    let room = null;
+    if (roomId !== null) {
+      const [rooms] = await conn.query(
+        `SELECT s.id, s.nome, s.status, b.nome AS bloco_nome
+           FROM salas s
+           JOIN blocos b ON b.id = s.bloco_id
+          WHERE s.id = ?
+          LIMIT 1`,
+        [roomId]
+      );
+      if (!rooms.length) throw httpError(400, "Sala não encontrada.");
+      if (rooms[0].status !== "ATIVA") throw httpError(409, `A sala ${rooms[0].nome} não está ativa.`);
+      room = rooms[0];
+      const [conflicts] = await conn.query(
+        `SELECT turma, disciplina
+           FROM horarios_importados
+          WHERE importacao_id = ?
+            AND id <> ?
+            AND categoria = 'TURMA'
+            AND dia = ?
+            AND periodo = ?
+            AND (
+              sala_id = ?
+              OR (
+                sala_id IS NULL
+                AND ambiente IS NOT NULL
+                AND REPLACE(LOWER(TRIM(ambiente)), ' ', '') = REPLACE(LOWER(TRIM(?)), ' ', '')
+              )
+            )
+          LIMIT 1`,
+        [schedules[0].importacao_id, scheduleId, schedules[0].dia, schedules[0].periodo, roomId, room.nome]
+      );
+      if (conflicts.length) {
+        throw httpError(409, `A sala já está ocupada por ${conflicts[0].turma} em ${conflicts[0].disciplina}.`);
+      }
+    }
+
+    await conn.query("UPDATE horarios_importados SET sala_id = ? WHERE id = ?", [roomId, scheduleId]);
+    await conn.commit();
+    res.json({ ok: true, id: scheduleId, sala_id: roomId, sala_nome: room?.nome || null, bloco_nome: room?.bloco_nome || null });
+  } catch (error) {
+    await conn.rollback();
+    next(error);
+  } finally {
+    conn.release();
+  }
+});
+
 app.post("/api/importacoes/:id/aprovar", requireRole("CPD"), async (req, res, next) => {
   const conn = await db.getConnection();
+  let committed = false;
+  let comparison = null;
+  let notificationSubscribers = [];
   try {
     await conn.beginTransaction();
     const [rows] = await conn.query(
@@ -1821,6 +2023,11 @@ app.post("/api/importacoes/:id/aprovar", requireRole("CPD"), async (req, res, ne
     );
     if (!rows.length) throw httpError(404, "Importação não encontrada.");
     if (rows[0].status !== "PENDENTE") throw httpError(409, "Somente importações pendentes podem ser aprovadas.");
+    await preserveRoomsFromActiveImport(conn, rows[0].id, rows[0].escopo_chave);
+    comparison = await loadScheduleComparison(conn, rows[0].id, rows[0].escopo_chave);
+    if (comparison?.aulas_mudaram) {
+      notificationSubscribers = await loadScheduleNotificationSubscribers(conn, comparison.turmas_afetadas);
+    }
     await conn.query(
       `UPDATE importacoes_horarios
           SET ativa = FALSE
@@ -1835,9 +2042,13 @@ app.post("/api/importacoes/:id/aprovar", requireRole("CPD"), async (req, res, ne
       [req.user.id, req.params.id]
     );
     await conn.commit();
-    res.json({ ok: true, status: "APROVADA", ativa: true });
+    committed = true;
+    const notificacoes = comparison?.aulas_mudaram
+      ? await notifyScheduleSubscribers({ subscribers: notificationSubscribers, comparison })
+      : { tentadas: 0, enviadas: 0, sem_smtp: 0, falhas: 0 };
+    res.json({ ok: true, status: "APROVADA", ativa: true, notificacoes });
   } catch (error) {
-    await conn.rollback();
+    if (!committed) await conn.rollback();
     next(error);
   } finally {
     conn.release();
@@ -1857,6 +2068,71 @@ app.post("/api/importacoes/:id/rejeitar", requireRole("CPD"), async (req, res, n
     );
     if (!result.affectedRows) throw httpError(409, "A importação não existe ou já foi revisada.");
     res.json({ ok: true, status: "REJEITADA" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/horarios/notificacoes", notificationRateLimit, async (req, res, next) => {
+  const email = normalizeEmail(req.body?.email);
+  const turma = sanitizeFreeText(req.body?.turma, 120);
+  if (!isValidEmail(email)) return next(httpError(400, "Informe um e-mail válido."));
+  if (!turma) return next(httpError(400, "Selecione uma turma."));
+
+  try {
+    const [classes] = await db.query(
+      `SELECT 1
+         FROM horarios_importados h
+         JOIN importacoes_horarios i ON i.id = h.importacao_id
+        WHERE i.status = 'APROVADA'
+          AND i.ativa = TRUE
+          AND h.categoria = 'TURMA'
+          AND h.turma = ?
+        LIMIT 1`,
+      [turma]
+    );
+    if (!classes.length) throw httpError(400, "Turma não encontrada nos horários publicados.");
+    const token = crypto.randomBytes(32).toString("base64url");
+    const tokenHash = hashToken(token);
+    await db.query(
+      `INSERT INTO horario_notificacoes (email, turma, ativo, confirmacao_token_hash, confirmacao_expira_em)
+       VALUES (?, ?, FALSE, ?, DATE_ADD(NOW(), INTERVAL 2 DAY))
+       ON DUPLICATE KEY UPDATE ativo = FALSE, confirmacao_token_hash = VALUES(confirmacao_token_hash),
+                               confirmacao_expira_em = VALUES(confirmacao_expira_em), updated_at = CURRENT_TIMESTAMP`,
+      [email, turma, tokenHash]
+    );
+    const confirmationUrl = `${publicBaseUrl(req)}/api/horarios/notificacoes/confirmar?token=${encodeURIComponent(token)}`;
+    const sent = await sendEmail({
+      to: email,
+      subject: `Confirmar aviso de horário - turma ${turma}`,
+      text: [
+        `Confirme que você quer receber avisos quando a grade da turma ${turma} mudar.`,
+        "",
+        confirmationUrl,
+        "",
+        "Se você não pediu isso, ignore este e-mail.",
+      ].join("\n"),
+    });
+    res.status(201).json({ ok: true, pendente_confirmacao: true, email_enviado: sent.sent });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/horarios/notificacoes/confirmar", async (req, res, next) => {
+  const token = String(req.query.token || "");
+  if (!token) return next(httpError(400, "Token inválido."));
+
+  try {
+    const [result] = await db.query(
+      `UPDATE horario_notificacoes
+          SET ativo = TRUE, confirmacao_token_hash = NULL, confirmacao_expira_em = NULL
+        WHERE confirmacao_token_hash = ?
+          AND confirmacao_expira_em > NOW()`,
+      [hashToken(token)]
+    );
+    if (!result.affectedRows) throw httpError(400, "Link de confirmação inválido ou expirado.");
+    res.type("html").send("<p>Notificação de horários ativada. Você já pode fechar esta página.</p>");
   } catch (error) {
     next(error);
   }

@@ -1,7 +1,16 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Armchair, Clock, Cpu, FlaskConical, Leaf, Monitor, Paintbrush, Search, Settings, Wrench, Zap } from "lucide-react";
+import { ArrowLeft, Bell, ChevronRight, Clock, Search, Settings } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch, type SessionUser } from "@/lib/api";
+import designMoveisImg from "@/assets/cursos/design-moveis.png";
+import eletronicaImg from "@/assets/cursos/eletronica.png";
+import eletrotecnicaImg from "@/assets/cursos/eletrotecnica.png";
+import informaticaImg from "@/assets/cursos/informatica.png";
+import mecanicaImg from "@/assets/cursos/mecanica.png";
+import meioAmbienteImg from "@/assets/cursos/meio-ambiente.png";
+import moveisImg from "@/assets/cursos/moveis.png";
+import quimicaImg from "@/assets/cursos/quimica.png";
+import cimolLogo from "@/assets/cimol-logo.png";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -37,18 +46,37 @@ type PublishedSchedule = {
 type PublishedResponse = { turmas: ClassOption[]; professores?: string[]; horarios: PublishedSchedule[] };
 type RoomOccupancy = Pick<PublishedSchedule, "id" | "turma" | "dia" | "periodo" | "hora_inicio" | "disciplina" | "professor" | "sala_id">;
 type RoomOccupancyResponse = { horarios: RoomOccupancy[] };
+type StoredScheduleState = {
+  view: "cursos" | "tabela";
+  course: string;
+  year: string;
+  className: string;
+  teacherQuery: string;
+};
 
 const NO_ROOM_VALUE = "__usar_ambiente_importado__";
+const SCHEDULE_STATE_STORAGE_KEY = "cimol_horarios_state";
 
-const courseVisuals = {
-  "Informática": { icon: Monitor, color: "from-blue-500 to-cyan-400" },
-  "Mecânica": { icon: Wrench, color: "from-gray-600 to-gray-400" },
-  "Química": { icon: FlaskConical, color: "from-emerald-500 to-teal-400" },
-  "Eletrônica": { icon: Cpu, color: "from-violet-500 to-purple-400" },
-  "Eletrotécnica": { icon: Zap, color: "from-amber-500 to-yellow-400" },
-  "Móveis": { icon: Armchair, color: "from-orange-500 to-amber-400" },
-  "Design de Móveis": { icon: Paintbrush, color: "from-pink-500 to-rose-400" },
-  "Meio Ambiente": { icon: Leaf, color: "from-green-600 to-emerald-400" },
+const courseImages = {
+  "Informática": informaticaImg,
+  "Mecânica": mecanicaImg,
+  "Química": quimicaImg,
+  "Eletrônica": eletronicaImg,
+  "Eletrotécnica": eletrotecnicaImg,
+  "Móveis": moveisImg,
+  "Design de Móveis": designMoveisImg,
+  "Meio Ambiente": meioAmbienteImg,
+} as const;
+
+const courseCardThemes = {
+  "Informática": "from-cyan-100 via-white to-teal-100 border-cyan-200",
+  "Mecânica": "from-zinc-100 via-white to-slate-200 border-zinc-200",
+  "Química": "from-sky-100 via-white to-yellow-100 border-yellow-200",
+  "Eletrônica": "from-indigo-100 via-white to-sky-100 border-indigo-200",
+  "Eletrotécnica": "from-amber-100 via-white to-yellow-100 border-amber-200",
+  "Móveis": "from-orange-100 via-white to-amber-100 border-orange-200",
+  "Design de Móveis": "from-yellow-100 via-white to-lime-100 border-yellow-200",
+  "Meio Ambiente": "from-emerald-100 via-white to-lime-100 border-emerald-200",
 } as const;
 
 const dayLabels: Record<string, string> = {
@@ -66,17 +94,33 @@ const normalizeSearch = (value: string) =>
   value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR");
 const sameSlot = (a: Pick<PublishedSchedule, "dia" | "periodo" | "hora_inicio">, b: Pick<PublishedSchedule, "dia" | "periodo" | "hora_inicio">) =>
   a.dia === b.dia && a.periodo === b.periodo;
+const storedText = (value: unknown) => typeof value === "string" ? value : "";
+const readStoredScheduleState = (): StoredScheduleState => {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SCHEDULE_STATE_STORAGE_KEY) || "{}") as Record<string, unknown>;
+    return {
+      view: stored.view === "tabela" ? "tabela" : "cursos",
+      course: storedText(stored.course),
+      year: storedText(stored.year),
+      className: storedText(stored.className),
+      teacherQuery: storedText(stored.teacherQuery),
+    };
+  } catch {
+    return { view: "cursos", course: "", year: "", className: "", teacherQuery: "" };
+  }
+};
 
 const HorariosSection = () => {
-  const [view, setView] = useState<"cursos" | "tabela">("cursos");
+  const [storedState] = useState(readStoredScheduleState);
+  const [view, setView] = useState<"cursos" | "tabela">(storedState.className || storedState.teacherQuery ? storedState.view : "cursos");
   const [options, setOptions] = useState<ClassOption[]>([]);
   const [teachers, setTeachers] = useState<string[]>([]);
   const [schedules, setSchedules] = useState<PublishedSchedule[]>([]);
-  const [course, setCourse] = useState("");
-  const [year, setYear] = useState("");
-  const [className, setClassName] = useState("");
-  const [teacherSearch, setTeacherSearch] = useState("");
-  const [teacherQuery, setTeacherQuery] = useState("");
+  const [course, setCourse] = useState(storedState.course);
+  const [year, setYear] = useState(storedState.year);
+  const [className, setClassName] = useState(storedState.className);
+  const [teacherSearch, setTeacherSearch] = useState(storedState.teacherQuery);
+  const [teacherQuery, setTeacherQuery] = useState(storedState.teacherQuery);
   const [loadingOptions, setLoadingOptions] = useState(true);
   const [loadingSchedules, setLoadingSchedules] = useState(false);
   const [error, setError] = useState("");
@@ -91,6 +135,9 @@ const HorariosSection = () => {
   const [savingRoom, setSavingRoom] = useState(false);
   const [studentCount, setStudentCount] = useState("");
   const [roomReason, setRoomReason] = useState("");
+  const [notificationEmail, setNotificationEmail] = useState("");
+  const [notificationClass, setNotificationClass] = useState("");
+  const [savingNotification, setSavingNotification] = useState(false);
 
   const isCpd = user?.papel === "CPD";
 
@@ -109,6 +156,31 @@ const HorariosSection = () => {
       .then((response) => setUser(response.user))
       .catch(() => setUser(null));
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem(
+      SCHEDULE_STATE_STORAGE_KEY,
+      JSON.stringify({ view, course, year, className, teacherQuery })
+    );
+  }, [className, course, teacherQuery, view, year]);
+
+  useEffect(() => {
+    if (loadingOptions || !className) return;
+
+    const storedClass = options.find((item) => item.turma === className);
+    if (!storedClass) {
+      setView("cursos");
+      setCourse("");
+      setYear("");
+      setClassName("");
+      return;
+    }
+
+    const storedCourse = storedClass.curso || "Outros";
+    const storedYear = storedClass.ano || "Não informado";
+    if (course !== storedCourse) setCourse(storedCourse);
+    if (year !== storedYear) setYear(storedYear);
+  }, [className, course, loadingOptions, options, year]);
 
   useEffect(() => {
     const query = teacherQuery
@@ -137,6 +209,10 @@ const HorariosSection = () => {
 
   const courses = useMemo(
     () => [...new Set(options.map((item) => item.curso || "Outros"))].sort((a, b) => a.localeCompare(b, "pt-BR")),
+    [options]
+  );
+  const notificationClassOptions = useMemo(
+    () => [...new Map(options.map((item) => [item.turma, item])).values()].sort((a, b) => a.turma.localeCompare(b.turma, "pt-BR")),
     [options]
   );
   const years = useMemo(
@@ -252,6 +328,27 @@ const HorariosSection = () => {
     setView("tabela");
   };
 
+  const subscribeScheduleNotification = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!notificationEmail.trim() || !notificationClass) {
+      toast.error("Informe e-mail e turma.");
+      return;
+    }
+    setSavingNotification(true);
+    try {
+      const result = await apiFetch<{ email_enviado?: boolean }>("/api/horarios/notificacoes", {
+        method: "POST",
+        body: JSON.stringify({ email: notificationEmail, turma: notificationClass }),
+      });
+      toast.success(result.email_enviado ? "Confira seu e-mail para ativar o aviso." : "Cadastro pendente: configure o SMTP para enviar a confirmação.");
+      setNotificationEmail("");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao ativar aviso.");
+    } finally {
+      setSavingNotification(false);
+    }
+  };
+
   const backToCourses = () => {
     setView("cursos");
     setTeacherQuery("");
@@ -315,16 +412,45 @@ const HorariosSection = () => {
             {matchingTeachers.map((teacher) => <option key={teacher} value={teacher} />)}
           </datalist>
         </form>
+        <form onSubmit={subscribeScheduleNotification} className="glass-card rounded-xl p-4 mb-6">
+          <label htmlFor="notification-email" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Receber aviso de atualização</label>
+          <div className="mt-2 grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_auto]">
+            <Input
+              id="notification-email"
+              type="email"
+              value={notificationEmail}
+              onChange={(event) => setNotificationEmail(event.target.value)}
+              placeholder="email@exemplo.com"
+            />
+            <select
+              value={notificationClass}
+              onChange={(event) => setNotificationClass(event.target.value)}
+              className="h-10 rounded-md border bg-background px-3 text-sm"
+            >
+              <option value="">Turma</option>
+              {notificationClassOptions.map((item) => <option key={item.turma} value={item.turma}>{item.turma}</option>)}
+            </select>
+            <Button type="submit" disabled={savingNotification || loadingOptions} className="md:w-auto">
+              <Bell className="w-4 h-4 mr-2" />
+              {savingNotification ? "Salvando..." : "Receber aviso"}
+            </Button>
+          </div>
+        </form>
         {loadingOptions && <div className="glass-card rounded-xl p-12 text-center text-muted-foreground">Carregando horários publicados...</div>}
         {error && <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">{error}</div>}
         {!loadingOptions && !error && !courses.length && <div className="glass-card rounded-xl p-12 text-center"><p className="font-medium">Nenhum horário publicado.</p><p className="text-sm text-muted-foreground mt-1">Os horários aparecerão aqui após aprovação do CPD.</p></div>}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {courses.map((courseName, index) => {
-            const visual = courseVisuals[courseName as keyof typeof courseVisuals] || { icon: Clock, color: "from-slate-500 to-slate-400" };
-            const Icon = visual.icon;
-            return <button key={courseName} onClick={() => openCourse(courseName)} className="glass-card glass-card-hover rounded-xl p-6 flex flex-col items-center gap-4 group" style={{ animationDelay: `${index * 60}ms` }}>
-              <div className={`w-14 h-14 rounded-2xl bg-gradient-to-br ${visual.color} flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-300`}><Icon className="w-7 h-7 text-primary-foreground" /></div>
-              <span className="font-semibold text-card-foreground text-sm text-center">{courseName}</span>
+            const image = courseImages[courseName as keyof typeof courseImages] || cimolLogo;
+            const theme = courseCardThemes[courseName as keyof typeof courseCardThemes] || "from-secondary via-white to-primary/5 border-border";
+            return <button key={courseName} onClick={() => openCourse(courseName)} className={`glass-card glass-card-hover group overflow-hidden rounded-xl border bg-gradient-to-br ${theme} p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`} style={{ animationDelay: `${index * 60}ms` }}>
+              <span className="flex h-32 w-full items-center justify-center border-b border-white/70 bg-white/45 p-3">
+                <img src={image} alt="" className="h-full w-full object-contain drop-shadow-sm transition-transform duration-300 group-hover:scale-105" />
+              </span>
+              <span className="flex min-h-16 items-center justify-between gap-3 px-4 py-3">
+                <span className="font-semibold text-card-foreground text-sm leading-tight">{courseName}</span>
+                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-300 group-hover:translate-x-0.5 group-hover:text-primary" />
+              </span>
             </button>;
           })}
         </div>
