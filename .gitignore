@@ -29,3 +29,4 @@ Segundo-Cerebro-TCC
 *.njsproj
 *.sln
 *.sw?
+.vercel
