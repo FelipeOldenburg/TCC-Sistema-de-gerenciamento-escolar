@@ -143,7 +143,6 @@ export default function EventosAdminSection() {
             <div><label className="text-sm font-medium mb-1 block">Local</label><Input value={form.local} onChange={(event) => setForm({ ...form, local: event.target.value })} maxLength={140} /></div>
             <div><label className="text-sm font-medium mb-1 block">Data *</label><Input type="date" value={form.data_evento} onChange={(event) => setForm({ ...form, data_evento: event.target.value })} /></div>
             <div><label className="text-sm font-medium mb-1 block">Horário</label><Input type="time" value={form.hora_evento} onChange={(event) => setForm({ ...form, hora_evento: event.target.value })} /></div>
-            <div className="md:col-span-2"><label className="text-sm font-medium mb-1 block">URL da imagem</label><Input value={form.imagem_url} onChange={(event) => setForm({ ...form, imagem_url: event.target.value })} placeholder="https://..." maxLength={500} /></div>
           </div>
           <div><label className="text-sm font-medium mb-1 block">Descrição</label><Textarea value={form.descricao} onChange={(event) => setForm({ ...form, descricao: event.target.value })} rows={3} maxLength={1000} /></div>
           <label className="flex items-center gap-2 text-sm cursor-pointer">

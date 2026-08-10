@@ -10,6 +10,11 @@ interface LoginFormProps {
   onLoginSuccess?: (username: string) => void;
 }
 
+const testLogins = [
+  { role: "ADMIN", username: "admin", password: "unvIsbA3pKVirxk9JPyFYUaw" },
+  { role: "CPD", username: "cpd", password: "YqOFyQf2GV6NZ347eJrlPCHA" },
+];
+
 const LoginForm = ({ onLoginSuccess }: LoginFormProps) => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -82,9 +87,23 @@ const LoginForm = ({ onLoginSuccess }: LoginFormProps) => {
             {isLoading ? "Entrando..." : "Entrar"}
           </Button>
         </form>
-        <p className="text-center text-xs text-muted-foreground">
-          Use as credenciais fornecidas pela administração ou pelo CPD.
-        </p>
+        <div className="border-t border-primary/10 pt-4">
+          <p className="text-xs font-semibold text-foreground">Logins de teste</p>
+          <div className="mt-2 space-y-2 text-xs text-muted-foreground">
+            {testLogins.map((login) => (
+              <div key={login.username} className="grid grid-cols-[52px_1fr] gap-x-2 gap-y-0.5">
+                <span className="font-semibold text-foreground">{login.role}</span>
+                <span>
+                  Usuario: <code className="text-foreground">{login.username}</code>
+                </span>
+                <span />
+                <span>
+                  Senha: <code className="text-foreground break-all">{login.password}</code>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
