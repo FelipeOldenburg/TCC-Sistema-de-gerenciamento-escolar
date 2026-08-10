@@ -68,17 +68,6 @@ const courseImages = {
   "Meio Ambiente": meioAmbienteImg,
 } as const;
 
-const courseCardThemes = {
-  "Informática": "from-cyan-100 via-white to-teal-100 border-cyan-200",
-  "Mecânica": "from-zinc-100 via-white to-slate-200 border-zinc-200",
-  "Química": "from-sky-100 via-white to-yellow-100 border-yellow-200",
-  "Eletrônica": "from-indigo-100 via-white to-sky-100 border-indigo-200",
-  "Eletrotécnica": "from-amber-100 via-white to-yellow-100 border-amber-200",
-  "Móveis": "from-orange-100 via-white to-amber-100 border-orange-200",
-  "Design de Móveis": "from-yellow-100 via-white to-lime-100 border-yellow-200",
-  "Meio Ambiente": "from-emerald-100 via-white to-lime-100 border-emerald-200",
-} as const;
-
 const dayLabels: Record<string, string> = {
   SEG: "Segunda-feira",
   TER: "Terça-feira",
@@ -442,9 +431,8 @@ const HorariosSection = () => {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {courses.map((courseName, index) => {
             const image = courseImages[courseName as keyof typeof courseImages] || cimolLogo;
-            const theme = courseCardThemes[courseName as keyof typeof courseCardThemes] || "from-secondary via-white to-primary/5 border-border";
-            return <button key={courseName} onClick={() => openCourse(courseName)} className={`glass-card glass-card-hover group overflow-hidden rounded-xl border bg-gradient-to-br ${theme} p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`} style={{ animationDelay: `${index * 60}ms` }}>
-              <span className="flex h-32 w-full items-center justify-center border-b border-white/70 bg-white/45 p-3">
+            return <button key={courseName} onClick={() => openCourse(courseName)} className="glass-card glass-card-hover group overflow-hidden rounded-xl border border-border bg-card p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" style={{ animationDelay: `${index * 60}ms` }}>
+              <span className="flex h-32 w-full items-center justify-center border-b border-border bg-background p-3">
                 <img src={image} alt="" className="h-full w-full object-contain drop-shadow-sm transition-transform duration-300 group-hover:scale-105" />
               </span>
               <span className="flex min-h-16 items-center justify-between gap-3 px-4 py-3">
