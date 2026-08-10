@@ -12,6 +12,10 @@
     {
       "source": "/api-CIMOL/(.*)",
       "destination": "/api"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ]
 }
