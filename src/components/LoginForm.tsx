@@ -11,8 +11,8 @@ interface LoginFormProps {
 }
 
 const testLogins = [
-  { role: "ADMIN", username: "admin", password: "unvIsbA3pKVirxk9JPyFYUaw" },
-  { role: "CPD", username: "cpd", password: "YqOFyQf2GV6NZ347eJrlPCHA" },
+  { role: "ADMIN", username: "admin", password: "admin123" },
+  { role: "CPD", username: "cpd", password: "cpd123" },
 ];
 
 const LoginForm = ({ onLoginSuccess }: LoginFormProps) => {
