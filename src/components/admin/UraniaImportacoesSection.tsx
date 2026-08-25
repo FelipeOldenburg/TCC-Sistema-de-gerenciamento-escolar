@@ -7,6 +7,7 @@ import {
   FileCode2,
   History,
   RefreshCw,
+  Settings,
   Upload,
   XCircle,
 } from "lucide-react";
@@ -14,6 +15,7 @@ import { toast } from "sonner";
 import { apiFetch, type SessionUser } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -57,6 +59,7 @@ type Schedule = {
   disciplina: string;
   professor: string | null;
   ambiente: string | null;
+  sala_id: number | null;
   sala_nome: string | null;
   bloco_nome: string | null;
 };
@@ -96,6 +99,13 @@ type ImportDetail = ImportSummary & {
   paginacao: { pagina: number; por_pagina: number; total: number };
 };
 
+type RoomOption = {
+  id: number;
+  nome: string;
+  bloco_nome: string;
+  status: "ATIVA" | "INATIVA" | "MANUTENCAO";
+};
+
 const statusLabel: Record<ImportStatus, string> = {
   PENDENTE: "Pendente",
   APROVADA: "Aprovada",
@@ -125,6 +135,13 @@ export default function UraniaImportacoesSection({ user }: { user: SessionUser }
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [reviewing, setReviewing] = useState(false);
+  const [rooms, setRooms] = useState<RoomOption[]>([]);
+  const [roomsLoaded, setRoomsLoaded] = useState(false);
+  const [loadingRooms, setLoadingRooms] = useState(false);
+  const [scheduleRoom, setScheduleRoom] = useState<Schedule | null>(null);
+  const [roomValue, setRoomValue] = useState("");
+  const [savingRoom, setSavingRoom] = useState(false);
+  const [roomError, setRoomError] = useState("");
   const [error, setError] = useState("");
   const [lastUpload, setLastUpload] = useState<{
     id: number;
@@ -230,6 +247,55 @@ export default function UraniaImportacoesSection({ user }: { user: SessionUser }
       setError(err instanceof Error ? err.message : "Erro ao rejeitar importação.");
     } finally {
       setReviewing(false);
+    }
+  };
+
+  const ensureRoomsLoaded = async () => {
+    if (roomsLoaded || loadingRooms) return;
+    setLoadingRooms(true);
+    try {
+      const data = await apiFetch<RoomOption[]>("/api/salas?status=ATIVA");
+      setRooms(data);
+      setRoomsLoaded(true);
+      setRoomError("");
+    } catch (err) {
+      setRoomError(err instanceof Error ? err.message : "Erro ao carregar salas.");
+    } finally {
+      setLoadingRooms(false);
+    }
+  };
+
+  const openScheduleRoom = (schedule: Schedule) => {
+    setScheduleRoom(schedule);
+    setRoomValue(schedule.sala_id ? String(schedule.sala_id) : "");
+    setRoomError("");
+    void ensureRoomsLoaded();
+  };
+
+  const saveScheduleRoom = async () => {
+    if (!scheduleRoom) return;
+    const salaId = roomValue ? Number(roomValue) : null;
+    setSavingRoom(true);
+    setRoomError("");
+    try {
+      const result = await apiFetch<{ sala_id: number | null; sala_nome: string | null; bloco_nome: string | null }>(
+        `/api/importacoes/horarios/${scheduleRoom.id}/sala`,
+        { method: "PATCH", body: JSON.stringify({ sala_id: salaId }) }
+      );
+      setDetail((current) => current ? {
+        ...current,
+        horarios: current.horarios.map((item) =>
+          item.id === scheduleRoom.id
+            ? { ...item, sala_id: result.sala_id, sala_nome: result.sala_nome, bloco_nome: result.bloco_nome }
+            : item
+        ),
+      } : current);
+      toast.success("Sala atualizada na prévia.");
+      setScheduleRoom(null);
+    } catch (err) {
+      setRoomError(err instanceof Error ? err.message : "Erro ao atualizar sala.");
+    } finally {
+      setSavingRoom(false);
     }
   };
 
@@ -346,7 +412,7 @@ export default function UraniaImportacoesSection({ user }: { user: SessionUser }
               </div>
               <div className="overflow-x-auto max-h-[520px]">
                 <Table>
-                  <TableHeader><TableRow><TableHead>Dia</TableHead><TableHead>Período</TableHead><TableHead>Turma</TableHead><TableHead>Disciplina</TableHead><TableHead>Professor</TableHead><TableHead>Sala</TableHead><TableHead>Categoria</TableHead></TableRow></TableHeader>
+                  <TableHeader><TableRow><TableHead>Dia</TableHead><TableHead>Período</TableHead><TableHead>Turma</TableHead><TableHead>Disciplina</TableHead><TableHead>Professor</TableHead><TableHead>Sala</TableHead><TableHead>Categoria</TableHead>{detail.status === "PENDENTE" && user.papel === "CPD" && <TableHead className="text-right">Ação</TableHead>}</TableRow></TableHeader>
                   <TableBody>
                     {detail.horarios.map((schedule) => <TableRow key={schedule.id}>
                       <TableCell className="font-semibold">{schedule.dia}</TableCell>
@@ -356,12 +422,51 @@ export default function UraniaImportacoesSection({ user }: { user: SessionUser }
                       <TableCell>{schedule.professor || "—"}</TableCell>
                       <TableCell>{schedule.sala_nome || schedule.ambiente || "—"}</TableCell>
                       <TableCell><Badge variant="outline">{schedule.categoria}</Badge></TableCell>
+                      {detail.status === "PENDENTE" && user.papel === "CPD" && (
+                        <TableCell className="text-right">
+                          {schedule.categoria === "TURMA" && (
+                            <Button type="button" variant="ghost" size="icon" onClick={() => openScheduleRoom(schedule)} title="Configurar sala">
+                              <Settings className="w-4 h-4" />
+                            </Button>
+                          )}
+                        </TableCell>
+                      )}
                     </TableRow>)}
                   </TableBody>
                 </Table>
               </div>
               {detail.paginacao.total > detail.horarios.length && !selectedClass && <p className="p-3 text-xs text-muted-foreground border-t">A prévia geral mostra os primeiros {detail.horarios.length} registros. Selecione uma turma para vê-la por completo.</p>}
             </div>
+
+            <Dialog open={!!scheduleRoom} onOpenChange={(open) => { if (!open && !savingRoom) setScheduleRoom(null); }}>
+              <DialogContent className="sm:max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Configurar sala</DialogTitle>
+                  <DialogDescription>Altere a sala desta aula antes de publicar a importação.</DialogDescription>
+                </DialogHeader>
+                {scheduleRoom && (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border bg-muted/40 p-4 text-sm">
+                      <p><span className="font-medium">Turma:</span> {scheduleRoom.turma}</p>
+                      <p><span className="font-medium">Horário:</span> {scheduleRoom.dia} · {scheduleRoom.hora_inicio || `${scheduleRoom.periodo}ª aula`}</p>
+                      <p><span className="font-medium">Disciplina:</span> {scheduleRoom.disciplina}</p>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium mb-1 block">Sala</label>
+                      <select value={roomValue} onChange={(event) => setRoomValue(event.target.value)} disabled={loadingRooms || savingRoom} className="h-10 w-full rounded-md border bg-background px-3 text-sm">
+                        <option value="">{scheduleRoom.ambiente ? "Usar sala importada" : "Sem sala definida"}</option>
+                        {rooms.map((room) => <option key={room.id} value={room.id}>{room.nome} · {room.bloco_nome}</option>)}
+                      </select>
+                    </div>
+                    {roomError && <p className="text-sm text-destructive">{roomError}</p>}
+                  </div>
+                )}
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setScheduleRoom(null)} disabled={savingRoom}>Cancelar</Button>
+                  <Button type="button" onClick={saveScheduleRoom} disabled={savingRoom || loadingRooms}>{savingRoom ? "Salvando..." : "Salvar sala"}</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
 
             {detail.status === "PENDENTE" && user.papel === "CPD" && (
               <div className="glass-card rounded-2xl p-6 space-y-4">

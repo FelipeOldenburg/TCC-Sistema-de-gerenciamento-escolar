@@ -26,5 +26,6 @@ describe("scheduleUtils", () => {
     expect(comparison.aulas_alteradas).toBe(1);
     expect(comparison.salas_alteradas).toBe(1);
     expect(comparison.professores_alterados).toBe(1);
+    expect(comparison.turmas_afetadas).toEqual(["62-1"]);
   });
 });

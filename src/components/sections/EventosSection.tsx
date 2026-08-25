@@ -1,9 +1,7 @@
 import { useEffect, useState } from "react";
 import { CalendarDays, Clock, MapPin } from "lucide-react";
 import { apiFetch } from "@/lib/api";
-import eventoPingpong from "@/assets/evento-pingpong.jpg";
-import eventoTalentos from "@/assets/evento-talentos.jpg";
-import eventoFeira from "@/assets/evento-feira.jpg";
+import { getEventoImage } from "@/lib/eventoImages";
 
 type Evento = {
   id: number;
@@ -14,8 +12,6 @@ type Evento = {
   local: string | null;
   imagem_url: string | null;
 };
-
-const fallbackImages = [eventoPingpong, eventoTalentos, eventoFeira];
 
 const formatDate = (value: string) =>
   new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "long", year: "numeric" }).format(
@@ -67,7 +63,7 @@ const EventosSection = () => {
           >
             <div className="relative h-52 overflow-hidden">
               <img
-                src={evento.imagem_url || fallbackImages[index % fallbackImages.length]}
+                src={getEventoImage(evento)}
                 alt={evento.titulo}
                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
               />

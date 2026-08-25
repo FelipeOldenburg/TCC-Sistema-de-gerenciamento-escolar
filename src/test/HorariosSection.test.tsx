@@ -12,6 +12,7 @@ const ok = (data: unknown) => ({
 
 describe("HorariosSection", () => {
   afterEach(() => {
+    localStorage.clear();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -159,5 +160,132 @@ describe("HorariosSection", () => {
 
     const occupied = await screen.findByText(/A201 .* ocupada por Design de Móveis/);
     expect(occupied.closest("[role='option']")).toHaveAttribute("data-disabled");
+  });
+
+  it("alterna o dia visivel no mobile", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/auth/me")) {
+        return { ok: false, status: 401, json: async () => ({ message: "Nao autenticado." }) } as Response;
+      }
+      if (url.includes("apenas_opcoes=1")) {
+        return ok({ turmas: [{ turma: "T1", curso: "Teste", ano: "1" }], professores: [], horarios: [] });
+      }
+      if (url.includes("turma=T1")) {
+        return ok({
+          turmas: [],
+          horarios: [
+            {
+              id: 1,
+              turma: "T1",
+              curso: "Teste",
+              ano: "1",
+              dia: "SEG",
+              periodo: 1,
+              hora_inicio: "07:30",
+              disciplina: "Matematica",
+              professor: "Ana",
+              sala_id: null,
+              ambiente: null,
+              sala: "A101",
+              bloco: null,
+            },
+            {
+              id: 2,
+              turma: "T1",
+              curso: "Teste",
+              ano: "1",
+              dia: "SEX",
+              periodo: 2,
+              hora_inicio: "08:40",
+              disciplina: "Historia",
+              professor: "Bia",
+              sala_id: null,
+              ambiente: null,
+              sala: "B202",
+              bloco: null,
+            },
+          ],
+        });
+      }
+      throw new Error(`URL inesperada: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<HorariosSection />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Teste" }));
+    await screen.findAllByText("Matematica");
+
+    const monday = screen.getByRole("heading", { name: "Segunda-feira" }).closest("section");
+    const friday = screen.getByRole("heading", { name: "Sexta-feira" }).closest("section");
+    await waitFor(() => expect(monday).not.toHaveClass("hidden"));
+    expect(friday).toHaveClass("hidden");
+
+    fireEvent.click(screen.getByRole("button", { name: "Sex 1" }));
+    expect(monday).toHaveClass("hidden");
+    expect(friday).not.toHaveClass("hidden");
+  });
+
+  it("restaura a ultima turma aberta", async () => {
+    localStorage.setItem("cimol_horarios_state", JSON.stringify({
+      view: "tabela",
+      course: "InformÃ¡tica",
+      year: "2",
+      className: "62-1",
+      teacherQuery: "",
+    }));
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/auth/me")) {
+        return { ok: false, status: 401, json: async () => ({ message: "NÃ£o autenticado." }) } as Response;
+      }
+      if (url.includes("apenas_opcoes=1")) {
+        return ok({
+          turmas: [
+            { turma: "62-1", curso: "InformÃ¡tica", ano: "2" },
+            { turma: "63-1", curso: "InformÃ¡tica", ano: "3" },
+          ],
+          professores: [],
+          horarios: [],
+        });
+      }
+      if (url.includes("turma=62-1")) {
+        return ok({
+          turmas: [],
+          horarios: [
+            {
+              id: 1,
+              turma: "62-1",
+              curso: "InformÃ¡tica",
+              ano: "2",
+              dia: "SEG",
+              periodo: 1,
+              hora_inicio: "07:30",
+              disciplina: "Banco de Dados",
+              professor: "Maria Silva",
+              sala_id: null,
+              ambiente: null,
+              sala: "LaboratÃ³rio 201",
+              bloco: "Bloco A",
+            },
+          ],
+        });
+      }
+      throw new Error(`URL inesperada: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<HorariosSection />);
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/horarios/publicados?turma=62-1"),
+        expect.any(Object),
+      )
+    );
+    expect((await screen.findAllByText("Banco de Dados")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("LaboratÃ³rio 201").length).toBeGreaterThan(0);
   });
 });

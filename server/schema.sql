@@ -263,3 +263,17 @@ CREATE TABLE IF NOT EXISTS sala_alteracoes (
   FOREIGN KEY (sala_anterior_id) REFERENCES salas(id) ON DELETE SET NULL,
   FOREIGN KEY (sala_nova_id) REFERENCES salas(id) ON DELETE SET NULL
 );
+
+CREATE TABLE IF NOT EXISTS horario_notificacoes (
+  id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+  email       VARCHAR(255) NOT NULL,
+  turma       VARCHAR(120) NOT NULL,
+  ativo       BOOLEAN NOT NULL DEFAULT FALSE,
+  confirmacao_token_hash CHAR(64) NULL,
+  confirmacao_expira_em DATETIME NULL,
+  created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_horario_notificacoes_email_turma (email, turma),
+  INDEX idx_horario_notificacoes_turma_ativo (turma, ativo),
+  INDEX idx_horario_notificacoes_token (confirmacao_token_hash)
+);
