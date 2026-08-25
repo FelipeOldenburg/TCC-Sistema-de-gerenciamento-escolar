@@ -88,6 +88,7 @@ const shortDayLabels: Record<string, string> = {
 };
 
 const weekdayOrder = ["SEG", "TER", "QUA", "QUI", "SEX"];
+const dayFromDate = () => ["DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SAB"][new Date().getDay()];
 const normalizeSearch = (value: string) =>
   value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR");
 const sameSlot = (a: Pick<PublishedSchedule, "dia" | "periodo" | "hora_inicio">, b: Pick<PublishedSchedule, "dia" | "periodo" | "hora_inicio">) =>
@@ -255,9 +256,15 @@ const HorariosSection = () => {
     [schedule.turma, schedule.curso, schedule.ano ? `${schedule.ano}º ano` : null].filter(Boolean).join(" · ");
 
   useEffect(() => {
+    setSelectedMobileDay("");
+  }, [className, teacherQuery]);
+
+  useEffect(() => {
     const firstDay = daysWithSchedules[0]?.day || "";
+    const today = dayFromDate();
+    const defaultDay = daysWithSchedules.some(({ day }) => day === today) ? today : firstDay;
     if (!firstDay || daysWithSchedules.some(({ day }) => day === selectedMobileDay)) return;
-    setSelectedMobileDay(firstDay);
+    setSelectedMobileDay(defaultDay);
   }, [daysWithSchedules, selectedMobileDay]);
 
   const ensureRoomsLoaded = async (force = false) => {
@@ -504,15 +511,15 @@ const HorariosSection = () => {
         {!loadingSchedules && !schedules.length && <div className="rounded-xl border border-border py-10 text-center text-muted-foreground">{viewingTeacher ? "Nenhuma aula encontrada para este professor." : "Nenhuma aula encontrada para esta turma."}</div>}
         {!loadingSchedules && !!schedules.length && (
           <div className="space-y-5">
-            <div className="md:hidden -mx-1 overflow-x-auto pb-1">
-              <div className="flex gap-2 px-1">
+            <div className="md:hidden pb-1">
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
                 {daysWithSchedules.map(({ day, schedules: daySchedules }) => (
                   <button
                     key={day}
                     type="button"
                     onClick={() => setSelectedMobileDay(day)}
                     aria-pressed={selectedMobileDay === day}
-                    className={`min-w-16 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                    className={`min-h-10 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
                       selectedMobileDay === day
                         ? "border-primary bg-primary text-primary-foreground"
                         : "border-border bg-background text-muted-foreground"

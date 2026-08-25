@@ -15,6 +15,7 @@ describe("HorariosSection", () => {
     localStorage.clear();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it("pesquisa os horários por professor", async () => {
@@ -163,6 +164,8 @@ describe("HorariosSection", () => {
   });
 
   it("alterna o dia visivel no mobile", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date("2026-08-28T12:00:00"));
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/api/auth/me")) {
@@ -219,12 +222,17 @@ describe("HorariosSection", () => {
 
     const monday = screen.getByRole("heading", { name: "Segunda-feira" }).closest("section");
     const friday = screen.getByRole("heading", { name: "Sexta-feira" }).closest("section");
-    await waitFor(() => expect(monday).not.toHaveClass("hidden"));
-    expect(friday).toHaveClass("hidden");
-
-    fireEvent.click(screen.getByRole("button", { name: "Sex 1" }));
+    await waitFor(() => expect(friday).not.toHaveClass("hidden"));
     expect(monday).toHaveClass("hidden");
-    expect(friday).not.toHaveClass("hidden");
+
+    const mondayButton = screen.getByRole("button", { name: "Seg 1" });
+    const fridayButton = screen.getByRole("button", { name: "Sex 1" });
+    expect(fridayButton.parentElement).toHaveClass("grid");
+    expect(fridayButton.parentElement?.parentElement).not.toHaveClass("overflow-x-auto");
+
+    fireEvent.click(mondayButton);
+    expect(monday).not.toHaveClass("hidden");
+    expect(friday).toHaveClass("hidden");
   });
 
   it("restaura a ultima turma aberta", async () => {
