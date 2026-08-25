@@ -4,8 +4,8 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import cimolLogo from "@/assets/cimol-logo.png";
 import { apiFetch } from "@/lib/api";
+import { institutionBrand } from "@/lib/institution";
 
 interface LoginFormProps {
   onLoginSuccess?: (username: string) => void;
@@ -58,11 +58,11 @@ const LoginForm = ({ onLoginSuccess }: LoginFormProps) => {
       <div className="glass-card rounded-3xl p-8 w-full max-w-md space-y-6 shadow-2xl">
         <div className="flex flex-col items-center gap-3 mb-8">
           <div className="w-16 h-16 rounded-xl overflow-hidden bg-accent/20 p-1 ring-2 ring-accent/30">
-            <img src={cimolLogo} alt="CIMOL" className="w-full h-full object-contain" />
+            <img src={institutionBrand.logo} alt={institutionBrand.name} className="w-full h-full object-contain" />
           </div>
           <div className="text-center">
-            <h1 className="text-2xl font-heading font-bold text-foreground">CIMOL</h1>
-            <p className="text-sm text-muted-foreground">Painel Administrativo</p>
+            <h1 className="text-2xl font-heading font-bold text-foreground">{institutionBrand.name}</h1>
+            <p className="text-sm text-muted-foreground">{institutionBrand.adminSubtitle}</p>
           </div>
         </div>
 
