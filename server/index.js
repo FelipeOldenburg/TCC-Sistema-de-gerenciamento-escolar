@@ -70,8 +70,9 @@ app.set("trust proxy", trustProxy);
 
 const db = createDbPool();
 let databaseReady = false;
-const databaseUnavailableMessage =
+const databaseUnavailableDetails =
   "Banco de dados PostgreSQL não conectado. Verifique as variáveis DB_* ou DATABASE_URL/POSTGRES_URL e inicie o PostgreSQL.";
+const databaseUnavailableMessage = "O sistema está temporariamente indisponível. Tente novamente mais tarde.";
 
 const ensureDefaultPublicContent = async () => {
   const [sectorCount] = await db.query("SELECT COUNT(*) AS total FROM setores");
@@ -198,7 +199,7 @@ try {
   await ensureReferenceRooms();
   databaseReady = true;
 } catch (error) {
-  console.error(databaseUnavailableMessage, error);
+  console.error(databaseUnavailableDetails, error);
 }
 
 const { optionalAuth, requireAuth, requireRole } = createAuthMiddleware(db);
