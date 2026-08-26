@@ -19,7 +19,7 @@ import {
   ensureBootstrapUsers,
   setSessionCookie,
 } from "./auth.js";
-import { createDbPool, initializeSchema, isDuplicateError, isForeignKeyError } from "./db.js";
+import { createDbPool, initializeSchema, isConnectionError, isDuplicateError, isForeignKeyError } from "./db.js";
 import { buildScheduleComparison, isFirstFloorRoom, isUpperFloorRoom } from "./scheduleUtils.js";
 import { parseUraniaFiles } from "./uraniaParser.js";
 
@@ -68,9 +68,10 @@ const normalizeTrustProxy = (value) => {
 const trustProxy = normalizeTrustProxy(process.env.TRUST_PROXY);
 app.set("trust proxy", trustProxy);
 
-await initializeSchema(path.join(__dirname, "schema.sql"));
-
 const db = createDbPool();
+let databaseReady = false;
+const databaseUnavailableMessage =
+  "Banco de dados PostgreSQL não conectado. Verifique as variáveis DB_* ou DATABASE_URL/POSTGRES_URL e inicie o PostgreSQL.";
 
 const ensureDefaultPublicContent = async () => {
   const [sectorCount] = await db.query("SELECT COUNT(*) AS total FROM setores");
@@ -190,9 +191,15 @@ const ensureReferenceRooms = async () => {
   }
 };
 
-await ensureBootstrapUsers(db);
-await ensureDefaultPublicContent();
-await ensureReferenceRooms();
+try {
+  await initializeSchema(path.join(__dirname, "schema.sql"));
+  await ensureBootstrapUsers(db);
+  await ensureDefaultPublicContent();
+  await ensureReferenceRooms();
+  databaseReady = true;
+} catch (error) {
+  console.error(databaseUnavailableMessage, error);
+}
 
 const { optionalAuth, requireAuth, requireRole } = createAuthMiddleware(db);
 
@@ -215,6 +222,10 @@ app.use(
     legacyHeaders: false,
   })
 );
+app.use("/api", (_req, res, next) => {
+  if (databaseReady) return next();
+  return res.status(503).json({ message: databaseUnavailableMessage });
+});
 app.use("/api", optionalAuth);
 app.use("/api-CIMOL/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
@@ -2166,6 +2177,8 @@ app.use((error, req, res, _next) => {
   let status = error.statusCode || 500;
   if (error instanceof multer.MulterError || error.message?.includes("Formato") || error.message?.includes("Tipo")) {
     status = 400;
+  } else if (isConnectionError(error)) {
+    status = 503;
   } else if (isDuplicateError(error)) {
     status = 409;
   } else if (isForeignKeyError(error)) {
@@ -2173,9 +2186,11 @@ app.use((error, req, res, _next) => {
   }
   res.status(status).json({
     message:
-      status === 500
-        ? "Não foi possível concluir a operação no banco de dados."
-        : error.message || "Não foi possível concluir a operação.",
+      status === 503
+        ? databaseUnavailableMessage
+        : status === 500
+          ? "Não foi possível concluir a operação no banco de dados."
+          : error.message || "Não foi possível concluir a operação.",
   });
 });
 

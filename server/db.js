@@ -93,3 +93,5 @@ export const createDbPool = () => {
 
 export const isDuplicateError = (error) => error?.code === "23505";
 export const isForeignKeyError = (error) => error?.code === "23503";
+export const isConnectionError = (error) =>
+  ["08001", "08006", "57P01", "ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "ETIMEDOUT"].includes(error?.code);
