@@ -1,6 +1,6 @@
 # CIMOL — Sistema de Gestão Escolar
 
-Aplicação React/Express/MySQL para consulta de horários, integração com o URÂNIA UP, gerenciamento de blocos e salas e solicitações de reorganização por acessibilidade.
+Aplicação React/Express/PostgreSQL para consulta de horários, integração com o URÂNIA UP, gerenciamento de blocos e salas e solicitações de reorganização por acessibilidade.
 
 ## Funcionalidades
 
@@ -34,14 +34,14 @@ Aplicação React/Express/MySQL para consulta de horários, integração com o U
 ## Tecnologias
 
 - React, TypeScript, Vite, TailwindCSS e Shadcn UI.
-- Node.js, Express, Multer e MySQL2.
+- Node.js, Express, Multer e PostgreSQL.
 - Python 3 e BeautifulSoup 4 para os relatórios HTML do URÂNIA.
 - Swagger/OpenAPI em `/api-CIMOL/docs`.
 
 ## Pré-requisitos
 
 1. Node.js 18 ou superior.
-2. MySQL Server.
+2. PostgreSQL.
 3. Python 3.10 ou superior.
 
 ## Instalação
@@ -53,7 +53,7 @@ python -m pip install -r server/requirements.txt
 
 Copie `.env.example` para `.env` e configure banco, usuários iniciais e senhas. Em Windows, se Python não estiver no `PATH`, informe o caminho em `PYTHON_BIN`.
 
-O servidor aplica o conteúdo idempotente de `server/schema.sql` ao iniciar. O arquivo também pode ser executado manualmente pelo MySQL Workbench.
+O servidor aplica o conteúdo idempotente de `server/schema.sql` ao iniciar. O arquivo também pode ser executado manualmente com `psql`.
 
 ## Execução
 
@@ -81,7 +81,7 @@ COOKIE_SECURE=true
 COOKIE_SAMESITE=Lax
 ```
 
-Em Vercel ou qualquer ambiente publico, `DB_HOST` deve apontar para um MySQL gerenciado/acessivel pela internet. `localhost` funciona apenas na maquina de desenvolvimento. Se o provedor ja entregar o banco criado, configure `DB_CREATE_DATABASE=false`.
+Em Vercel ou qualquer ambiente publico, `DB_HOST` deve apontar para um PostgreSQL gerenciado/acessivel pela internet. `localhost` funciona apenas na maquina de desenvolvimento. Se o provedor ja entregar o banco criado, configure `DB_CREATE_DATABASE=false`.
 
 Se a API ficar em outro subdominio, configure `ALLOWED_ORIGINS` no backend e `VITE_API_BASE_URL` no build do frontend. Se quiser rodar tudo em um unico processo Express, execute `npm run build` e use `SERVE_STATIC=true`; nesse modo o Express serve o `dist/` e mantem as rotas `/api`.
 

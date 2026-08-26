@@ -7,7 +7,6 @@ import rateLimit from "express-rate-limit";
 import fs from "fs";
 import helmet from "helmet";
 import multer from "multer";
-import mysql from "mysql2/promise";
 import path from "path";
 import swaggerUi from "swagger-ui-express";
 import { fileURLToPath } from "url";
@@ -20,6 +19,7 @@ import {
   ensureBootstrapUsers,
   setSessionCookie,
 } from "./auth.js";
+import { createDbPool, initializeSchema, isDuplicateError, isForeignKeyError } from "./db.js";
 import { buildScheduleComparison, isFirstFloorRoom, isUpperFloorRoom } from "./scheduleUtils.js";
 import { parseUraniaFiles } from "./uraniaParser.js";
 
@@ -40,6 +40,8 @@ const splitEnvList = (...values) =>
     .filter(Boolean);
 
 const asBoolean = (value) => value === true || value === 1 || value === "1" || value === "true" || value === "on";
+const dayOrderSql = "CASE h.dia WHEN 'SEG' THEN 1 WHEN 'TER' THEN 2 WHEN 'QUA' THEN 3 WHEN 'QUI' THEN 4 WHEN 'SEX' THEN 5 WHEN 'SAB' THEN 6 WHEN 'DOM' THEN 7 ELSE 99 END";
+const ouvidoriaStatusOrderSql = "CASE o.status WHEN 'NOVA' THEN 1 WHEN 'EM_ANALISE' THEN 2 WHEN 'RESOLVIDA' THEN 3 WHEN 'ARQUIVADA' THEN 4 ELSE 99 END";
 
 const allowedOrigins = new Set(splitEnvList(process.env.PUBLIC_ORIGIN, process.env.ALLOWED_ORIGINS));
 const localhostOriginPattern = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/;
@@ -66,124 +68,9 @@ const normalizeTrustProxy = (value) => {
 const trustProxy = normalizeTrustProxy(process.env.TRUST_PROXY);
 app.set("trust proxy", trustProxy);
 
-const databaseUrl = process.env.DATABASE_URL || process.env.MYSQL_URL || "";
-const parsedDatabaseUrl = databaseUrl ? new URL(databaseUrl) : null;
-const databaseName =
-  process.env.DB_NAME || parsedDatabaseUrl?.pathname.replace(/^\/+/, "").split("?")[0] || "cimol";
-if (!/^[A-Za-z0-9_]+$/.test(databaseName)) {
-  throw new Error("DB_NAME contém caracteres inválidos.");
-}
+await initializeSchema(path.join(__dirname, "schema.sql"));
 
-const databaseSsl = asBoolean(process.env.DB_SSL)
-  ? { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false" }
-  : undefined;
-const databaseConfig = {
-  host: parsedDatabaseUrl?.hostname || process.env.DB_HOST || "localhost",
-  port: Number(parsedDatabaseUrl?.port || process.env.DB_PORT || 3306),
-  user: parsedDatabaseUrl ? decodeURIComponent(parsedDatabaseUrl.username) : process.env.DB_USER || "root",
-  password: parsedDatabaseUrl ? decodeURIComponent(parsedDatabaseUrl.password) : process.env.DB_PASSWORD || "",
-  ssl: databaseSsl,
-};
-const shouldCreateDatabase =
-  process.env.DB_CREATE_DATABASE == null ? !parsedDatabaseUrl : asBoolean(process.env.DB_CREATE_DATABASE);
-
-const initializeSchema = async () => {
-  const connection = await mysql.createConnection({
-    ...databaseConfig,
-    database: shouldCreateDatabase ? undefined : databaseName,
-    multipleStatements: true,
-  });
-  try {
-    if (shouldCreateDatabase) {
-      await connection.query(
-        `CREATE DATABASE IF NOT EXISTS \`${databaseName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
-      );
-      await connection.changeUser({ database: databaseName });
-    }
-    const schema = fs
-      .readFileSync(path.join(__dirname, "schema.sql"), "utf8")
-      .replace(/CREATE DATABASE IF NOT EXISTS[\s\S]*?USE\s+[A-Za-z0-9_]+\s*;/i, "");
-    await connection.query(schema);
-  } finally {
-    await connection.end();
-  }
-};
-
-await initializeSchema();
-
-const db = mysql.createPool({
-  ...databaseConfig,
-  database: databaseName,
-  waitForConnections: true,
-  connectionLimit: Number(process.env.DB_CONNECTION_LIMIT || (process.env.VERCEL ? 4 : 10)),
-});
-
-const ensureOperationalColumns = async () => {
-  const columns = [
-    ["salas", "status", "ALTER TABLE salas ADD COLUMN status ENUM('ATIVA', 'INATIVA', 'MANUTENCAO') NOT NULL DEFAULT 'ATIVA' AFTER tipo"],
-    ["salas", "acessivel", "ALTER TABLE salas ADD COLUMN acessivel BOOLEAN NOT NULL DEFAULT FALSE AFTER status"],
-    ["horario_notificacoes", "confirmacao_token_hash", "ALTER TABLE horario_notificacoes ADD COLUMN confirmacao_token_hash CHAR(64) NULL AFTER ativo"],
-    ["horario_notificacoes", "confirmacao_expira_em", "ALTER TABLE horario_notificacoes ADD COLUMN confirmacao_expira_em DATETIME NULL AFTER confirmacao_token_hash"],
-  ];
-
-  for (const [tableName, columnName, statement] of columns) {
-    const [existing] = await db.query(
-      `SELECT 1
-         FROM information_schema.columns
-        WHERE table_schema = ?
-          AND table_name = ?
-          AND column_name = ?
-        LIMIT 1`,
-      [databaseName, tableName, columnName]
-    );
-    if (!existing.length) await db.query(statement);
-  }
-
-  const [capacity] = await db.query(
-    `SELECT IS_NULLABLE AS is_nullable
-       FROM information_schema.columns
-      WHERE table_schema = ?
-        AND table_name = 'salas'
-        AND column_name = 'capacidade'
-      LIMIT 1`,
-    [databaseName]
-  );
-  if (capacity[0]?.is_nullable === "NO") {
-    await db.query("ALTER TABLE salas MODIFY capacidade INT UNSIGNED NULL");
-  }
-};
-
-const ensureOperationalIndexes = async () => {
-  const indexes = [
-    ["alunos", "idx_alunos_lookup", "ALTER TABLE alunos ADD INDEX idx_alunos_lookup (nome, ano, turma, curso)"],
-    ["reorganizacoes", "idx_reorganizacoes_data", "ALTER TABLE reorganizacoes ADD INDEX idx_reorganizacoes_data (data, id)"],
-    ["salas", "idx_salas_bloco_andar_nome", "ALTER TABLE salas ADD INDEX idx_salas_bloco_andar_nome (bloco_id, andar, nome)"],
-    ["salas", "idx_salas_tipo", "ALTER TABLE salas ADD INDEX idx_salas_tipo (tipo)"],
-    [
-      "horarios_importados",
-      "idx_horarios_publicos_importacao",
-      "ALTER TABLE horarios_importados ADD INDEX idx_horarios_publicos_importacao (importacao_id, categoria, turma, dia, periodo)",
-    ],
-    [
-      "horario_notificacoes",
-      "idx_horario_notificacoes_token",
-      "ALTER TABLE horario_notificacoes ADD INDEX idx_horario_notificacoes_token (confirmacao_token_hash)",
-    ],
-  ];
-
-  for (const [tableName, indexName, statement] of indexes) {
-    const [existing] = await db.query(
-      `SELECT 1
-         FROM information_schema.statistics
-        WHERE table_schema = ?
-          AND table_name = ?
-          AND index_name = ?
-        LIMIT 1`,
-      [databaseName, tableName, indexName]
-    );
-    if (!existing.length) await db.query(statement);
-  }
-};
+const db = createDbPool();
 
 const ensureDefaultPublicContent = async () => {
   const [sectorCount] = await db.query("SELECT COUNT(*) AS total FROM setores");
@@ -273,7 +160,7 @@ const ensureReferenceRooms = async () => {
     await db.query(
       `INSERT INTO blocos (nome, descricao)
        VALUES (?, 'Cadastro base do quadro fotografado de salas e laboratorios.')
-       ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
+       ON CONFLICT (nome) DO NOTHING`,
       [blockName]
     );
   }
@@ -297,14 +184,12 @@ const ensureReferenceRooms = async () => {
       `INSERT INTO salas
        (bloco_id, nome, andar, capacidade, tipo, observacoes)
        VALUES (?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE nome = nome`,
+       ON CONFLICT (bloco_id, nome) DO NOTHING`,
       [blockId, name, floorFromRoom(name), capacity, type, notes]
     );
   }
 };
 
-await ensureOperationalColumns();
-await ensureOperationalIndexes();
 await ensureBootstrapUsers(db);
 await ensureDefaultPublicContent();
 await ensureReferenceRooms();
@@ -653,7 +538,7 @@ const addReorganizationRooms = async (conn, requestId, rooms) => {
   const names = [...new Set(rooms.map((value) => String(value || "").trim().slice(0, 50)).filter(Boolean))];
   for (const room of names) {
     await conn.query(
-      "INSERT IGNORE INTO reorganizacao_salas_relacionadas (reorganizacao_id, sala) VALUES (?, ?)",
+      "INSERT INTO reorganizacao_salas_relacionadas (reorganizacao_id, sala) VALUES (?, ?) ON CONFLICT DO NOTHING",
       [requestId, room]
     );
   }
@@ -661,7 +546,7 @@ const addReorganizationRooms = async (conn, requestId, rooms) => {
 
 const applyGroundFloorReorganization = async (conn, { turma, userId, studentCount, reason }) => {
   const [schedules] = await conn.query(
-    `SELECT h.id, h.turma, h.dia, h.periodo, TIME_FORMAT(h.hora_inicio, '%H:%i') AS hora_inicio,
+    `SELECT h.id, h.turma, h.dia, h.periodo, TO_CHAR(h.hora_inicio, 'HH24:MI') AS hora_inicio,
             h.disciplina, h.professor, h.sala_id, h.ambiente,
             s.nome AS sala_nome, s.andar AS sala_andar
        FROM horarios_importados h
@@ -671,7 +556,7 @@ const applyGroundFloorReorganization = async (conn, { turma, userId, studentCoun
         AND i.ativa = TRUE
         AND h.categoria = 'TURMA'
         AND h.turma = ?
-      ORDER BY FIELD(h.dia, 'SEG','TER','QUA','QUI','SEX','SAB','DOM'), h.periodo`,
+      ORDER BY ${dayOrderSql}, h.periodo`,
     [turma]
   );
   const upperSchedules = schedules.filter((schedule) =>
@@ -753,12 +638,12 @@ app.get("/api/reorganizacao", cpdOrLegacyAuth, async (req, res, next) => {
     const params = paginated ? [pageSize, (page - 1) * pageSize] : [];
     const [rows] = await db.query(`
       SELECT r.id, a.nome AS aluno, a.ano, a.turma, a.curso, r.problema,
-             r.arquivo_nome, DATE_FORMAT(r.data, '%Y-%m-%d') AS data,
-             GROUP_CONCAT(sr.sala ORDER BY sr.sala SEPARATOR ', ') AS salas
+             r.arquivo_nome, TO_CHAR(r.data, 'YYYY-MM-DD') AS data,
+             STRING_AGG(sr.sala, ', ' ORDER BY sr.sala) AS salas
         FROM reorganizacoes r
         JOIN alunos a ON r.aluno_id = a.id
         LEFT JOIN reorganizacao_salas_relacionadas sr ON r.id = sr.reorganizacao_id
-       GROUP BY r.id
+       GROUP BY r.id, a.id
        ORDER BY r.id DESC
        ${limitClause}
     `, params);
@@ -807,7 +692,7 @@ app.post(
       let studentId = existingStudents[0]?.id;
       if (!studentId) {
         const [newStudent] = await conn.query(
-          "INSERT INTO alunos (nome, ano, turma, curso) VALUES (?, ?, ?, ?)",
+          "INSERT INTO alunos (nome, ano, turma, curso) VALUES (?, ?, ?, ?) RETURNING id",
           [aluno, ano, turma, curso]
         );
         studentId = newStudent.insertId;
@@ -815,7 +700,8 @@ app.post(
 
       const [newRequest] = await conn.query(
         `INSERT INTO reorganizacoes (aluno_id, problema, arquivo_nome, arquivo_dados, data)
-         VALUES (?, ?, ?, ?, CURDATE())`,
+         VALUES (?, ?, ?, ?, CURRENT_DATE)
+         RETURNING id`,
         [studentId, problema, req.file?.originalname || null, req.file?.buffer || null]
       );
       const requestId = newRequest.insertId;
@@ -879,7 +765,7 @@ app.get("/api/blocos", async (req, res, next) => {
   try {
     const [rows] = await db.query(`
       SELECT b.id, b.nome, b.descricao, b.created_at, b.updated_at,
-             COUNT(s.id) AS total_salas
+             COUNT(s.id)::int AS total_salas
         FROM blocos b
         LEFT JOIN salas s ON s.bloco_id = b.id
        GROUP BY b.id
@@ -897,7 +783,7 @@ app.post("/api/blocos", requireRole("CPD"), async (req, res, next) => {
     const nome = String(req.body?.nome || "").trim();
     const descricao = String(req.body?.descricao || "").trim() || null;
     if (!nome) throw httpError(400, "Informe o nome do bloco.");
-    const [result] = await db.query("INSERT INTO blocos (nome, descricao) VALUES (?, ?)", [nome, descricao]);
+    const [result] = await db.query("INSERT INTO blocos (nome, descricao) VALUES (?, ?) RETURNING id", [nome, descricao]);
     res.status(201).json({ id: result.insertId });
   } catch (error) {
     next(error);
@@ -927,7 +813,7 @@ app.delete("/api/blocos/:id", requireRole("CPD"), async (req, res, next) => {
     if (!result.affectedRows) throw httpError(404, "Bloco não encontrado.");
     res.json({ ok: true });
   } catch (error) {
-    if (error.code === "ER_ROW_IS_REFERENCED_2") {
+    if (isForeignKeyError(error)) {
       next(httpError(409, "O bloco possui salas e não pode ser excluído."));
     } else next(error);
   }
@@ -940,7 +826,7 @@ const roomSelect = `
   SELECT s.id, s.nome, s.bloco_id, b.nome AS bloco_nome, s.andar, s.capacidade, s.tipo,
          s.status, s.acessivel, s.possui_computadores, s.possui_data_show, s.possui_internet,
          s.possui_ar_condicionado, s.observacoes, s.created_at, s.updated_at,
-         GROUP_CONCAT(sw.nome ORDER BY sw.nome SEPARATOR '||') AS softwares
+         STRING_AGG(sw.nome, '||' ORDER BY sw.nome) AS softwares
     FROM salas s
     JOIN blocos b ON b.id = s.bloco_id
     LEFT JOIN sala_softwares ss ON ss.sala_id = s.id
@@ -993,7 +879,7 @@ app.get("/api/salas", async (req, res, next) => {
       conditions.push(`EXISTS (
         SELECT 1 FROM sala_softwares filter_ss
         JOIN softwares filter_sw ON filter_sw.id = filter_ss.software_id
-        WHERE filter_ss.sala_id = s.id AND filter_sw.nome LIKE ?
+        WHERE filter_ss.sala_id = s.id AND filter_sw.nome ILIKE ?
       )`);
       params.push(`%${req.query.software}%`);
     }
@@ -1004,7 +890,7 @@ app.get("/api/salas", async (req, res, next) => {
     const limitClause = paginated ? "LIMIT ? OFFSET ?" : "";
     const queryParams = paginated ? [...params, pageSize, (page - 1) * pageSize] : params;
     const [rows] = await db.query(
-      `${roomSelect} ${where} GROUP BY s.id ORDER BY b.nome, s.nome ${limitClause}`,
+      `${roomSelect} ${where} GROUP BY s.id, b.nome ORDER BY b.nome, s.nome ${limitClause}`,
       queryParams
     );
     const items = rows.map(serializeRoom);
@@ -1039,7 +925,7 @@ app.get("/api/salas/ocupacoes", async (req, res, next) => {
     const [rows] = await db.query(
       `SELECT h.id, COALESCE(h.sala_id, s.id) AS sala_id, s.nome AS sala_nome, b.nome AS bloco_nome,
               h.turma, h.curso, h.ano, h.dia, h.periodo,
-              TIME_FORMAT(h.hora_inicio, '%H:%i') AS hora_inicio,
+              TO_CHAR(h.hora_inicio, 'HH24:MI') AS hora_inicio,
               h.disciplina, h.professor
          FROM horarios_importados h
          JOIN importacoes_horarios i ON i.id = h.importacao_id
@@ -1057,7 +943,7 @@ app.get("/api/salas/ocupacoes", async (req, res, next) => {
           AND i.ativa = TRUE
           AND h.categoria = 'TURMA'
           ${publicStatusFilter}
-        ORDER BY b.nome, s.nome, FIELD(h.dia, 'SEG','TER','QUA','QUI','SEX','SAB','DOM'), h.periodo, h.turma`
+        ORDER BY b.nome, s.nome, ${dayOrderSql}, h.periodo, h.turma`
     );
     const payload = { horarios: rows };
     if (req.user) return res.json(payload);
@@ -1070,7 +956,7 @@ app.get("/api/salas/ocupacoes", async (req, res, next) => {
 app.get("/api/salas/:id", async (req, res, next) => {
   try {
     const publicStatusFilter = req.user ? "" : "AND s.status = 'ATIVA'";
-    const [rows] = await db.query(`${roomSelect} WHERE s.id = ? ${publicStatusFilter} GROUP BY s.id`, [req.params.id]);
+    const [rows] = await db.query(`${roomSelect} WHERE s.id = ? ${publicStatusFilter} GROUP BY s.id, b.nome`, [req.params.id]);
     if (!rows.length) throw httpError(404, "Sala não encontrada.");
     res.json(serializeRoom(rows[0]));
   } catch (error) {
@@ -1086,7 +972,7 @@ app.get("/api/salas/:id/ocupacao", async (req, res, next) => {
     const publicStatusFilter = req.user ? "" : "AND s.status = 'ATIVA'";
     const [rows] = await db.query(
       `SELECT h.id, h.turma, h.curso, h.ano, h.dia, h.periodo,
-              TIME_FORMAT(h.hora_inicio, '%H:%i') AS hora_inicio,
+              TO_CHAR(h.hora_inicio, 'HH24:MI') AS hora_inicio,
               h.disciplina, h.professor
          FROM horarios_importados h
          JOIN importacoes_horarios i ON i.id = h.importacao_id
@@ -1096,7 +982,7 @@ app.get("/api/salas/:id/ocupacao", async (req, res, next) => {
           AND h.categoria = 'TURMA'
           AND h.sala_id = ?
           ${publicStatusFilter}
-        ORDER BY FIELD(h.dia, 'SEG','TER','QUA','QUI','SEX','SAB','DOM'), h.periodo, h.turma`,
+        ORDER BY ${dayOrderSql}, h.periodo, h.turma`,
       [roomId]
     );
     const payload = { horarios: rows };
@@ -1112,7 +998,7 @@ app.get("/api/sala-alteracoes", requireRole("CPD"), async (req, res, next) => {
     const limit = positiveInt(req.query.limit, 50, { min: 1, max: 200 });
     const [rows] = await db.query(
       `SELECT a.id, a.horario_id, a.turma, a.dia, a.periodo, a.quantidade_alunos,
-              TIME_FORMAT(h.hora_inicio, '%H:%i') AS hora_inicio,
+              TO_CHAR(h.hora_inicio, 'HH24:MI') AS hora_inicio,
               a.motivo, a.created_at,
               anterior.nome AS sala_anterior,
               nova.nome AS sala_nova,
@@ -1171,10 +1057,11 @@ const saveRoomSoftwares = async (conn, roomId, softwares) => {
   for (const software of softwares) {
     const [result] = await conn.query(
       `INSERT INTO softwares (nome) VALUES (?)
-       ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), nome = VALUES(nome)`,
+       ON CONFLICT (nome) DO UPDATE SET nome = EXCLUDED.nome
+       RETURNING id`,
       [software]
     );
-    await conn.query("INSERT INTO sala_softwares (sala_id, software_id) VALUES (?, ?)", [
+    await conn.query("INSERT INTO sala_softwares (sala_id, software_id) VALUES (?, ?) ON CONFLICT DO NOTHING", [
       roomId,
       result.insertId,
     ]);
@@ -1198,7 +1085,8 @@ app.post("/api/salas", requireRole("CPD"), async (req, res, next) => {
       `INSERT INTO salas
        (bloco_id, nome, andar, capacidade, tipo, status, acessivel, possui_computadores, possui_data_show,
         possui_internet, possui_ar_condicionado, observacoes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       RETURNING id`,
       [
         room.bloco_id,
         room.nome,
@@ -1326,9 +1214,9 @@ const validateEvent = (event) => {
 app.get("/api/eventos", async (req, res, next) => {
   try {
     const includeInactive = req.user?.papel === "CPD" && asBoolean(req.query.incluir_inativos);
-    const where = includeInactive ? "" : "WHERE ativo = TRUE AND data_evento >= CURDATE()";
+    const where = includeInactive ? "" : "WHERE ativo = TRUE AND data_evento >= CURRENT_DATE";
     const [rows] = await db.query(
-      `SELECT id, titulo, descricao, data_evento, TIME_FORMAT(hora_evento, '%H:%i') AS hora_evento,
+      `SELECT id, titulo, descricao, data_evento, TO_CHAR(hora_evento, 'HH24:MI') AS hora_evento,
               local, imagem_url, ativo, created_at, updated_at
          FROM eventos
          ${where}
@@ -1348,7 +1236,8 @@ app.post("/api/eventos", requireRole("CPD"), async (req, res, next) => {
     validateEvent(event);
     const [result] = await db.query(
       `INSERT INTO eventos (titulo, descricao, data_evento, hora_evento, local, imagem_url, ativo)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       RETURNING id`,
       [event.titulo, event.descricao, event.data_evento, event.hora_evento, event.local, event.imagem_url, event.ativo]
     );
     res.status(201).json({ id: result.insertId });
@@ -1443,7 +1332,8 @@ app.post("/api/setores", requireRole("CPD"), async (req, res, next) => {
     const [result] = await db.query(
       `INSERT INTO setores
        (nome, descricao, responsavel, localizacao, contato, horario_atendimento, icone, cor, ativo)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       RETURNING id`,
       [
         sector.nome,
         sector.descricao,
@@ -1547,7 +1437,8 @@ app.post("/api/ouvidoria", ouvidoriaRateLimit, async (req, res, next) => {
     const [result] = await db.query(
       `INSERT INTO ouvidoria_manifestacoes
        (nome, perfil, categoria, setor_id, assunto, mensagem)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?)
+       RETURNING id`,
       [
         manifestation.nome,
         manifestation.perfil,
@@ -1581,7 +1472,7 @@ app.get("/api/ouvidoria", requireRole("CPD"), async (req, res, next) => {
          FROM ouvidoria_manifestacoes o
          LEFT JOIN setores s ON s.id = o.setor_id
          ${where}
-        ORDER BY FIELD(o.status, 'NOVA', 'EM_ANALISE', 'RESOLVIDA', 'ARQUIVADA'), o.created_at DESC
+        ORDER BY ${ouvidoriaStatusOrderSql}, o.created_at DESC
         LIMIT ? OFFSET ?`,
       [...params, pageSize, (page - 1) * pageSize]
     );
@@ -1664,21 +1555,20 @@ const insertScheduleChunks = async (conn, importId, schedules, roomByName) => {
 
 const preserveRoomsFromActiveImport = async (conn, importId, scopeKey) => {
   const [result] = await conn.query(
-    `UPDATE horarios_importados candidate
-       JOIN importacoes_horarios active_import
-         ON active_import.escopo_chave = ?
+    `UPDATE horarios_importados AS candidate
+        SET sala_id = active.sala_id
+       FROM importacoes_horarios AS active_import, horarios_importados AS active
+      WHERE active_import.escopo_chave = ?
         AND active_import.status = 'APROVADA'
         AND active_import.ativa = TRUE
         AND active_import.id <> candidate.importacao_id
-       JOIN horarios_importados active
-         ON active.importacao_id = active_import.id
+        AND active.importacao_id = active_import.id
         AND active.categoria = candidate.categoria
         AND active.turma = candidate.turma
         AND active.dia = candidate.dia
         AND active.periodo = candidate.periodo
         AND active.sala_id IS NOT NULL
-        SET candidate.sala_id = active.sala_id
-      WHERE candidate.importacao_id = ?
+        AND candidate.importacao_id = ?
         AND candidate.categoria = 'TURMA'
         AND candidate.sala_id IS NULL`,
     [scopeKey, importId]
@@ -1702,7 +1592,8 @@ app.post(
           `INSERT INTO importacoes_horarios
            (fonte, titulo, escopo_chave, codigo_escola, codigo_turno, nome_turno, lote_hash,
             total_arquivos, total_horarios, total_turmas, avisos_json, observacoes_envio, enviado_por)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           RETURNING id`,
           [
             parsed.fonte,
             parsed.titulo,
@@ -1823,14 +1714,14 @@ app.get("/api/importacoes", requireRole("CPD"), async (req, res, next) => {
 
 const scheduleComparisonSelect = `
   SELECT h.categoria, h.turma, h.dia, h.periodo,
-         TIME_FORMAT(h.hora_inicio, '%H:%i') AS hora_inicio,
+         TO_CHAR(h.hora_inicio, 'HH24:MI') AS hora_inicio,
          h.disciplina, h.professor, h.ambiente,
          s.nome AS sala_nome, h.tipo_disciplina
     FROM horarios_importados h
     LEFT JOIN salas s ON s.id = h.sala_id
    WHERE h.importacao_id = ?
      AND h.categoria = 'TURMA'
-   ORDER BY h.turma, FIELD(h.dia, 'SEG','TER','QUA','QUI','SEX','SAB','DOM'), h.periodo`;
+   ORDER BY h.turma, ${dayOrderSql}, h.periodo`;
 
 const loadScheduleComparison = async (conn, importId, scopeKey) => {
   const [activeImports] = await conn.query(
@@ -1915,14 +1806,14 @@ app.get("/api/importacoes/:id", requireRole("CPD"), async (req, res, next) => {
     );
     const [schedules] = await db.query(
       `SELECT h.id, h.categoria, h.turma, h.curso, h.ano, h.dia, h.periodo,
-              TIME_FORMAT(h.hora_inicio, '%H:%i') AS hora_inicio, h.disciplina, h.professor,
+              TO_CHAR(h.hora_inicio, 'HH24:MI') AS hora_inicio, h.disciplina, h.professor,
               h.ambiente, h.sala_id, s.nome AS sala_nome, b.nome AS bloco_nome,
               h.tipo_turma, h.tipo_disciplina, h.valor_original
          FROM horarios_importados h
          LEFT JOIN salas s ON s.id = h.sala_id
          LEFT JOIN blocos b ON b.id = s.bloco_id
         WHERE h.importacao_id = ? ${turmaWhere}
-        ORDER BY FIELD(h.dia, 'SEG','TER','QUA','QUI','SEX','SAB','DOM'), h.periodo, h.turma
+        ORDER BY ${dayOrderSql}, h.periodo, h.turma
         LIMIT ? OFFSET ?`,
       [...scheduleParams, pageSize, (page - 1) * pageSize]
     );
@@ -2112,9 +2003,12 @@ app.post("/api/horarios/notificacoes", notificationRateLimit, async (req, res, n
     const tokenHash = hashToken(token);
     await db.query(
       `INSERT INTO horario_notificacoes (email, turma, ativo, confirmacao_token_hash, confirmacao_expira_em)
-       VALUES (?, ?, FALSE, ?, DATE_ADD(NOW(), INTERVAL 2 DAY))
-       ON DUPLICATE KEY UPDATE ativo = FALSE, confirmacao_token_hash = VALUES(confirmacao_token_hash),
-                               confirmacao_expira_em = VALUES(confirmacao_expira_em), updated_at = CURRENT_TIMESTAMP`,
+       VALUES (?, ?, FALSE, ?, NOW() + INTERVAL '2 days')
+       ON CONFLICT (email, turma) DO UPDATE
+         SET ativo = FALSE,
+             confirmacao_token_hash = EXCLUDED.confirmacao_token_hash,
+             confirmacao_expira_em = EXCLUDED.confirmacao_expira_em,
+             updated_at = CURRENT_TIMESTAMP`,
       [email, turma, tokenHash]
     );
     const confirmationUrl = `${publicBaseUrl(req)}/api/horarios/notificacoes/confirmar?token=${encodeURIComponent(token)}`;
@@ -2194,12 +2088,12 @@ app.get("/api/horarios/publicados", async (req, res, next) => {
     }
     const teacher = String(req.query.professor || "").trim();
     if (teacher) {
-      conditions.push("h.professor LIKE ?");
+      conditions.push("h.professor ILIKE ?");
       params.push(`%${teacher}%`);
     }
     const [schedules] = await db.query(
       `SELECT h.id, h.turma, h.curso, h.ano, h.dia, h.periodo,
-              TIME_FORMAT(h.hora_inicio, '%H:%i') AS hora_inicio,
+              TO_CHAR(h.hora_inicio, 'HH24:MI') AS hora_inicio,
               h.disciplina, h.professor, h.sala_id, h.ambiente,
               COALESCE(s.nome, h.ambiente) AS sala,
               b.nome AS bloco, i.id AS importacao_id, i.publicado_em
@@ -2208,7 +2102,7 @@ app.get("/api/horarios/publicados", async (req, res, next) => {
          LEFT JOIN salas s ON s.id = h.sala_id
          LEFT JOIN blocos b ON b.id = s.bloco_id
         WHERE ${conditions.join(" AND ")}
-        ORDER BY FIELD(h.dia, 'SEG','TER','QUA','QUI','SEX','SAB','DOM'), h.periodo, h.turma`,
+        ORDER BY ${dayOrderSql}, h.periodo, h.turma`,
       params
     );
     const payload = { turmas: options, horarios: schedules };
@@ -2272,9 +2166,9 @@ app.use((error, req, res, _next) => {
   let status = error.statusCode || 500;
   if (error instanceof multer.MulterError || error.message?.includes("Formato") || error.message?.includes("Tipo")) {
     status = 400;
-  } else if (error.code === "ER_DUP_ENTRY") {
+  } else if (isDuplicateError(error)) {
     status = 409;
-  } else if (error.code === "ER_NO_REFERENCED_ROW_2") {
+  } else if (isForeignKeyError(error)) {
     status = 400;
   }
   res.status(status).json({
