@@ -276,6 +276,33 @@ CREATE INDEX IF NOT EXISTS idx_horario_notificacoes_turma_ativo
 CREATE INDEX IF NOT EXISTS idx_horario_notificacoes_token
   ON horario_notificacoes (confirmacao_token_hash);
 
+DO $$
+DECLARE
+  target_table text;
+BEGIN
+  FOREACH target_table IN ARRAY ARRAY[
+    'alunos',
+    'reorganizacoes',
+    'reorganizacao_salas_relacionadas',
+    'usuarios',
+    'sessoes',
+    'blocos',
+    'salas',
+    'softwares',
+    'sala_softwares',
+    'eventos',
+    'setores',
+    'ouvidoria_manifestacoes',
+    'importacoes_horarios',
+    'importacao_arquivos',
+    'horarios_importados',
+    'sala_alteracoes',
+    'horario_notificacoes'
+  ] LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', target_table);
+  END LOOP;
+END $$;
+
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS trigger AS $$
 BEGIN
