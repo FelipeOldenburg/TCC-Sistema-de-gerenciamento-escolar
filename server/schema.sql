@@ -304,12 +304,15 @@ BEGIN
 END $$;
 
 CREATE OR REPLACE FUNCTION set_updated_at()
-RETURNS trigger AS $$
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
 BEGIN
   NEW.updated_at = CURRENT_TIMESTAMP;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
 DROP TRIGGER IF EXISTS usuarios_set_updated_at ON usuarios;
 CREATE TRIGGER usuarios_set_updated_at
