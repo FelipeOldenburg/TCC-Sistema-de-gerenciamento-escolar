@@ -68,6 +68,16 @@ const normalizeTrustProxy = (value) => {
 const trustProxy = normalizeTrustProxy(process.env.TRUST_PROXY);
 app.set("trust proxy", trustProxy);
 
+const defaultInstitutionSlug = process.env.DEFAULT_INSTITUTION_SLUG || "cimol";
+const resolveInstitutionSlug = (req) => {
+  const headerSlug = String(req.headers["x-institution-slug"] || "").trim().toLowerCase();
+  if (headerSlug) return headerSlug;
+  const host = String(req.hostname || "").toLowerCase();
+  const subdomain = host.split(".")[0];
+  const isIpAddress = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host);
+  return host.includes(".") && !isIpAddress && subdomain !== "www" ? subdomain : defaultInstitutionSlug;
+};
+
 const db = createDbPool();
 let databaseReady = false;
 const databaseUnavailableDetails =
@@ -322,6 +332,39 @@ const cacheableJson = (req, res, payload, { maxAge = 60, staleWhileRevalidate = 
   if (req.headers["if-none-match"] === etag) return res.status(304).end();
   return res.send(body);
 };
+
+app.get("/api/instituicao", async (req, res, next) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT slug, nome, nome_admin, nome_sistema, subtitulo_admin, logo_url,
+              cor_primaria_hsl, cor_acento_hsl, cor_header_hsl, cor_nav_hsl, cor_nav_ativa_hsl
+         FROM instituicoes
+        WHERE slug = ? AND ativo = TRUE
+        LIMIT 1`,
+      [resolveInstitutionSlug(req)]
+    );
+    if (!rows.length) throw httpError(404, "Instituição não encontrada.");
+    const row = rows[0];
+    res.set("Cache-Control", "no-store");
+    res.json({
+      slug: row.slug,
+      name: row.nome,
+      adminName: row.nome_admin,
+      systemName: row.nome_sistema,
+      adminSubtitle: row.subtitulo_admin,
+      logoUrl: row.logo_url,
+      colors: {
+        primary: row.cor_primaria_hsl,
+        accent: row.cor_acento_hsl,
+        header: row.cor_header_hsl,
+        nav: row.cor_nav_hsl,
+        navActive: row.cor_nav_ativa_hsl,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 const normalizeEmail = (value) => String(value || "").trim().toLowerCase();
 const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);

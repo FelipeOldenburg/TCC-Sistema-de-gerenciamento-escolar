@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { apiFetch } from "@/lib/api";
-import { institutionBrand } from "@/lib/institution";
+import { useInstitutionBrand } from "@/lib/institution";
 
 interface LoginFormProps {
   onLoginSuccess?: (username: string) => void;
@@ -17,6 +17,7 @@ const testLogins = [
 ];
 
 const LoginForm = ({ onLoginSuccess }: LoginFormProps) => {
+  const brand = useInstitutionBrand();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -58,11 +59,11 @@ const LoginForm = ({ onLoginSuccess }: LoginFormProps) => {
       <div className="glass-card rounded-3xl p-8 w-full max-w-md space-y-6 shadow-2xl">
         <div className="flex flex-col items-center gap-3 mb-8">
           <div className="w-16 h-16 rounded-xl overflow-hidden bg-accent/20 p-1 ring-2 ring-accent/30">
-            <img src={institutionBrand.logo} alt={institutionBrand.name} className="w-full h-full object-contain" />
+            <img src={brand.logo} alt={brand.name} className="w-full h-full object-contain" />
           </div>
           <div className="text-center">
-            <h1 className="text-2xl font-heading font-bold text-foreground">{institutionBrand.name}</h1>
-            <p className="text-sm text-muted-foreground">{institutionBrand.adminSubtitle}</p>
+            <h1 className="text-2xl font-heading font-bold text-foreground">{brand.name}</h1>
+            <p className="text-sm text-muted-foreground">{brand.adminSubtitle}</p>
           </div>
         </div>
 

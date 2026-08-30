@@ -12,7 +12,7 @@ import SalasSection from "@/components/admin/SalasSection";
 import SetoresAdminSection from "@/components/admin/SetoresAdminSection";
 import UraniaImportacoesSection from "@/components/admin/UraniaImportacoesSection";
 import { apiFetch, apiUrl, type SessionUser, type UserRole } from "@/lib/api";
-import { institutionBrand } from "@/lib/institution";
+import { useInstitutionBrand } from "@/lib/institution";
 
 type AdminTab = "horarios" | "blocos" | "salas" | "eventos" | "setores" | "ouvidoria" | "reorganizacao";
 
@@ -512,6 +512,7 @@ const ReorganizacaoSection = () => {
 };
 
 const AdminPageComponent = () => {
+  const brand = useInstitutionBrand();
   const navigate = useNavigate();
   const [user, setUser] = useState<SessionUser | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
@@ -561,10 +562,10 @@ const AdminPageComponent = () => {
         <div className="p-4 border-b border-border">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg overflow-hidden bg-accent/20 p-0.5">
-              <img src={institutionBrand.logo} alt={institutionBrand.name} className="w-full h-full object-contain" />
+              <img src={brand.logo} alt={brand.name} className="w-full h-full object-contain" />
             </div>
             <div>
-              <p className="font-heading font-bold text-sm text-foreground">{institutionBrand.adminName}</p>
+              <p className="font-heading font-bold text-sm text-foreground">{brand.adminName}</p>
               <p className="text-xs text-muted-foreground">Painel de controle</p>
             </div>
           </div>
@@ -614,7 +615,7 @@ const AdminPageComponent = () => {
       <div className="md:hidden fixed top-0 left-0 right-0 bg-card border-b border-border p-3 z-30 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg overflow-hidden bg-accent/20 p-0.5">
-            <img src={institutionBrand.logo} alt={institutionBrand.name} className="w-full h-full object-contain" />
+            <img src={brand.logo} alt={brand.name} className="w-full h-full object-contain" />
           </div>
           <span className="font-heading font-bold text-sm">{user.papel === "CPD" ? "CPD" : "URÂNIA"}</span>
         </div>

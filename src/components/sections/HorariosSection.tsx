@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { institutionBrand } from "@/lib/institution";
+import { useInstitutionBrand } from "@/lib/institution";
 
 type ClassOption = { turma: string; curso: string | null; ano: string | null };
 type RoomOption = {
@@ -110,6 +110,7 @@ const readStoredScheduleState = (): StoredScheduleState => {
 };
 
 const HorariosSection = () => {
+  const brand = useInstitutionBrand();
   const [storedState] = useState(readStoredScheduleState);
   const [view, setView] = useState<"cursos" | "tabela">(storedState.className || storedState.teacherQuery ? storedState.view : "cursos");
   const [options, setOptions] = useState<ClassOption[]>([]);
@@ -457,7 +458,7 @@ const HorariosSection = () => {
         {!loadingOptions && !error && !courses.length && <div className="glass-card rounded-xl p-12 text-center"><p className="font-medium">Nenhum horário publicado.</p><p className="text-sm text-muted-foreground mt-1">Os horários aparecerão aqui após aprovação do CPD.</p></div>}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {courses.map((courseName, index) => {
-            const image = courseImages[courseName as keyof typeof courseImages] || institutionBrand.logo;
+            const image = courseImages[courseName as keyof typeof courseImages] || brand.logo;
             return <button key={courseName} onClick={() => openCourse(courseName)} className="glass-card glass-card-hover group overflow-hidden rounded-xl border border-border bg-card p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" style={{ animationDelay: `${index * 60}ms` }}>
               <span className="flex h-32 w-full items-center justify-center border-b border-border bg-background p-3">
                 <img src={image} alt="" className="h-full w-full object-contain drop-shadow-sm transition-transform duration-300 group-hover:scale-105" />
