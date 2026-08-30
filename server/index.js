@@ -2065,6 +2065,7 @@ app.get("/api/horarios/notificacoes/confirmar", async (req, res, next) => {
 // ---------------------------------------------------------------------------
 app.get("/api/horarios/publicados", async (req, res, next) => {
   try {
+    res.set("Cache-Control", "no-store");
     const [options] = await db.query(
       `SELECT DISTINCT h.turma, h.curso, h.ano
          FROM horarios_importados h
@@ -2082,8 +2083,7 @@ app.get("/api/horarios/publicados", async (req, res, next) => {
           ORDER BY h.professor`
       );
       const payload = { turmas: options, professores: teachers.map((item) => item.professor), horarios: [] };
-      if (req.user) return res.json(payload);
-      return cacheableJson(req, res, payload, { maxAge: 120, staleWhileRevalidate: 600 });
+      return res.json(payload);
     }
     const conditions = ["i.status = 'APROVADA'", "i.ativa = TRUE", "h.categoria = 'TURMA'"];
     const params = [];
@@ -2118,8 +2118,7 @@ app.get("/api/horarios/publicados", async (req, res, next) => {
       params
     );
     const payload = { turmas: options, horarios: schedules };
-    if (req.user) return res.json(payload);
-    return cacheableJson(req, res, payload, { maxAge: 120, staleWhileRevalidate: 600 });
+    return res.json(payload);
   } catch (error) {
     next(error);
   }
