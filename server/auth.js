@@ -3,7 +3,7 @@ import crypto from "crypto";
 const SESSION_COOKIE = "cimol_session";
 const SESSION_DURATION_MS = 8 * 60 * 60 * 1000;
 
-const normalizeUsername = (value) => String(value || "").trim().toLowerCase();
+export const normalizeUsername = (value) => String(value || "").trim().toLowerCase();
 const asBoolean = (value) => value === true || value === "true" || value === "1" || value === "on";
 
 const sessionCookieAttributes = () => {

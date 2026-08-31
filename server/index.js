@@ -14,9 +14,11 @@ import {
   authenticateUser,
   clearSessionCookie,
   createAuthMiddleware,
+  createPassword,
   createSession,
   deleteSession,
   ensureBootstrapUsers,
+  normalizeUsername,
   setSessionCookie,
 } from "./auth.js";
 import { createDbPool, initializeSchema, isConnectionError, isDuplicateError, isForeignKeyError } from "./db.js";
@@ -577,6 +579,58 @@ const serializeAdminInstitution = (row) => ({
   total_importacoes: Number(row.total_importacoes || 0),
 });
 
+const parseInstitutionId = (value) => {
+  const id = Number(value);
+  if (!Number.isInteger(id) || id < 1) throw httpError(400, "Instituição inválida.");
+  return id;
+};
+
+const parseUserId = (value) => {
+  const id = Number(value);
+  if (!Number.isInteger(id) || id < 1) throw httpError(400, "Usuário inválido.");
+  return id;
+};
+
+const ensureInstitutionExists = async (targetDb, institutionId) => {
+  const [rows] = await targetDb.query("SELECT id FROM instituicoes WHERE id = ? LIMIT 1", [institutionId]);
+  if (!rows.length) throw httpError(404, "Instituição não encontrada.");
+};
+
+const normalizeInstitutionUserPayload = (body = {}) => {
+  const papel = String(body.papel || "ADMIN").trim().toUpperCase();
+  return {
+    nome: sanitizeFreeText(body.nome, 120),
+    usuario: normalizeUsername(body.usuario).slice(0, 60),
+    senha: String(body.senha || ""),
+    papel,
+    gerencia_instituicoes: papel === "CPD" && asBoolean(body.gerencia_instituicoes),
+    ativo: body.ativo == null ? true : asBoolean(body.ativo),
+  };
+};
+
+const validateInstitutionUserPayload = (user, { creating = false } = {}) => {
+  if (!user.nome) throw httpError(400, "Informe o nome do usuário.");
+  if (!/^[a-z0-9._-]{3,60}$/.test(user.usuario)) {
+    throw httpError(400, "Informe um usuário com 3 a 60 letras, números, pontos, hífens ou sublinhados.");
+  }
+  if (!["ADMIN", "CPD"].includes(user.papel)) throw httpError(400, "Papel inválido.");
+  if ((creating || user.senha) && user.senha.length < 6) {
+    throw httpError(400, "Informe uma senha com pelo menos 6 caracteres.");
+  }
+};
+
+const serializeInstitutionUser = (row) => ({
+  id: row.id,
+  instituicao_id: row.instituicao_id,
+  nome: row.nome,
+  usuario: row.usuario,
+  papel: row.papel,
+  gerencia_instituicoes: Boolean(row.gerencia_instituicoes),
+  ativo: Boolean(row.ativo),
+  created_at: row.created_at,
+  updated_at: row.updated_at,
+});
+
 app.get("/api/instituicoes", requireInstitutionManager, async (_req, res, next) => {
   try {
     const [rows] = await db.query(
@@ -663,6 +717,76 @@ app.put("/api/instituicoes/:id", requireInstitutionManager, async (req, res, nex
       ]
     );
     if (!result.affectedRows) throw httpError(404, "Instituição não encontrada.");
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/instituicoes/:institutionId/usuarios", requireInstitutionManager, async (req, res, next) => {
+  try {
+    const institutionId = parseInstitutionId(req.params.institutionId);
+    await ensureInstitutionExists(db, institutionId);
+    const [rows] = await db.query(
+      `SELECT id, instituicao_id, nome, usuario, papel, gerencia_instituicoes, ativo, created_at, updated_at
+         FROM usuarios
+        WHERE instituicao_id = ?
+        ORDER BY ativo DESC, papel DESC, nome`,
+      [institutionId]
+    );
+    res.json(rows.map(serializeInstitutionUser));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/instituicoes/:institutionId/usuarios", requireInstitutionManager, async (req, res, next) => {
+  const user = normalizeInstitutionUserPayload(req.body);
+  try {
+    const institutionId = parseInstitutionId(req.params.institutionId);
+    validateInstitutionUserPayload(user, { creating: true });
+    await ensureInstitutionExists(db, institutionId);
+    const { hash, salt } = await createPassword(user.senha);
+    const [result] = await db.query(
+      `INSERT INTO usuarios
+       (instituicao_id, nome, usuario, senha_hash, senha_salt, papel, gerencia_instituicoes, ativo)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       RETURNING id`,
+      [institutionId, user.nome, user.usuario, hash, salt, user.papel, user.gerencia_instituicoes, user.ativo]
+    );
+    res.status(201).json({ id: result.insertId });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/instituicoes/:institutionId/usuarios/:userId", requireInstitutionManager, async (req, res, next) => {
+  const user = normalizeInstitutionUserPayload(req.body);
+  try {
+    const institutionId = parseInstitutionId(req.params.institutionId);
+    const userId = parseUserId(req.params.userId);
+    validateInstitutionUserPayload(user);
+    await ensureInstitutionExists(db, institutionId);
+
+    if (userId === Number(req.user.id) && (!user.ativo || user.papel !== "CPD" || !user.gerencia_instituicoes)) {
+      throw httpError(400, "Não remova seu próprio acesso de gerenciamento.");
+    }
+
+    const updates = ["nome = ?", "usuario = ?", "papel = ?", "gerencia_instituicoes = ?", "ativo = ?"];
+    const params = [user.nome, user.usuario, user.papel, user.gerencia_instituicoes, user.ativo];
+    if (user.senha) {
+      const { hash, salt } = await createPassword(user.senha);
+      updates.push("senha_hash = ?", "senha_salt = ?");
+      params.push(hash, salt);
+    }
+    params.push(userId, institutionId);
+
+    const [result] = await db.query(
+      `UPDATE usuarios SET ${updates.join(", ")} WHERE id = ? AND instituicao_id = ?`,
+      params
+    );
+    if (!result.affectedRows) throw httpError(404, "Usuário não encontrado.");
+    if (!user.ativo || user.senha) await db.query("DELETE FROM sessoes WHERE usuario_id = ?", [userId]);
     res.json({ ok: true });
   } catch (error) {
     next(error);

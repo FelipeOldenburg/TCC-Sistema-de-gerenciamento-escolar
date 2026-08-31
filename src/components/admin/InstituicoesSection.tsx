@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { Building2, Edit, Plus, Save, X } from "lucide-react";
+import { Building2, Edit, Plus, Save, Users, X } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +42,24 @@ type InstituicaoForm = {
   ativo: boolean;
 };
 
+type UsuarioInstituicao = {
+  id: number;
+  nome: string;
+  usuario: string;
+  papel: "ADMIN" | "CPD";
+  gerencia_instituicoes: boolean;
+  ativo: boolean;
+};
+
+type UsuarioForm = {
+  nome: string;
+  usuario: string;
+  senha: string;
+  papel: "ADMIN" | "CPD";
+  gerencia_instituicoes: boolean;
+  ativo: boolean;
+};
+
 type ColorKey =
   | "cor_primaria_hsl"
   | "cor_acento_hsl"
@@ -61,6 +79,15 @@ const emptyForm: InstituicaoForm = {
   cor_header_hsl: "228 62% 32%",
   cor_nav_hsl: "228 62% 42%",
   cor_nav_ativa_hsl: "228 50% 52%",
+  ativo: true,
+};
+
+const emptyUserForm: UsuarioForm = {
+  nome: "",
+  usuario: "",
+  senha: "",
+  papel: "ADMIN",
+  gerencia_instituicoes: false,
   ativo: true,
 };
 
@@ -150,6 +177,14 @@ export default function InstituicoesSection() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [selectedInstitution, setSelectedInstitution] = useState<Instituicao | null>(null);
+  const [usuarios, setUsuarios] = useState<UsuarioInstituicao[]>([]);
+  const [userForm, setUserForm] = useState<UsuarioForm>(emptyUserForm);
+  const [editingUserId, setEditingUserId] = useState<number | null>(null);
+  const [showUserForm, setShowUserForm] = useState(false);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [savingUser, setSavingUser] = useState(false);
+  const [userError, setUserError] = useState("");
 
   const load = async () => {
     setLoading(true);
@@ -197,6 +232,76 @@ export default function InstituicoesSection() {
       setError(err instanceof Error ? err.message : "Erro ao salvar instituição.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const loadUsers = async (instituicao = selectedInstitution) => {
+    if (!instituicao) return;
+    setLoadingUsers(true);
+    try {
+      setUsuarios(await apiFetch<UsuarioInstituicao[]>(`/api/instituicoes/${instituicao.id}/usuarios`));
+      setUserError("");
+    } catch (err) {
+      setUserError(err instanceof Error ? err.message : "Erro ao carregar usuários.");
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  const openUsers = async (instituicao: Instituicao) => {
+    setSelectedInstitution(instituicao);
+    setUsuarios([]);
+    setUserForm(emptyUserForm);
+    setEditingUserId(null);
+    setShowUserForm(false);
+    setUserError("");
+    await loadUsers(instituicao);
+  };
+
+  const resetUser = () => {
+    setUserForm(emptyUserForm);
+    setEditingUserId(null);
+    setShowUserForm(false);
+    setUserError("");
+  };
+
+  const editUser = (usuario: UsuarioInstituicao) => {
+    setUserForm({
+      nome: usuario.nome,
+      usuario: usuario.usuario,
+      senha: "",
+      papel: usuario.papel,
+      gerencia_instituicoes: usuario.gerencia_instituicoes,
+      ativo: usuario.ativo,
+    });
+    setEditingUserId(usuario.id);
+    setShowUserForm(true);
+    setUserError("");
+  };
+
+  const saveUser = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!selectedInstitution) return;
+    setSavingUser(true);
+    setUserError("");
+    try {
+      await apiFetch(
+        editingUserId
+          ? `/api/instituicoes/${selectedInstitution.id}/usuarios/${editingUserId}`
+          : `/api/instituicoes/${selectedInstitution.id}/usuarios`,
+        {
+          method: editingUserId ? "PUT" : "POST",
+          body: JSON.stringify(userForm),
+        }
+      );
+      toast.success(editingUserId ? "Usuário atualizado." : "Usuário cadastrado.");
+      resetUser();
+      await loadUsers(selectedInstitution);
+      await load();
+    } catch (err) {
+      setUserError(err instanceof Error ? err.message : "Erro ao salvar usuário.");
+    } finally {
+      setSavingUser(false);
     }
   };
 
@@ -337,8 +442,11 @@ export default function InstituicoesSection() {
                     {instituicao.total_usuarios} usuários · {instituicao.total_salas} salas · {instituicao.total_importacoes} importações
                   </TableCell>
                   <TableCell>
-                    <div className="flex justify-end">
-                      <Button variant="ghost" size="icon" onClick={() => edit(instituicao)} title="Editar">
+                    <div className="flex justify-end gap-1">
+                      <Button variant="ghost" size="sm" onClick={() => openUsers(instituicao)} className="gap-2">
+                        <Users className="h-4 w-4" /> Usuários
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => edit(instituicao)} title="Editar" aria-label="Editar instituição">
                         <Edit className="h-4 w-4" />
                       </Button>
                     </div>
@@ -349,6 +457,140 @@ export default function InstituicoesSection() {
           </Table>
         </div>
       </div>
+
+      {selectedInstitution && (
+        <div className="glass-card rounded-2xl overflow-hidden">
+          <div className="p-5 border-b flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <h3 className="font-heading font-bold">Usuários de {selectedInstitution.nome}</h3>
+              <p className="text-xs text-muted-foreground">{usuarios.length} usuários vinculados</p>
+            </div>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => setShowUserForm(true)} className="gap-2">
+                <Plus className="h-4 w-4" /> Novo usuário
+              </Button>
+              <Button type="button" variant="ghost" size="icon" onClick={() => setSelectedInstitution(null)} title="Fechar" aria-label="Fechar usuários">
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+
+          {showUserForm && (
+            <form onSubmit={saveUser} className="p-5 border-b space-y-4">
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Nome *</label>
+                  <Input value={userForm.nome} onChange={(event) => setUserForm({ ...userForm, nome: event.target.value })} maxLength={120} />
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Usuário *</label>
+                  <Input value={userForm.usuario} onChange={(event) => setUserForm({ ...userForm, usuario: event.target.value })} maxLength={60} />
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Senha {editingUserId ? "" : "*"}</label>
+                  <Input
+                    type="password"
+                    value={userForm.senha}
+                    onChange={(event) => setUserForm({ ...userForm, senha: event.target.value })}
+                    placeholder={editingUserId ? "Deixe em branco para manter" : ""}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Papel *</label>
+                  <select
+                    value={userForm.papel}
+                    onChange={(event) =>
+                      setUserForm({
+                        ...userForm,
+                        papel: event.target.value as UsuarioForm["papel"],
+                        gerencia_instituicoes: event.target.value === "CPD" && userForm.gerencia_instituicoes,
+                      })
+                    }
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="ADMIN">ADMIN</option>
+                    <option value="CPD">CPD</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-4">
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <Checkbox checked={userForm.ativo} onCheckedChange={(checked) => setUserForm({ ...userForm, ativo: checked === true })} />
+                  Usuário ativo
+                </label>
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <Checkbox
+                    checked={userForm.gerencia_instituicoes}
+                    disabled={userForm.papel !== "CPD"}
+                    onCheckedChange={(checked) => setUserForm({ ...userForm, gerencia_instituicoes: checked === true })}
+                  />
+                  Gerencia instituições
+                </label>
+              </div>
+
+              {userError && <p className="text-sm text-destructive">{userError}</p>}
+              <div className="flex gap-2">
+                <Button disabled={savingUser} className="gap-2">
+                  <Save className="h-4 w-4" /> {savingUser ? "Salvando..." : "Salvar usuário"}
+                </Button>
+                <Button type="button" variant="ghost" onClick={resetUser}>Cancelar</Button>
+              </div>
+            </form>
+          )}
+
+          {userError && !showUserForm && <p className="px-5 pt-4 text-sm text-destructive">{userError}</p>}
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Nome</TableHead>
+                  <TableHead>Usuário</TableHead>
+                  <TableHead>Papel</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Ações</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {loadingUsers && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">Carregando...</TableCell>
+                  </TableRow>
+                )}
+                {!loadingUsers && !usuarios.length && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">Nenhum usuário cadastrado.</TableCell>
+                  </TableRow>
+                )}
+                {usuarios.map((usuario) => (
+                  <TableRow key={usuario.id}>
+                    <TableCell className="font-medium">{usuario.nome}</TableCell>
+                    <TableCell className="font-mono text-xs">{usuario.usuario}</TableCell>
+                    <TableCell>
+                      <div className="flex gap-1 flex-wrap">
+                        <Badge variant="outline">{usuario.papel}</Badge>
+                        {usuario.gerencia_instituicoes && <Badge>Gestor</Badge>}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge className={usuario.ativo ? "bg-emerald-100 text-emerald-800 border-emerald-200" : "bg-slate-100 text-slate-700 border-slate-200"}>
+                        {usuario.ativo ? "Ativo" : "Inativo"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end">
+                        <Button variant="ghost" size="icon" onClick={() => editUser(usuario)} title="Editar usuário" aria-label="Editar usuário">
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
