@@ -116,12 +116,12 @@ const databaseUnavailableDetails =
   "Banco de dados PostgreSQL não conectado. Verifique as variáveis DB_* ou DATABASE_URL/POSTGRES_URL e inicie o PostgreSQL.";
 const databaseUnavailableMessage = "O sistema está temporariamente indisponível. Tente novamente mais tarde.";
 
-const ensureDefaultPublicContent = async (institutionId) => {
-  const [sectorCount] = await db.query("SELECT COUNT(*) AS total FROM setores WHERE instituicao_id = ?", [
+const ensureDefaultPublicContent = async (institutionId, targetDb = db) => {
+  const [sectorCount] = await targetDb.query("SELECT COUNT(*) AS total FROM setores WHERE instituicao_id = ?", [
     institutionId,
   ]);
   if (Number(sectorCount[0]?.total || 0) === 0) {
-    await db.query(
+    await targetDb.query(
       `INSERT INTO setores
        (instituicao_id, nome, descricao, responsavel, localizacao, contato, horario_atendimento, icone, cor, ativo)
        VALUES
@@ -597,9 +597,11 @@ app.get("/api/instituicoes", requireInstitutionManager, async (_req, res, next) 
 
 app.post("/api/instituicoes", requireInstitutionManager, async (req, res, next) => {
   const institution = normalizeInstitutionPayload(req.body);
+  const conn = await db.getConnection();
   try {
     validateInstitutionPayload(institution);
-    const [result] = await db.query(
+    await conn.beginTransaction();
+    const [result] = await conn.query(
       `INSERT INTO instituicoes
        (slug, nome, nome_admin, nome_sistema, subtitulo_admin, logo_url,
         cor_primaria_hsl, cor_acento_hsl, cor_header_hsl, cor_nav_hsl, cor_nav_ativa_hsl, ativo)
@@ -620,9 +622,14 @@ app.post("/api/instituicoes", requireInstitutionManager, async (req, res, next) 
         institution.ativo,
       ]
     );
+    await ensureDefaultPublicContent(result.insertId, conn);
+    await conn.commit();
     res.status(201).json({ id: result.insertId });
   } catch (error) {
+    await conn.rollback();
     next(error);
+  } finally {
+    conn.release();
   }
 });
 
