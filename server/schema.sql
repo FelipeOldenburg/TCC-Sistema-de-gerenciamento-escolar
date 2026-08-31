@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
   senha_hash  VARCHAR(128) NOT NULL,
   senha_salt  VARCHAR(64) NOT NULL,
   papel       VARCHAR(10) NOT NULL CHECK (papel IN ('ADMIN', 'CPD')),
+  gerencia_instituicoes BOOLEAN NOT NULL DEFAULT FALSE,
   ativo       BOOLEAN NOT NULL DEFAULT TRUE,
   created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -348,6 +349,7 @@ BEGIN
 
   ALTER TABLE alunos ADD COLUMN IF NOT EXISTS instituicao_id INTEGER;
   ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS instituicao_id INTEGER;
+  ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS gerencia_instituicoes BOOLEAN NOT NULL DEFAULT FALSE;
   ALTER TABLE blocos ADD COLUMN IF NOT EXISTS instituicao_id INTEGER;
   ALTER TABLE salas ADD COLUMN IF NOT EXISTS instituicao_id INTEGER;
   ALTER TABLE softwares ADD COLUMN IF NOT EXISTS instituicao_id INTEGER;
@@ -359,6 +361,7 @@ BEGIN
 
   UPDATE alunos SET instituicao_id = cimol_id WHERE instituicao_id IS NULL;
   UPDATE usuarios SET instituicao_id = cimol_id WHERE instituicao_id IS NULL;
+  UPDATE usuarios SET gerencia_instituicoes = TRUE WHERE instituicao_id = cimol_id AND papel = 'CPD';
   UPDATE blocos SET instituicao_id = cimol_id WHERE instituicao_id IS NULL;
   UPDATE salas SET instituicao_id = cimol_id WHERE instituicao_id IS NULL;
   UPDATE softwares SET instituicao_id = cimol_id WHERE instituicao_id IS NULL;

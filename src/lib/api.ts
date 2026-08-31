@@ -7,6 +7,7 @@ export type SessionUser = {
   nome: string;
   usuario: string;
   papel: UserRole;
+  gerencia_instituicoes: boolean;
 };
 
 export class ApiError extends Error {

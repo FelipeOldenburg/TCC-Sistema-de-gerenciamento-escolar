@@ -89,7 +89,7 @@ export const clearSessionCookie = (res) => {
 
 export const authenticateUser = async (db, username, password, institutionId) => {
   const [rows] = await db.query(
-    `SELECT id, instituicao_id, nome, usuario, senha_hash, senha_salt, papel
+    `SELECT id, instituicao_id, nome, usuario, senha_hash, senha_salt, papel, gerencia_instituicoes
        FROM usuarios
       WHERE instituicao_id = ? AND usuario = ? AND ativo = TRUE
       LIMIT 1`,
@@ -100,7 +100,14 @@ export const authenticateUser = async (db, username, password, institutionId) =>
   const user = rows[0];
   if (!(await verifyPassword(String(password || ""), user.senha_salt, user.senha_hash))) return null;
 
-  return { id: user.id, instituicao_id: user.instituicao_id, nome: user.nome, usuario: user.usuario, papel: user.papel };
+  return {
+    id: user.id,
+    instituicao_id: user.instituicao_id,
+    nome: user.nome,
+    usuario: user.usuario,
+    papel: user.papel,
+    gerencia_instituicoes: Boolean(user.gerencia_instituicoes),
+  };
 };
 
 export const createSession = async (db, userId) => {
@@ -125,7 +132,8 @@ const loadSessionUser = async (db, req) => {
   if (!token) return null;
 
   const [rows] = await db.query(
-    `SELECT u.id, u.instituicao_id, i.slug AS instituicao_slug, u.nome, u.usuario, u.papel
+    `SELECT u.id, u.instituicao_id, i.slug AS instituicao_slug, u.nome, u.usuario, u.papel,
+            u.gerencia_instituicoes
        FROM sessoes s
        JOIN usuarios u ON u.id = s.usuario_id
        JOIN instituicoes i ON i.id = u.instituicao_id
@@ -198,6 +206,7 @@ export const ensureBootstrapUsers = async (db, institutionSlug = process.env.DEF
       password: process.env.CPD_PASSWORD || (!isProduction ? "cpd123" : ""),
       passwordEnv: "CPD_PASSWORD",
       papel: "CPD",
+      gerenciaInstituicoes: process.env.CPD_MANAGES_INSTITUTIONS == null ? true : asBoolean(process.env.CPD_MANAGES_INSTITUTIONS),
     },
   ];
 
@@ -211,9 +220,11 @@ export const ensureBootstrapUsers = async (db, institutionSlug = process.env.DEF
       if (process.env[item.passwordEnv]) {
         const { hash, salt } = await createPassword(item.password);
         await db.query(
-          "UPDATE usuarios SET nome = ?, senha_hash = ?, senha_salt = ?, papel = ?, ativo = TRUE WHERE id = ?",
-          [item.nome, hash, salt, item.papel, existing[0].id]
+          "UPDATE usuarios SET nome = ?, senha_hash = ?, senha_salt = ?, papel = ?, gerencia_instituicoes = ?, ativo = TRUE WHERE id = ?",
+          [item.nome, hash, salt, item.papel, Boolean(item.gerenciaInstituicoes), existing[0].id]
         );
+      } else if (item.gerenciaInstituicoes) {
+        await db.query("UPDATE usuarios SET gerencia_instituicoes = TRUE WHERE id = ?", [existing[0].id]);
       }
       continue;
     }
@@ -221,9 +232,9 @@ export const ensureBootstrapUsers = async (db, institutionSlug = process.env.DEF
 
     const { hash, salt } = await createPassword(item.password);
     await db.query(
-      `INSERT INTO usuarios (instituicao_id, nome, usuario, senha_hash, senha_salt, papel)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [institutionId, item.nome, username, hash, salt, item.papel]
+      `INSERT INTO usuarios (instituicao_id, nome, usuario, senha_hash, senha_salt, papel, gerencia_instituicoes)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [institutionId, item.nome, username, hash, salt, item.papel, Boolean(item.gerenciaInstituicoes)]
     );
 
     if (!process.env[item.passwordEnv]) {

@@ -512,6 +512,156 @@ app.post("/api/auth/logout", async (req, res, next) => {
 
 app.get("/api/auth/me", requireAuth, (req, res) => res.json({ user: req.user }));
 
+const requireInstitutionManager = (req, res, next) => {
+  if (!req.user) return res.status(401).json({ message: "Faça login para continuar." });
+  if (!req.user.gerencia_instituicoes) {
+    return res.status(403).json({ message: "Seu usuário não gerencia instituições." });
+  }
+  next();
+};
+
+const defaultInstitutionColors = {
+  cor_primaria_hsl: "228 65% 48%",
+  cor_acento_hsl: "45 100% 51%",
+  cor_header_hsl: "228 62% 32%",
+  cor_nav_hsl: "228 62% 42%",
+  cor_nav_ativa_hsl: "228 50% 52%",
+};
+
+const hslColorPattern = /^\d{1,3}(?:\.\d+)?\s+\d{1,3}(?:\.\d+)?%\s+\d{1,3}(?:\.\d+)?%$/;
+const normalizeInstitutionSlug = (value) =>
+  String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+
+const normalizeInstitutionPayload = (body = {}) => ({
+  slug: normalizeInstitutionSlug(body.slug),
+  nome: sanitizeFreeText(body.nome, 120),
+  nome_admin: sanitizeFreeText(body.nome_admin, 120),
+  nome_sistema: sanitizeFreeText(body.nome_sistema, 160),
+  subtitulo_admin: sanitizeFreeText(body.subtitulo_admin, 160),
+  logo_url: sanitizeFreeText(body.logo_url, 500) || null,
+  cor_primaria_hsl: sanitizeFreeText(body.cor_primaria_hsl, 40) || defaultInstitutionColors.cor_primaria_hsl,
+  cor_acento_hsl: sanitizeFreeText(body.cor_acento_hsl, 40) || defaultInstitutionColors.cor_acento_hsl,
+  cor_header_hsl: sanitizeFreeText(body.cor_header_hsl, 40) || defaultInstitutionColors.cor_header_hsl,
+  cor_nav_hsl: sanitizeFreeText(body.cor_nav_hsl, 40) || defaultInstitutionColors.cor_nav_hsl,
+  cor_nav_ativa_hsl: sanitizeFreeText(body.cor_nav_ativa_hsl, 40) || defaultInstitutionColors.cor_nav_ativa_hsl,
+  ativo: body.ativo == null ? true : asBoolean(body.ativo),
+});
+
+const validateInstitutionPayload = (institution) => {
+  if (!institution.slug || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(institution.slug)) {
+    throw httpError(400, "Informe um slug válido para o subdomínio.");
+  }
+  if (!institution.nome || !institution.nome_admin || !institution.nome_sistema || !institution.subtitulo_admin) {
+    throw httpError(400, "Preencha nome, nome administrativo, nome do sistema e subtítulo.");
+  }
+  if (institution.logo_url && !/^https?:\/\//i.test(institution.logo_url)) {
+    throw httpError(400, "Informe uma URL de logo iniciando com http:// ou https://.");
+  }
+  for (const field of Object.keys(defaultInstitutionColors)) {
+    if (!hslColorPattern.test(institution[field])) throw httpError(400, "Informe cores HSL válidas.");
+  }
+};
+
+const serializeAdminInstitution = (row) => ({
+  ...row,
+  ativo: Boolean(row.ativo),
+  total_usuarios: Number(row.total_usuarios || 0),
+  total_salas: Number(row.total_salas || 0),
+  total_importacoes: Number(row.total_importacoes || 0),
+});
+
+app.get("/api/instituicoes", requireInstitutionManager, async (_req, res, next) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT i.id, i.slug, i.nome, i.nome_admin, i.nome_sistema, i.subtitulo_admin, i.logo_url,
+              i.cor_primaria_hsl, i.cor_acento_hsl, i.cor_header_hsl, i.cor_nav_hsl, i.cor_nav_ativa_hsl,
+              i.ativo, i.created_at, i.updated_at,
+              (SELECT COUNT(*) FROM usuarios u WHERE u.instituicao_id = i.id)::int AS total_usuarios,
+              (SELECT COUNT(*) FROM salas s WHERE s.instituicao_id = i.id)::int AS total_salas,
+              (SELECT COUNT(*) FROM importacoes_horarios h WHERE h.instituicao_id = i.id)::int AS total_importacoes
+         FROM instituicoes i
+        ORDER BY i.ativo DESC, i.nome`
+    );
+    res.json(rows.map(serializeAdminInstitution));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/instituicoes", requireInstitutionManager, async (req, res, next) => {
+  const institution = normalizeInstitutionPayload(req.body);
+  try {
+    validateInstitutionPayload(institution);
+    const [result] = await db.query(
+      `INSERT INTO instituicoes
+       (slug, nome, nome_admin, nome_sistema, subtitulo_admin, logo_url,
+        cor_primaria_hsl, cor_acento_hsl, cor_header_hsl, cor_nav_hsl, cor_nav_ativa_hsl, ativo)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       RETURNING id`,
+      [
+        institution.slug,
+        institution.nome,
+        institution.nome_admin,
+        institution.nome_sistema,
+        institution.subtitulo_admin,
+        institution.logo_url,
+        institution.cor_primaria_hsl,
+        institution.cor_acento_hsl,
+        institution.cor_header_hsl,
+        institution.cor_nav_hsl,
+        institution.cor_nav_ativa_hsl,
+        institution.ativo,
+      ]
+    );
+    res.status(201).json({ id: result.insertId });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/instituicoes/:id", requireInstitutionManager, async (req, res, next) => {
+  const institution = normalizeInstitutionPayload(req.body);
+  try {
+    validateInstitutionPayload(institution);
+    if (Number(req.params.id) === Number(req.institution.id) && !institution.ativo) {
+      throw httpError(400, "Não desative a instituição usada no login atual.");
+    }
+    const [result] = await db.query(
+      `UPDATE instituicoes
+          SET slug = ?, nome = ?, nome_admin = ?, nome_sistema = ?, subtitulo_admin = ?, logo_url = ?,
+              cor_primaria_hsl = ?, cor_acento_hsl = ?, cor_header_hsl = ?, cor_nav_hsl = ?,
+              cor_nav_ativa_hsl = ?, ativo = ?
+        WHERE id = ?`,
+      [
+        institution.slug,
+        institution.nome,
+        institution.nome_admin,
+        institution.nome_sistema,
+        institution.subtitulo_admin,
+        institution.logo_url,
+        institution.cor_primaria_hsl,
+        institution.cor_acento_hsl,
+        institution.cor_header_hsl,
+        institution.cor_nav_hsl,
+        institution.cor_nav_ativa_hsl,
+        institution.ativo,
+        req.params.id,
+      ]
+    );
+    if (!result.affectedRows) throw httpError(404, "Instituição não encontrada.");
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Mantém compatibilidade temporária com consumidores antigos da API de reorganização.
 const cpdOrLegacyAuth = (req, res, next) => {
   const secretKey = process.env.VITE_API_KEY;
