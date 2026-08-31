@@ -2,6 +2,8 @@ export type UserRole = "ADMIN" | "CPD";
 
 export type SessionUser = {
   id: number;
+  instituicao_id: number;
+  instituicao_slug: string;
   nome: string;
   usuario: string;
   papel: UserRole;

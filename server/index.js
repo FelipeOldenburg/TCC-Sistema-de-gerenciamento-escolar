@@ -78,26 +78,61 @@ const resolveInstitutionSlug = (req) => {
   return host.includes(".") && !isIpAddress && subdomain !== "www" ? subdomain : defaultInstitutionSlug;
 };
 
+const institutionSelect = `
+  id, slug, nome, nome_admin, nome_sistema, subtitulo_admin, logo_url,
+  cor_primaria_hsl, cor_acento_hsl, cor_header_hsl, cor_nav_hsl, cor_nav_ativa_hsl, ativo
+`;
+
+const loadInstitutionBySlug = async (slug) => {
+  const [rows] = await db.query(
+    `SELECT ${institutionSelect}
+       FROM instituicoes
+      WHERE slug = ? AND ativo = TRUE
+      LIMIT 1`,
+    [slug]
+  );
+  return rows[0] || null;
+};
+
+const serializeInstitutionBrand = (row) => ({
+  slug: row.slug,
+  name: row.nome,
+  adminName: row.nome_admin,
+  systemName: row.nome_sistema,
+  adminSubtitle: row.subtitulo_admin,
+  logoUrl: row.logo_url,
+  colors: {
+    primary: row.cor_primaria_hsl,
+    accent: row.cor_acento_hsl,
+    header: row.cor_header_hsl,
+    nav: row.cor_nav_hsl,
+    navActive: row.cor_nav_ativa_hsl,
+  },
+});
+
 const db = createDbPool();
 let databaseReady = false;
 const databaseUnavailableDetails =
   "Banco de dados PostgreSQL não conectado. Verifique as variáveis DB_* ou DATABASE_URL/POSTGRES_URL e inicie o PostgreSQL.";
 const databaseUnavailableMessage = "O sistema está temporariamente indisponível. Tente novamente mais tarde.";
 
-const ensureDefaultPublicContent = async () => {
-  const [sectorCount] = await db.query("SELECT COUNT(*) AS total FROM setores");
+const ensureDefaultPublicContent = async (institutionId) => {
+  const [sectorCount] = await db.query("SELECT COUNT(*) AS total FROM setores WHERE instituicao_id = ?", [
+    institutionId,
+  ]);
   if (Number(sectorCount[0]?.total || 0) === 0) {
     await db.query(
       `INSERT INTO setores
-       (nome, descricao, responsavel, localizacao, contato, horario_atendimento, icone, cor, ativo)
+       (instituicao_id, nome, descricao, responsavel, localizacao, contato, horario_atendimento, icone, cor, ativo)
        VALUES
-       ('Direção', 'Gestão e administração escolar', NULL, 'Prédio administrativo', NULL, NULL, 'building', 'blue', TRUE),
-       ('Coordenação Pedagógica', 'Acompanhamento dos cursos e turmas', NULL, 'Prédio administrativo', NULL, NULL, 'graduation', 'violet', TRUE),
-       ('Biblioteca', 'Acervo, leitura e sala de estudo', NULL, 'Bloco principal', NULL, NULL, 'book', 'amber', TRUE),
-       ('Laboratórios', 'Ambientes técnicos e científicos', NULL, 'Blocos técnicos', NULL, NULL, 'flask', 'emerald', TRUE),
-       ('Oficinas', 'Práticas de mecânica e marcenaria', NULL, 'Área técnica', NULL, NULL, 'wrench', 'slate', TRUE),
-       ('Cantina', 'Alimentação e convivência', NULL, 'Pátio central', NULL, NULL, 'coffee', 'orange', TRUE),
-       ('Portaria', 'Entrada, orientação e segurança', NULL, 'Acesso principal', NULL, NULL, 'shield', 'indigo', TRUE)`
+       (?, 'Direção', 'Gestão e administração escolar', NULL, 'Prédio administrativo', NULL, NULL, 'building', 'blue', TRUE),
+       (?, 'Coordenação Pedagógica', 'Acompanhamento dos cursos e turmas', NULL, 'Prédio administrativo', NULL, NULL, 'graduation', 'violet', TRUE),
+       (?, 'Biblioteca', 'Acervo, leitura e sala de estudo', NULL, 'Bloco principal', NULL, NULL, 'book', 'amber', TRUE),
+       (?, 'Laboratórios', 'Ambientes técnicos e científicos', NULL, 'Blocos técnicos', NULL, NULL, 'flask', 'emerald', TRUE),
+       (?, 'Oficinas', 'Práticas de mecânica e marcenaria', NULL, 'Área técnica', NULL, NULL, 'wrench', 'slate', TRUE),
+       (?, 'Cantina', 'Alimentação e convivência', NULL, 'Pátio central', NULL, NULL, 'coffee', 'orange', TRUE),
+       (?, 'Portaria', 'Entrada, orientação e segurança', NULL, 'Acesso principal', NULL, NULL, 'shield', 'indigo', TRUE)`,
+      Array(7).fill(institutionId)
     );
   }
 };
@@ -167,23 +202,31 @@ const referenceRooms = [
   ["Bloco E", "E102", "Lab. meio amb.", 20],
 ];
 
-const ensureReferenceRooms = async () => {
+const ensureReferenceRooms = async (institutionId) => {
   for (const blockName of ["Bloco A", "Bloco B", "Bloco C", "Bloco D", "Bloco E"]) {
     await db.query(
-      `INSERT INTO blocos (nome, descricao)
-       VALUES (?, 'Cadastro base do quadro fotografado de salas e laboratorios.')
-       ON CONFLICT (nome) DO NOTHING`,
-      [blockName]
+      `INSERT INTO blocos (instituicao_id, nome, descricao)
+       VALUES (?, ?, 'Cadastro base do quadro fotografado de salas e laboratorios.')
+       ON CONFLICT (instituicao_id, nome) DO NOTHING`,
+      [institutionId, blockName]
     );
   }
 
   for (const [blockName, name, type, capacity] of referenceRooms) {
-    const [blocks] = await db.query("SELECT id FROM blocos WHERE nome = ? LIMIT 1", [blockName]);
+    const [blocks] = await db.query("SELECT id FROM blocos WHERE instituicao_id = ? AND nome = ? LIMIT 1", [
+      institutionId,
+      blockName,
+    ]);
     const blockId = blocks[0]?.id;
     if (!blockId) continue;
     const [existingRooms] = await db.query(
-      "SELECT id FROM salas WHERE bloco_id = ? AND REPLACE(UPPER(nome), ' ', '') = REPLACE(UPPER(?), ' ', '') LIMIT 1",
-      [blockId, name]
+      `SELECT id
+         FROM salas
+        WHERE instituicao_id = ?
+          AND bloco_id = ?
+          AND REPLACE(UPPER(nome), ' ', '') = REPLACE(UPPER(?), ' ', '')
+        LIMIT 1`,
+      [institutionId, blockId, name]
     );
     if (existingRooms.length) continue;
     const notes = [
@@ -194,19 +237,21 @@ const ensureReferenceRooms = async () => {
       .join(" ");
     await db.query(
       `INSERT INTO salas
-       (bloco_id, nome, andar, capacidade, tipo, observacoes)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT (bloco_id, nome) DO NOTHING`,
-      [blockId, name, floorFromRoom(name), capacity, type, notes]
+       (instituicao_id, bloco_id, nome, andar, capacidade, tipo, observacoes)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (instituicao_id, bloco_id, nome) DO NOTHING`,
+      [institutionId, blockId, name, floorFromRoom(name), capacity, type, notes]
     );
   }
 };
 
 try {
   await initializeSchema(path.join(__dirname, "schema.sql"));
-  await ensureBootstrapUsers(db);
-  await ensureDefaultPublicContent();
-  await ensureReferenceRooms();
+  const defaultInstitution = await loadInstitutionBySlug(defaultInstitutionSlug);
+  if (!defaultInstitution) throw new Error(`Instituicao padrao ${defaultInstitutionSlug} nao encontrada.`);
+  await ensureBootstrapUsers(db, defaultInstitution.slug);
+  await ensureDefaultPublicContent(defaultInstitution.id);
+  await ensureReferenceRooms(defaultInstitution.id);
   databaseReady = true;
 } catch (error) {
   console.error(databaseUnavailableDetails, error);
@@ -238,6 +283,20 @@ app.use("/api", (_req, res, next) => {
   return res.status(503).json({ message: databaseUnavailableMessage });
 });
 app.use("/api", optionalAuth);
+app.use("/api", async (req, res, next) => {
+  if (req.path === "/health") return next();
+  try {
+    const institution = await loadInstitutionBySlug(resolveInstitutionSlug(req));
+    if (!institution) return res.status(404).json({ message: "Instituição não encontrada." });
+    req.institution = institution;
+    if (req.user && Number(req.user.instituicao_id) !== Number(institution.id)) {
+      req.user = null;
+    }
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
 app.use("/api-CIMOL/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
 if (serveStaticFrontend) {
@@ -335,32 +394,8 @@ const cacheableJson = (req, res, payload, { maxAge = 60, staleWhileRevalidate = 
 
 app.get("/api/instituicao", async (req, res, next) => {
   try {
-    const [rows] = await db.query(
-      `SELECT slug, nome, nome_admin, nome_sistema, subtitulo_admin, logo_url,
-              cor_primaria_hsl, cor_acento_hsl, cor_header_hsl, cor_nav_hsl, cor_nav_ativa_hsl
-         FROM instituicoes
-        WHERE slug = ? AND ativo = TRUE
-        LIMIT 1`,
-      [resolveInstitutionSlug(req)]
-    );
-    if (!rows.length) throw httpError(404, "Instituição não encontrada.");
-    const row = rows[0];
     res.set("Cache-Control", "no-store");
-    res.json({
-      slug: row.slug,
-      name: row.nome,
-      adminName: row.nome_admin,
-      systemName: row.nome_sistema,
-      adminSubtitle: row.subtitulo_admin,
-      logoUrl: row.logo_url,
-      colors: {
-        primary: row.cor_primaria_hsl,
-        accent: row.cor_acento_hsl,
-        header: row.cor_header_hsl,
-        nav: row.cor_nav_hsl,
-        navActive: row.cor_nav_ativa_hsl,
-      },
-    });
+    res.json(serializeInstitutionBrand(req.institution));
   } catch (error) {
     next(error);
   }
@@ -455,7 +490,7 @@ const uraniaUpload = multer({
 // ---------------------------------------------------------------------------
 app.post("/api/auth/login", authRateLimit, async (req, res, next) => {
   try {
-    const user = await authenticateUser(db, req.body?.usuario, req.body?.senha);
+    const user = await authenticateUser(db, req.body?.usuario, req.body?.senha, req.institution.id);
     if (!user) return res.status(401).json({ message: "Usuário ou senha inválidos." });
     const token = await createSession(db, user.id);
     setSessionCookie(res, token);
@@ -486,19 +521,20 @@ const cpdOrLegacyAuth = (req, res, next) => {
   return res.status(401).json({ message: "Acesso não autorizado." });
 };
 
-const updatePublishedScheduleRoom = async (conn, { scheduleId, roomId, userId, studentCount, reason }) => {
+const updatePublishedScheduleRoom = async (conn, { institutionId, scheduleId, roomId, userId, studentCount, reason }) => {
   const [schedules] = await conn.query(
     `SELECT h.id, h.importacao_id, h.turma, h.dia, h.periodo, h.hora_inicio, h.sala_id,
             h.disciplina, h.professor, h.ambiente, s.nome AS sala_nome
        FROM horarios_importados h
        JOIN importacoes_horarios i ON i.id = h.importacao_id
-       LEFT JOIN salas s ON s.id = h.sala_id
+       LEFT JOIN salas s ON s.id = h.sala_id AND s.instituicao_id = i.instituicao_id
       WHERE h.id = ?
+        AND i.instituicao_id = ?
         AND h.categoria = 'TURMA'
         AND i.status = 'APROVADA'
         AND i.ativa = TRUE
       FOR UPDATE`,
-    [scheduleId]
+    [scheduleId, institutionId]
   );
   if (!schedules.length) throw httpError(404, "Horário publicado não encontrado.");
   const schedule = schedules[0];
@@ -506,7 +542,10 @@ const updatePublishedScheduleRoom = async (conn, { scheduleId, roomId, userId, s
   let roomName = null;
 
   if (roomId !== null) {
-    const [rooms] = await conn.query("SELECT id, nome, capacidade, status FROM salas WHERE id = ? LIMIT 1", [roomId]);
+    const [rooms] = await conn.query(
+      "SELECT id, nome, capacidade, status FROM salas WHERE id = ? AND instituicao_id = ? LIMIT 1",
+      [roomId, institutionId]
+    );
     if (!rooms.length) throw httpError(400, "Sala não encontrada.");
     if (rooms[0].status !== "ATIVA") throw httpError(409, `A sala ${rooms[0].nome} não está ativa.`);
     if (studentCount !== null && rooms[0].capacidade !== null && studentCount > Number(rooms[0].capacidade)) {
@@ -599,20 +638,21 @@ const addReorganizationRooms = async (conn, requestId, rooms) => {
   }
 };
 
-const applyGroundFloorReorganization = async (conn, { turma, userId, studentCount, reason }) => {
+const applyGroundFloorReorganization = async (conn, { institutionId, turma, userId, studentCount, reason }) => {
   const [schedules] = await conn.query(
     `SELECT h.id, h.turma, h.dia, h.periodo, TO_CHAR(h.hora_inicio, 'HH24:MI') AS hora_inicio,
             h.disciplina, h.professor, h.sala_id, h.ambiente,
             s.nome AS sala_nome, s.andar AS sala_andar
        FROM horarios_importados h
        JOIN importacoes_horarios i ON i.id = h.importacao_id
-       LEFT JOIN salas s ON s.id = h.sala_id
+       LEFT JOIN salas s ON s.id = h.sala_id AND s.instituicao_id = i.instituicao_id
       WHERE i.status = 'APROVADA'
         AND i.ativa = TRUE
+        AND i.instituicao_id = ?
         AND h.categoria = 'TURMA'
         AND h.turma = ?
       ORDER BY ${dayOrderSql}, h.periodo`,
-    [turma]
+    [institutionId, turma]
   );
   const upperSchedules = schedules.filter((schedule) =>
     isUpperFloorRoom({ nome: schedule.sala_nome || schedule.ambiente, andar: schedule.sala_andar })
@@ -621,10 +661,12 @@ const applyGroundFloorReorganization = async (conn, { turma, userId, studentCoun
     `SELECT s.id, s.nome, s.andar, s.capacidade, s.acessivel, s.tipo, b.nome AS bloco_nome
        FROM salas s
        JOIN blocos b ON b.id = s.bloco_id
-      WHERE s.status = 'ATIVA'
+      WHERE s.instituicao_id = ?
+        AND s.status = 'ATIVA'
       ORDER BY s.acessivel DESC,
                CASE WHEN LOWER(s.tipo) LIKE '%sala%' THEN 0 ELSE 1 END,
-               b.nome, s.nome`
+               b.nome, s.nome`,
+    [institutionId]
   );
   const candidates = rooms.filter(isFirstFloorRoom);
   if (!upperSchedules.length) {
@@ -640,6 +682,7 @@ const applyGroundFloorReorganization = async (conn, { turma, userId, studentCoun
       if (Number(room.id) === Number(schedule.sala_id || 0)) continue;
       try {
         const result = await updatePublishedScheduleRoom(conn, {
+          institutionId,
           scheduleId: schedule.id,
           roomId: room.id,
           userId,
@@ -686,11 +729,12 @@ app.get("/api/health", async (_req, res, next) => {
 // ---------------------------------------------------------------------------
 app.get("/api/reorganizacao", cpdOrLegacyAuth, async (req, res, next) => {
   try {
+    const institutionId = req.institution.id;
     const paginated = req.query.page || req.query.page_size;
     const page = positiveInt(req.query.page, 1, { max: 100000 });
     const pageSize = positiveInt(req.query.page_size, 100, { min: 10, max: 500 });
     const limitClause = paginated ? "LIMIT ? OFFSET ?" : "";
-    const params = paginated ? [pageSize, (page - 1) * pageSize] : [];
+    const params = paginated ? [institutionId, pageSize, (page - 1) * pageSize] : [institutionId];
     const [rows] = await db.query(`
       SELECT r.id, a.nome AS aluno, a.ano, a.turma, a.curso, r.problema,
              r.arquivo_nome, TO_CHAR(r.data, 'YYYY-MM-DD') AS data,
@@ -698,13 +742,17 @@ app.get("/api/reorganizacao", cpdOrLegacyAuth, async (req, res, next) => {
         FROM reorganizacoes r
         JOIN alunos a ON r.aluno_id = a.id
         LEFT JOIN reorganizacao_salas_relacionadas sr ON r.id = sr.reorganizacao_id
+       WHERE a.instituicao_id = ?
        GROUP BY r.id, a.id
        ORDER BY r.id DESC
        ${limitClause}
     `, params);
     if (!paginated) return res.json(rows);
 
-    const [countRows] = await db.query("SELECT COUNT(*) AS total FROM reorganizacoes");
+    const [countRows] = await db.query(
+      "SELECT COUNT(*) AS total FROM reorganizacoes r JOIN alunos a ON a.id = r.aluno_id WHERE a.instituicao_id = ?",
+      [institutionId]
+    );
     res.json({
       items: rows,
       paginacao: { pagina: page, por_pagina: pageSize, total: Number(countRows[0].total) },
@@ -739,16 +787,17 @@ app.post(
 
     const conn = await db.getConnection();
     try {
+      const institutionId = req.institution.id;
       await conn.beginTransaction();
       const [existingStudents] = await conn.query(
-        "SELECT id FROM alunos WHERE nome = ? AND ano = ? AND turma = ? AND curso = ?",
-        [aluno, ano, turma, curso]
+        "SELECT id FROM alunos WHERE instituicao_id = ? AND nome = ? AND ano = ? AND turma = ? AND curso = ?",
+        [institutionId, aluno, ano, turma, curso]
       );
       let studentId = existingStudents[0]?.id;
       if (!studentId) {
         const [newStudent] = await conn.query(
-          "INSERT INTO alunos (nome, ano, turma, curso) VALUES (?, ?, ?, ?) RETURNING id",
-          [aluno, ano, turma, curso]
+          "INSERT INTO alunos (instituicao_id, nome, ano, turma, curso) VALUES (?, ?, ?, ?, ?) RETURNING id",
+          [institutionId, aluno, ano, turma, curso]
         );
         studentId = newStudent.insertId;
       }
@@ -765,6 +814,7 @@ app.post(
       let reorganization = null;
       if (shouldReorganizeUpperFloors) {
         reorganization = await applyGroundFloorReorganization(conn, {
+          institutionId,
           turma,
           userId: req.user.id,
           studentCount,
@@ -790,8 +840,11 @@ app.post(
 app.get("/api/reorganizacao/:id/arquivo", cpdOrLegacyAuth, async (req, res, next) => {
   try {
     const [rows] = await db.query(
-      "SELECT arquivo_nome, arquivo_dados FROM reorganizacoes WHERE id = ?",
-      [req.params.id]
+      `SELECT r.arquivo_nome, r.arquivo_dados
+         FROM reorganizacoes r
+         JOIN alunos a ON a.id = r.aluno_id
+        WHERE r.id = ? AND a.instituicao_id = ?`,
+      [req.params.id, req.institution.id]
     );
     if (!rows.length || !rows[0].arquivo_dados) {
       return res.status(404).json({ message: "Arquivo não encontrado." });
@@ -806,7 +859,14 @@ app.get("/api/reorganizacao/:id/arquivo", cpdOrLegacyAuth, async (req, res, next
 
 app.delete("/api/reorganizacao/:id", cpdOrLegacyAuth, async (req, res, next) => {
   try {
-    await db.query("DELETE FROM reorganizacoes WHERE id = ?", [req.params.id]);
+    await db.query(
+      `DELETE FROM reorganizacoes r
+        USING alunos a
+       WHERE a.id = r.aluno_id
+         AND r.id = ?
+         AND a.instituicao_id = ?`,
+      [req.params.id, req.institution.id]
+    );
     res.json({ ok: true });
   } catch (error) {
     next(error);
@@ -822,10 +882,11 @@ app.get("/api/blocos", async (req, res, next) => {
       SELECT b.id, b.nome, b.descricao, b.created_at, b.updated_at,
              COUNT(s.id)::int AS total_salas
         FROM blocos b
-        LEFT JOIN salas s ON s.bloco_id = b.id
+        LEFT JOIN salas s ON s.bloco_id = b.id AND s.instituicao_id = b.instituicao_id
+       WHERE b.instituicao_id = ?
        GROUP BY b.id
        ORDER BY b.nome
-    `);
+    `, [req.institution.id]);
     if (req.user) return res.json(rows);
     return cacheableJson(req, res, rows, { maxAge: 60, staleWhileRevalidate: 300 });
   } catch (error) {
@@ -838,7 +899,10 @@ app.post("/api/blocos", requireRole("CPD"), async (req, res, next) => {
     const nome = String(req.body?.nome || "").trim();
     const descricao = String(req.body?.descricao || "").trim() || null;
     if (!nome) throw httpError(400, "Informe o nome do bloco.");
-    const [result] = await db.query("INSERT INTO blocos (nome, descricao) VALUES (?, ?) RETURNING id", [nome, descricao]);
+    const [result] = await db.query(
+      "INSERT INTO blocos (instituicao_id, nome, descricao) VALUES (?, ?, ?) RETURNING id",
+      [req.institution.id, nome, descricao]
+    );
     res.status(201).json({ id: result.insertId });
   } catch (error) {
     next(error);
@@ -850,10 +914,11 @@ app.put("/api/blocos/:id", requireRole("CPD"), async (req, res, next) => {
     const nome = String(req.body?.nome || "").trim();
     const descricao = String(req.body?.descricao || "").trim() || null;
     if (!nome) throw httpError(400, "Informe o nome do bloco.");
-    const [result] = await db.query("UPDATE blocos SET nome = ?, descricao = ? WHERE id = ?", [
+    const [result] = await db.query("UPDATE blocos SET nome = ?, descricao = ? WHERE id = ? AND instituicao_id = ?", [
       nome,
       descricao,
       req.params.id,
+      req.institution.id,
     ]);
     if (!result.affectedRows) throw httpError(404, "Bloco não encontrado.");
     res.json({ ok: true });
@@ -864,7 +929,10 @@ app.put("/api/blocos/:id", requireRole("CPD"), async (req, res, next) => {
 
 app.delete("/api/blocos/:id", requireRole("CPD"), async (req, res, next) => {
   try {
-    const [result] = await db.query("DELETE FROM blocos WHERE id = ?", [req.params.id]);
+    const [result] = await db.query("DELETE FROM blocos WHERE id = ? AND instituicao_id = ?", [
+      req.params.id,
+      req.institution.id,
+    ]);
     if (!result.affectedRows) throw httpError(404, "Bloco não encontrado.");
     res.json({ ok: true });
   } catch (error) {
@@ -878,14 +946,14 @@ app.delete("/api/blocos/:id", requireRole("CPD"), async (req, res, next) => {
 // Salas
 // ---------------------------------------------------------------------------
 const roomSelect = `
-  SELECT s.id, s.nome, s.bloco_id, b.nome AS bloco_nome, s.andar, s.capacidade, s.tipo,
+  SELECT s.id, s.instituicao_id, s.nome, s.bloco_id, b.nome AS bloco_nome, s.andar, s.capacidade, s.tipo,
          s.status, s.acessivel, s.possui_computadores, s.possui_data_show, s.possui_internet,
          s.possui_ar_condicionado, s.observacoes, s.created_at, s.updated_at,
          STRING_AGG(sw.nome, '||' ORDER BY sw.nome) AS softwares
     FROM salas s
-    JOIN blocos b ON b.id = s.bloco_id
+    JOIN blocos b ON b.id = s.bloco_id AND b.instituicao_id = s.instituicao_id
     LEFT JOIN sala_softwares ss ON ss.sala_id = s.id
-    LEFT JOIN softwares sw ON sw.id = ss.software_id
+    LEFT JOIN softwares sw ON sw.id = ss.software_id AND sw.instituicao_id = s.instituicao_id
 `;
 
 const serializeRoom = (row) => ({
@@ -900,8 +968,8 @@ const serializeRoom = (row) => ({
 
 app.get("/api/salas", async (req, res, next) => {
   try {
-    const conditions = [];
-    const params = [];
+    const conditions = ["s.instituicao_id = ?"];
+    const params = [req.institution.id];
     if (req.query.bloco_id) {
       conditions.push("s.bloco_id = ?");
       params.push(req.query.bloco_id);
@@ -934,7 +1002,7 @@ app.get("/api/salas", async (req, res, next) => {
       conditions.push(`EXISTS (
         SELECT 1 FROM sala_softwares filter_ss
         JOIN softwares filter_sw ON filter_sw.id = filter_ss.software_id
-        WHERE filter_ss.sala_id = s.id AND filter_sw.nome ILIKE ?
+        WHERE filter_ss.sala_id = s.id AND filter_sw.instituicao_id = s.instituicao_id AND filter_sw.nome ILIKE ?
       )`);
       params.push(`%${req.query.software}%`);
     }
@@ -976,6 +1044,7 @@ app.get("/api/salas", async (req, res, next) => {
 
 app.get("/api/salas/ocupacoes", async (req, res, next) => {
   try {
+    const institutionId = req.institution.id;
     const publicStatusFilter = req.user ? "" : "AND s.status = 'ATIVA'";
     const [rows] = await db.query(
       `SELECT h.id, COALESCE(h.sala_id, s.id) AS sala_id, s.nome AS sala_nome, b.nome AS bloco_nome,
@@ -987,18 +1056,21 @@ app.get("/api/salas/ocupacoes", async (req, res, next) => {
          LEFT JOIN (
            SELECT MIN(id) AS id, REPLACE(LOWER(TRIM(nome)), ' ', '') AS nome_key
              FROM salas
+            WHERE instituicao_id = ?
             GROUP BY nome_key
            HAVING COUNT(*) = 1
          ) sala_importada ON h.sala_id IS NULL
                           AND h.ambiente IS NOT NULL
                           AND sala_importada.nome_key = REPLACE(LOWER(TRIM(h.ambiente)), ' ', '')
-         JOIN salas s ON s.id = COALESCE(h.sala_id, sala_importada.id)
+         JOIN salas s ON s.id = COALESCE(h.sala_id, sala_importada.id) AND s.instituicao_id = i.instituicao_id
          JOIN blocos b ON b.id = s.bloco_id
         WHERE i.status = 'APROVADA'
           AND i.ativa = TRUE
+          AND i.instituicao_id = ?
           AND h.categoria = 'TURMA'
           ${publicStatusFilter}
-        ORDER BY b.nome, s.nome, ${dayOrderSql}, h.periodo, h.turma`
+        ORDER BY b.nome, s.nome, ${dayOrderSql}, h.periodo, h.turma`,
+      [institutionId, institutionId]
     );
     const payload = { horarios: rows };
     if (req.user) return res.json(payload);
@@ -1011,7 +1083,10 @@ app.get("/api/salas/ocupacoes", async (req, res, next) => {
 app.get("/api/salas/:id", async (req, res, next) => {
   try {
     const publicStatusFilter = req.user ? "" : "AND s.status = 'ATIVA'";
-    const [rows] = await db.query(`${roomSelect} WHERE s.id = ? ${publicStatusFilter} GROUP BY s.id, b.nome`, [req.params.id]);
+    const [rows] = await db.query(
+      `${roomSelect} WHERE s.instituicao_id = ? AND s.id = ? ${publicStatusFilter} GROUP BY s.id, b.nome`,
+      [req.institution.id, req.params.id]
+    );
     if (!rows.length) throw httpError(404, "Sala não encontrada.");
     res.json(serializeRoom(rows[0]));
   } catch (error) {
@@ -1024,6 +1099,7 @@ app.get("/api/salas/:id/ocupacao", async (req, res, next) => {
   if (!Number.isInteger(roomId) || roomId < 1) return next(httpError(400, "Sala inválida."));
 
   try {
+    const institutionId = req.institution.id;
     const publicStatusFilter = req.user ? "" : "AND s.status = 'ATIVA'";
     const [rows] = await db.query(
       `SELECT h.id, h.turma, h.curso, h.ano, h.dia, h.periodo,
@@ -1034,11 +1110,13 @@ app.get("/api/salas/:id/ocupacao", async (req, res, next) => {
          JOIN salas s ON s.id = h.sala_id
         WHERE i.status = 'APROVADA'
           AND i.ativa = TRUE
+          AND i.instituicao_id = ?
           AND h.categoria = 'TURMA'
           AND h.sala_id = ?
+          AND s.instituicao_id = ?
           ${publicStatusFilter}
         ORDER BY ${dayOrderSql}, h.periodo, h.turma`,
-      [roomId]
+      [institutionId, roomId, institutionId]
     );
     const payload = { horarios: rows };
     if (req.user) return res.json(payload);
@@ -1061,11 +1139,13 @@ app.get("/api/sala-alteracoes", requireRole("CPD"), async (req, res, next) => {
          FROM sala_alteracoes a
          JOIN usuarios u ON u.id = a.usuario_id
          JOIN horarios_importados h ON h.id = a.horario_id
-         LEFT JOIN salas anterior ON anterior.id = a.sala_anterior_id
-         LEFT JOIN salas nova ON nova.id = a.sala_nova_id
+         JOIN importacoes_horarios i ON i.id = h.importacao_id
+         LEFT JOIN salas anterior ON anterior.id = a.sala_anterior_id AND anterior.instituicao_id = i.instituicao_id
+         LEFT JOIN salas nova ON nova.id = a.sala_nova_id AND nova.instituicao_id = i.instituicao_id
+        WHERE i.instituicao_id = ?
         ORDER BY a.created_at DESC, a.id DESC
         LIMIT ?`,
-      [limit]
+      [req.institution.id, limit]
     );
     res.json(rows);
   } catch (error) {
@@ -1107,14 +1187,22 @@ const validateRoom = (room) => {
   }
 };
 
-const saveRoomSoftwares = async (conn, roomId, softwares) => {
+const ensureBlockBelongsToInstitution = async (conn, blockId, institutionId) => {
+  const [rows] = await conn.query("SELECT id FROM blocos WHERE id = ? AND instituicao_id = ? LIMIT 1", [
+    blockId,
+    institutionId,
+  ]);
+  if (!rows.length) throw httpError(400, "Bloco não encontrado.");
+};
+
+const saveRoomSoftwares = async (conn, roomId, softwares, institutionId) => {
   await conn.query("DELETE FROM sala_softwares WHERE sala_id = ?", [roomId]);
   for (const software of softwares) {
     const [result] = await conn.query(
-      `INSERT INTO softwares (nome) VALUES (?)
-       ON CONFLICT (nome) DO UPDATE SET nome = EXCLUDED.nome
+      `INSERT INTO softwares (instituicao_id, nome) VALUES (?, ?)
+       ON CONFLICT (instituicao_id, nome) DO UPDATE SET nome = EXCLUDED.nome
        RETURNING id`,
-      [software]
+      [institutionId, software]
     );
     await conn.query("INSERT INTO sala_softwares (sala_id, software_id) VALUES (?, ?) ON CONFLICT DO NOTHING", [
       roomId,
@@ -1123,7 +1211,7 @@ const saveRoomSoftwares = async (conn, roomId, softwares) => {
   }
   await conn.query(`DELETE FROM softwares WHERE NOT EXISTS (
     SELECT 1 FROM sala_softwares WHERE sala_softwares.software_id = softwares.id
-  )`);
+  ) AND instituicao_id = ?`, [institutionId]);
 };
 
 app.post("/api/salas", requireRole("CPD"), async (req, res, next) => {
@@ -1135,14 +1223,17 @@ app.post("/api/salas", requireRole("CPD"), async (req, res, next) => {
   }
   const conn = await db.getConnection();
   try {
+    const institutionId = req.institution.id;
     await conn.beginTransaction();
+    await ensureBlockBelongsToInstitution(conn, room.bloco_id, institutionId);
     const [result] = await conn.query(
       `INSERT INTO salas
-       (bloco_id, nome, andar, capacidade, tipo, status, acessivel, possui_computadores, possui_data_show,
+       (instituicao_id, bloco_id, nome, andar, capacidade, tipo, status, acessivel, possui_computadores, possui_data_show,
         possui_internet, possui_ar_condicionado, observacoes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING id`,
       [
+        institutionId,
         room.bloco_id,
         room.nome,
         room.andar,
@@ -1157,7 +1248,7 @@ app.post("/api/salas", requireRole("CPD"), async (req, res, next) => {
         room.observacoes,
       ]
     );
-    await saveRoomSoftwares(conn, result.insertId, room.softwares);
+    await saveRoomSoftwares(conn, result.insertId, room.softwares, institutionId);
     await conn.commit();
     res.status(201).json({ id: result.insertId });
   } catch (error) {
@@ -1177,11 +1268,13 @@ app.put("/api/salas/:id", requireRole("CPD"), async (req, res, next) => {
   }
   const conn = await db.getConnection();
   try {
+    const institutionId = req.institution.id;
     await conn.beginTransaction();
+    await ensureBlockBelongsToInstitution(conn, room.bloco_id, institutionId);
     const [result] = await conn.query(
       `UPDATE salas SET bloco_id = ?, nome = ?, andar = ?, capacidade = ?, tipo = ?, status = ?, acessivel = ?,
        possui_computadores = ?, possui_data_show = ?, possui_internet = ?,
-       possui_ar_condicionado = ?, observacoes = ? WHERE id = ?`,
+       possui_ar_condicionado = ?, observacoes = ? WHERE id = ? AND instituicao_id = ?`,
       [
         room.bloco_id,
         room.nome,
@@ -1196,10 +1289,11 @@ app.put("/api/salas/:id", requireRole("CPD"), async (req, res, next) => {
         room.possui_ar_condicionado,
         room.observacoes,
         req.params.id,
+        institutionId,
       ]
     );
     if (!result.affectedRows) throw httpError(404, "Sala não encontrada.");
-    await saveRoomSoftwares(conn, req.params.id, room.softwares);
+    await saveRoomSoftwares(conn, req.params.id, room.softwares, institutionId);
     await conn.commit();
     res.json({ ok: true });
   } catch (error) {
@@ -1212,6 +1306,7 @@ app.put("/api/salas/:id", requireRole("CPD"), async (req, res, next) => {
 
 app.delete("/api/salas/:id", requireRole("CPD"), async (req, res, next) => {
   try {
+    const institutionId = req.institution.id;
     if (asBoolean(req.query.definitivo)) {
       const [activeSchedules] = await db.query(
         `SELECT COUNT(*) AS total
@@ -1219,17 +1314,24 @@ app.delete("/api/salas/:id", requireRole("CPD"), async (req, res, next) => {
            JOIN importacoes_horarios i ON i.id = h.importacao_id
           WHERE h.sala_id = ?
             AND i.status = 'APROVADA'
-            AND i.ativa = TRUE`,
-        [req.params.id]
+            AND i.ativa = TRUE
+            AND i.instituicao_id = ?`,
+        [req.params.id, institutionId]
       );
       if (Number(activeSchedules[0]?.total || 0) > 0) {
         throw httpError(409, "Remova a sala dos horários publicados antes de excluir definitivamente.");
       }
-      const [result] = await db.query("DELETE FROM salas WHERE id = ?", [req.params.id]);
+      const [result] = await db.query("DELETE FROM salas WHERE id = ? AND instituicao_id = ?", [
+        req.params.id,
+        institutionId,
+      ]);
       if (!result.affectedRows) throw httpError(404, "Sala não encontrada.");
       return res.json({ ok: true, deleted: true });
     }
-    const [result] = await db.query("UPDATE salas SET status = 'INATIVA' WHERE id = ?", [req.params.id]);
+    const [result] = await db.query("UPDATE salas SET status = 'INATIVA' WHERE id = ? AND instituicao_id = ?", [
+      req.params.id,
+      institutionId,
+    ]);
     if (!result.affectedRows) throw httpError(404, "Sala não encontrada.");
     res.json({ ok: true });
   } catch (error) {
@@ -1269,13 +1371,16 @@ const validateEvent = (event) => {
 app.get("/api/eventos", async (req, res, next) => {
   try {
     const includeInactive = req.user?.papel === "CPD" && asBoolean(req.query.incluir_inativos);
-    const where = includeInactive ? "" : "WHERE ativo = TRUE AND data_evento >= CURRENT_DATE";
+    const where = includeInactive
+      ? "WHERE instituicao_id = ?"
+      : "WHERE instituicao_id = ? AND ativo = TRUE AND data_evento >= CURRENT_DATE";
     const [rows] = await db.query(
       `SELECT id, titulo, descricao, data_evento, TO_CHAR(hora_evento, 'HH24:MI') AS hora_evento,
               local, imagem_url, ativo, created_at, updated_at
          FROM eventos
          ${where}
-        ORDER BY data_evento ASC, hora_evento IS NULL, hora_evento ASC, id ASC`
+        ORDER BY data_evento ASC, hora_evento IS NULL, hora_evento ASC, id ASC`,
+      [req.institution.id]
     );
     const payload = rows.map(serializeEvent);
     if (req.user) return res.json(payload);
@@ -1290,10 +1395,10 @@ app.post("/api/eventos", requireRole("CPD"), async (req, res, next) => {
   try {
     validateEvent(event);
     const [result] = await db.query(
-      `INSERT INTO eventos (titulo, descricao, data_evento, hora_evento, local, imagem_url, ativo)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO eventos (instituicao_id, titulo, descricao, data_evento, hora_evento, local, imagem_url, ativo)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING id`,
-      [event.titulo, event.descricao, event.data_evento, event.hora_evento, event.local, event.imagem_url, event.ativo]
+      [req.institution.id, event.titulo, event.descricao, event.data_evento, event.hora_evento, event.local, event.imagem_url, event.ativo]
     );
     res.status(201).json({ id: result.insertId });
   } catch (error) {
@@ -1308,7 +1413,7 @@ app.put("/api/eventos/:id", requireRole("CPD"), async (req, res, next) => {
     const [result] = await db.query(
       `UPDATE eventos
           SET titulo = ?, descricao = ?, data_evento = ?, hora_evento = ?, local = ?, imagem_url = ?, ativo = ?
-        WHERE id = ?`,
+        WHERE id = ? AND instituicao_id = ?`,
       [
         event.titulo,
         event.descricao,
@@ -1318,6 +1423,7 @@ app.put("/api/eventos/:id", requireRole("CPD"), async (req, res, next) => {
         event.imagem_url,
         event.ativo,
         req.params.id,
+        req.institution.id,
       ]
     );
     if (!result.affectedRows) throw httpError(404, "Evento não encontrado.");
@@ -1329,7 +1435,10 @@ app.put("/api/eventos/:id", requireRole("CPD"), async (req, res, next) => {
 
 app.delete("/api/eventos/:id", requireRole("CPD"), async (req, res, next) => {
   try {
-    const [result] = await db.query("DELETE FROM eventos WHERE id = ?", [req.params.id]);
+    const [result] = await db.query("DELETE FROM eventos WHERE id = ? AND instituicao_id = ?", [
+      req.params.id,
+      req.institution.id,
+    ]);
     if (!result.affectedRows) throw httpError(404, "Evento não encontrado.");
     res.json({ ok: true });
   } catch (error) {
@@ -1364,13 +1473,14 @@ const validateSector = (sector) => {
 app.get("/api/setores", async (req, res, next) => {
   try {
     const includeInactive = req.user?.papel === "CPD" && asBoolean(req.query.incluir_inativos);
-    const where = includeInactive ? "" : "WHERE ativo = TRUE";
+    const where = includeInactive ? "WHERE instituicao_id = ?" : "WHERE instituicao_id = ? AND ativo = TRUE";
     const [rows] = await db.query(
       `SELECT id, nome, descricao, responsavel, localizacao, contato, horario_atendimento,
               icone, cor, ativo, created_at, updated_at
          FROM setores
          ${where}
-        ORDER BY nome`
+        ORDER BY nome`,
+      [req.institution.id]
     );
     const payload = rows.map(serializeSector);
     if (req.user) return res.json(payload);
@@ -1386,10 +1496,11 @@ app.post("/api/setores", requireRole("CPD"), async (req, res, next) => {
     validateSector(sector);
     const [result] = await db.query(
       `INSERT INTO setores
-       (nome, descricao, responsavel, localizacao, contato, horario_atendimento, icone, cor, ativo)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (instituicao_id, nome, descricao, responsavel, localizacao, contato, horario_atendimento, icone, cor, ativo)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING id`,
       [
+        req.institution.id,
         sector.nome,
         sector.descricao,
         sector.responsavel,
@@ -1415,7 +1526,7 @@ app.put("/api/setores/:id", requireRole("CPD"), async (req, res, next) => {
       `UPDATE setores
           SET nome = ?, descricao = ?, responsavel = ?, localizacao = ?, contato = ?,
               horario_atendimento = ?, icone = ?, cor = ?, ativo = ?
-        WHERE id = ?`,
+        WHERE id = ? AND instituicao_id = ?`,
       [
         sector.nome,
         sector.descricao,
@@ -1427,6 +1538,7 @@ app.put("/api/setores/:id", requireRole("CPD"), async (req, res, next) => {
         sector.cor,
         sector.ativo,
         req.params.id,
+        req.institution.id,
       ]
     );
     if (!result.affectedRows) throw httpError(404, "Setor não encontrado.");
@@ -1438,7 +1550,10 @@ app.put("/api/setores/:id", requireRole("CPD"), async (req, res, next) => {
 
 app.delete("/api/setores/:id", requireRole("CPD"), async (req, res, next) => {
   try {
-    const [result] = await db.query("DELETE FROM setores WHERE id = ?", [req.params.id]);
+    const [result] = await db.query("DELETE FROM setores WHERE id = ? AND instituicao_id = ?", [
+      req.params.id,
+      req.institution.id,
+    ]);
     if (!result.affectedRows) throw httpError(404, "Setor não encontrado.");
     res.json({ ok: true });
   } catch (error) {
@@ -1462,7 +1577,7 @@ const normalizeOuvidoriaPayload = (body = {}) => ({
   mensagem: sanitizeFreeText(body.mensagem, 700),
 });
 
-const validateOuvidoria = async (manifestation) => {
+const validateOuvidoria = async (manifestation, institutionId) => {
   if (!allowedOuvidoriaProfiles.has(manifestation.perfil)) throw httpError(400, "Selecione seu perfil.");
   if (!allowedOuvidoriaCategories.has(manifestation.categoria)) throw httpError(400, "Selecione uma categoria válida.");
   if (!manifestation.assunto || manifestation.assunto.length < 6) throw httpError(400, "Informe um assunto com pelo menos 6 caracteres.");
@@ -1480,7 +1595,10 @@ const validateOuvidoria = async (manifestation) => {
     if (!Number.isInteger(manifestation.setor_id) || manifestation.setor_id < 1) {
       throw httpError(400, "Setor inválido.");
     }
-    const [rows] = await db.query("SELECT id FROM setores WHERE id = ? AND ativo = TRUE LIMIT 1", [manifestation.setor_id]);
+    const [rows] = await db.query(
+      "SELECT id FROM setores WHERE id = ? AND instituicao_id = ? AND ativo = TRUE LIMIT 1",
+      [manifestation.setor_id, institutionId]
+    );
     if (!rows.length) throw httpError(400, "Setor não encontrado.");
   }
 };
@@ -1488,13 +1606,15 @@ const validateOuvidoria = async (manifestation) => {
 app.post("/api/ouvidoria", ouvidoriaRateLimit, async (req, res, next) => {
   const manifestation = normalizeOuvidoriaPayload(req.body);
   try {
-    await validateOuvidoria(manifestation);
+    const institutionId = req.institution.id;
+    await validateOuvidoria(manifestation, institutionId);
     const [result] = await db.query(
       `INSERT INTO ouvidoria_manifestacoes
-       (nome, perfil, categoria, setor_id, assunto, mensagem)
-       VALUES (?, ?, ?, ?, ?, ?)
+       (instituicao_id, nome, perfil, categoria, setor_id, assunto, mensagem)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        RETURNING id`,
       [
+        institutionId,
         manifestation.nome,
         manifestation.perfil,
         manifestation.categoria,
@@ -1512,8 +1632,8 @@ app.post("/api/ouvidoria", ouvidoriaRateLimit, async (req, res, next) => {
 app.get("/api/ouvidoria", requireRole("CPD"), async (req, res, next) => {
   try {
     const status = String(req.query.status || "").toUpperCase();
-    const params = [];
-    const conditions = [];
+    const params = [req.institution.id];
+    const conditions = ["o.instituicao_id = ?"];
     if (allowedOuvidoriaStatuses.has(status)) {
       conditions.push("o.status = ?");
       params.push(status);
@@ -1525,7 +1645,7 @@ app.get("/api/ouvidoria", requireRole("CPD"), async (req, res, next) => {
       `SELECT o.id, o.nome, o.perfil, o.categoria, o.setor_id, s.nome AS setor_nome,
               o.assunto, o.mensagem, o.status, o.created_at, o.updated_at
          FROM ouvidoria_manifestacoes o
-         LEFT JOIN setores s ON s.id = o.setor_id
+         LEFT JOIN setores s ON s.id = o.setor_id AND s.instituicao_id = o.instituicao_id
          ${where}
         ORDER BY ${ouvidoriaStatusOrderSql}, o.created_at DESC
         LIMIT ? OFFSET ?`,
@@ -1545,9 +1665,10 @@ app.patch("/api/ouvidoria/:id", requireRole("CPD"), async (req, res, next) => {
   try {
     const status = String(req.body?.status || "").toUpperCase();
     if (!allowedOuvidoriaStatuses.has(status)) throw httpError(400, "Status inválido.");
-    const [result] = await db.query("UPDATE ouvidoria_manifestacoes SET status = ? WHERE id = ?", [
+    const [result] = await db.query("UPDATE ouvidoria_manifestacoes SET status = ? WHERE id = ? AND instituicao_id = ?", [
       status,
       req.params.id,
+      req.institution.id,
     ]);
     if (!result.affectedRows) throw httpError(404, "Manifestação não encontrada.");
     res.json({ ok: true });
@@ -1608,12 +1729,13 @@ const insertScheduleChunks = async (conn, importId, schedules, roomByName) => {
   }
 };
 
-const preserveRoomsFromActiveImport = async (conn, importId, scopeKey) => {
+const preserveRoomsFromActiveImport = async (conn, importId, scopeKey, institutionId) => {
   const [result] = await conn.query(
     `UPDATE horarios_importados AS candidate
         SET sala_id = active.sala_id
        FROM importacoes_horarios AS active_import, horarios_importados AS active
       WHERE active_import.escopo_chave = ?
+        AND active_import.instituicao_id = ?
         AND active_import.status = 'APROVADA'
         AND active_import.ativa = TRUE
         AND active_import.id <> candidate.importacao_id
@@ -1626,7 +1748,7 @@ const preserveRoomsFromActiveImport = async (conn, importId, scopeKey) => {
         AND candidate.importacao_id = ?
         AND candidate.categoria = 'TURMA'
         AND candidate.sala_id IS NULL`,
-    [scopeKey, importId]
+    [scopeKey, institutionId, importId]
   );
   return result.affectedRows || 0;
 };
@@ -1639,17 +1761,19 @@ app.post(
   async (req, res, next) => {
     if (!req.files?.length) return res.status(400).json({ message: "Selecione ao menos um arquivo do URÂNIA." });
     try {
+      const institutionId = req.institution.id;
       const parsed = await parseUraniaFiles(req.files);
       const conn = await db.getConnection();
       try {
         await conn.beginTransaction();
         const [result] = await conn.query(
           `INSERT INTO importacoes_horarios
-           (fonte, titulo, escopo_chave, codigo_escola, codigo_turno, nome_turno, lote_hash,
+           (instituicao_id, fonte, titulo, escopo_chave, codigo_escola, codigo_turno, nome_turno, lote_hash,
             total_arquivos, total_horarios, total_turmas, avisos_json, observacoes_envio, enviado_por)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            RETURNING id`,
           [
+            institutionId,
             parsed.fonte,
             parsed.titulo,
             parsed.escopo_chave,
@@ -1681,7 +1805,7 @@ app.post(
             ]
           );
         }
-        const [rooms] = await conn.query("SELECT id, nome FROM salas");
+        const [rooms] = await conn.query("SELECT id, nome FROM salas WHERE instituicao_id = ?", [institutionId]);
         const roomByName = new Map();
         for (const room of rooms) {
           const key = normalizeLookup(room.nome);
@@ -1703,7 +1827,7 @@ app.post(
           ]);
         }
         await insertScheduleChunks(conn, importId, parsed.horarios, roomByName);
-        await preserveRoomsFromActiveImport(conn, importId, parsed.escopo_chave);
+        await preserveRoomsFromActiveImport(conn, importId, parsed.escopo_chave, institutionId);
         await conn.commit();
         res.status(201).json({
           id: importId,
@@ -1731,9 +1855,13 @@ app.get("/api/importacoes", requireRole("CPD"), async (req, res, next) => {
   try {
     const statuses = ["PENDENTE", "APROVADA", "REJEITADA"];
     const status = String(req.query.status || "").toUpperCase();
-    const params = [];
-    const where = statuses.includes(status) ? "WHERE i.status = ?" : "";
-    if (where) params.push(status);
+    const params = [req.institution.id];
+    const conditions = ["i.instituicao_id = ?"];
+    if (statuses.includes(status)) {
+      conditions.push("i.status = ?");
+      params.push(status);
+    }
+    const where = `WHERE ${conditions.join(" AND ")}`;
     const paginated = req.query.page || req.query.page_size;
     const page = positiveInt(req.query.page, 1, { max: 100000 });
     const pageSize = positiveInt(req.query.page_size, 50, { min: 10, max: 200 });
@@ -1778,17 +1906,18 @@ const scheduleComparisonSelect = `
      AND h.categoria = 'TURMA'
    ORDER BY h.turma, ${dayOrderSql}, h.periodo`;
 
-const loadScheduleComparison = async (conn, importId, scopeKey) => {
+const loadScheduleComparison = async (conn, importId, scopeKey, institutionId) => {
   const [activeImports] = await conn.query(
     `SELECT id, titulo, publicado_em
        FROM importacoes_horarios
       WHERE escopo_chave = ?
+        AND instituicao_id = ?
         AND status = 'APROVADA'
         AND ativa = TRUE
         AND id <> ?
       ORDER BY publicado_em DESC, id DESC
       LIMIT 1`,
-    [scopeKey, importId]
+    [scopeKey, institutionId, importId]
   );
   if (!activeImports.length) return null;
   const [candidateSchedules] = await conn.query(scheduleComparisonSelect, [importId]);
@@ -1796,14 +1925,15 @@ const loadScheduleComparison = async (conn, importId, scopeKey) => {
   return buildScheduleComparison(candidateSchedules, activeSchedules, activeImports[0]);
 };
 
-const loadScheduleNotificationSubscribers = async (conn, classes) => {
+const loadScheduleNotificationSubscribers = async (conn, classes, institutionId) => {
   if (!classes.length) return [];
   const [rows] = await conn.query(
     `SELECT email, turma
        FROM horario_notificacoes
       WHERE ativo = TRUE
+        AND instituicao_id = ?
         AND turma IN (${classes.map(() => "?").join(",")})`,
-    classes
+    [institutionId, ...classes]
   );
   return rows;
 };
@@ -1844,8 +1974,8 @@ app.get("/api/importacoes/:id", requireRole("CPD"), async (req, res, next) => {
          FROM importacoes_horarios i
          JOIN usuarios sender ON sender.id = i.enviado_por
          LEFT JOIN usuarios reviewer ON reviewer.id = i.revisado_por
-        WHERE i.id = ?`,
-      [req.params.id]
+        WHERE i.id = ? AND i.instituicao_id = ?`,
+      [req.params.id, req.institution.id]
     );
     if (!imports.length) throw httpError(404, "Importação não encontrada.");
 
@@ -1885,7 +2015,7 @@ app.get("/api/importacoes/:id", requireRole("CPD"), async (req, res, next) => {
     const item = imports[0];
     let comparison = null;
     if (item.status === "PENDENTE") {
-      comparison = await loadScheduleComparison(db, item.id, item.escopo_chave);
+      comparison = await loadScheduleComparison(db, item.id, item.escopo_chave, req.institution.id);
     }
     res.json({
       ...item,
@@ -1911,16 +2041,18 @@ app.patch("/api/importacoes/horarios/:id/sala", requireRole("CPD"), async (req, 
 
   const conn = await db.getConnection();
   try {
+    const institutionId = req.institution.id;
     await conn.beginTransaction();
     const [schedules] = await conn.query(
       `SELECT h.id, h.importacao_id, h.turma, h.dia, h.periodo, h.disciplina
          FROM horarios_importados h
          JOIN importacoes_horarios i ON i.id = h.importacao_id
         WHERE h.id = ?
+          AND i.instituicao_id = ?
           AND h.categoria = 'TURMA'
           AND i.status = 'PENDENTE'
         FOR UPDATE`,
-      [scheduleId]
+      [scheduleId, institutionId]
     );
     if (!schedules.length) throw httpError(404, "Horário pendente não encontrado.");
 
@@ -1928,11 +2060,11 @@ app.patch("/api/importacoes/horarios/:id/sala", requireRole("CPD"), async (req, 
     if (roomId !== null) {
       const [rooms] = await conn.query(
         `SELECT s.id, s.nome, s.status, b.nome AS bloco_nome
-           FROM salas s
-           JOIN blocos b ON b.id = s.bloco_id
-          WHERE s.id = ?
+          FROM salas s
+          JOIN blocos b ON b.id = s.bloco_id AND b.instituicao_id = s.instituicao_id
+          WHERE s.id = ? AND s.instituicao_id = ?
           LIMIT 1`,
-        [roomId]
+        [roomId, institutionId]
       );
       if (!rooms.length) throw httpError(400, "Sala não encontrada.");
       if (rooms[0].status !== "ATIVA") throw httpError(409, `A sala ${rooms[0].nome} não está ativa.`);
@@ -1978,30 +2110,31 @@ app.post("/api/importacoes/:id/aprovar", requireRole("CPD"), async (req, res, ne
   let comparison = null;
   let notificationSubscribers = [];
   try {
+    const institutionId = req.institution.id;
     await conn.beginTransaction();
     const [rows] = await conn.query(
-      "SELECT id, status, escopo_chave FROM importacoes_horarios WHERE id = ? FOR UPDATE",
-      [req.params.id]
+      "SELECT id, status, escopo_chave FROM importacoes_horarios WHERE id = ? AND instituicao_id = ? FOR UPDATE",
+      [req.params.id, institutionId]
     );
     if (!rows.length) throw httpError(404, "Importação não encontrada.");
     if (rows[0].status !== "PENDENTE") throw httpError(409, "Somente importações pendentes podem ser aprovadas.");
-    await preserveRoomsFromActiveImport(conn, rows[0].id, rows[0].escopo_chave);
-    comparison = await loadScheduleComparison(conn, rows[0].id, rows[0].escopo_chave);
+    await preserveRoomsFromActiveImport(conn, rows[0].id, rows[0].escopo_chave, institutionId);
+    comparison = await loadScheduleComparison(conn, rows[0].id, rows[0].escopo_chave, institutionId);
     if (comparison?.aulas_mudaram) {
-      notificationSubscribers = await loadScheduleNotificationSubscribers(conn, comparison.turmas_afetadas);
+      notificationSubscribers = await loadScheduleNotificationSubscribers(conn, comparison.turmas_afetadas, institutionId);
     }
     await conn.query(
       `UPDATE importacoes_horarios
           SET ativa = FALSE
-        WHERE ativa = TRUE AND status = 'APROVADA' AND escopo_chave = ?`,
-      [rows[0].escopo_chave]
+        WHERE instituicao_id = ? AND ativa = TRUE AND status = 'APROVADA' AND escopo_chave = ?`,
+      [institutionId, rows[0].escopo_chave]
     );
     await conn.query(
       `UPDATE importacoes_horarios
           SET status = 'APROVADA', ativa = TRUE, revisado_por = ?, revisado_em = NOW(),
               publicado_em = NOW(), motivo_rejeicao = NULL
-        WHERE id = ?`,
-      [req.user.id, req.params.id]
+        WHERE id = ? AND instituicao_id = ?`,
+      [req.user.id, req.params.id, institutionId]
     );
     await conn.commit();
     committed = true;
@@ -2025,8 +2158,8 @@ app.post("/api/importacoes/:id/rejeitar", requireRole("CPD"), async (req, res, n
       `UPDATE importacoes_horarios
           SET status = 'REJEITADA', ativa = FALSE, revisado_por = ?, revisado_em = NOW(),
               motivo_rejeicao = ?
-        WHERE id = ? AND status = 'PENDENTE'`,
-      [req.user.id, reason, req.params.id]
+        WHERE id = ? AND instituicao_id = ? AND status = 'PENDENTE'`,
+      [req.user.id, reason, req.params.id, req.institution.id]
     );
     if (!result.affectedRows) throw httpError(409, "A importação não existe ou já foi revisada.");
     res.json({ ok: true, status: "REJEITADA" });
@@ -2042,29 +2175,31 @@ app.post("/api/horarios/notificacoes", notificationRateLimit, async (req, res, n
   if (!turma) return next(httpError(400, "Selecione uma turma."));
 
   try {
+    const institutionId = req.institution.id;
     const [classes] = await db.query(
       `SELECT 1
          FROM horarios_importados h
          JOIN importacoes_horarios i ON i.id = h.importacao_id
         WHERE i.status = 'APROVADA'
           AND i.ativa = TRUE
+          AND i.instituicao_id = ?
           AND h.categoria = 'TURMA'
           AND h.turma = ?
         LIMIT 1`,
-      [turma]
+      [institutionId, turma]
     );
     if (!classes.length) throw httpError(400, "Turma não encontrada nos horários publicados.");
     const token = crypto.randomBytes(32).toString("base64url");
     const tokenHash = hashToken(token);
     await db.query(
-      `INSERT INTO horario_notificacoes (email, turma, ativo, confirmacao_token_hash, confirmacao_expira_em)
-       VALUES (?, ?, FALSE, ?, NOW() + INTERVAL '2 days')
-       ON CONFLICT (email, turma) DO UPDATE
+      `INSERT INTO horario_notificacoes (instituicao_id, email, turma, ativo, confirmacao_token_hash, confirmacao_expira_em)
+       VALUES (?, ?, ?, FALSE, ?, NOW() + INTERVAL '2 days')
+       ON CONFLICT (instituicao_id, email, turma) DO UPDATE
          SET ativo = FALSE,
              confirmacao_token_hash = EXCLUDED.confirmacao_token_hash,
              confirmacao_expira_em = EXCLUDED.confirmacao_expira_em,
              updated_at = CURRENT_TIMESTAMP`,
-      [email, turma, tokenHash]
+      [institutionId, email, turma, tokenHash]
     );
     const confirmationUrl = `${publicBaseUrl(req)}/api/horarios/notificacoes/confirmar?token=${encodeURIComponent(token)}`;
     const sent = await sendEmail({
@@ -2093,8 +2228,9 @@ app.get("/api/horarios/notificacoes/confirmar", async (req, res, next) => {
       `UPDATE horario_notificacoes
           SET ativo = TRUE, confirmacao_token_hash = NULL, confirmacao_expira_em = NULL
         WHERE confirmacao_token_hash = ?
+          AND instituicao_id = ?
           AND confirmacao_expira_em > NOW()`,
-      [hashToken(token)]
+      [hashToken(token), req.institution.id]
     );
     if (!result.affectedRows) throw httpError(400, "Link de confirmação inválido ou expirado.");
     res.type("html").send("<p>Notificação de horários ativada. Você já pode fechar esta página.</p>");
@@ -2108,28 +2244,31 @@ app.get("/api/horarios/notificacoes/confirmar", async (req, res, next) => {
 // ---------------------------------------------------------------------------
 app.get("/api/horarios/publicados", async (req, res, next) => {
   try {
+    const institutionId = req.institution.id;
     res.set("Cache-Control", "no-store");
     const [options] = await db.query(
       `SELECT DISTINCT h.turma, h.curso, h.ano
          FROM horarios_importados h
          JOIN importacoes_horarios i ON i.id = h.importacao_id
-        WHERE i.status = 'APROVADA' AND i.ativa = TRUE AND h.categoria = 'TURMA'
-        ORDER BY h.curso, h.ano, h.turma`
+        WHERE i.instituicao_id = ? AND i.status = 'APROVADA' AND i.ativa = TRUE AND h.categoria = 'TURMA'
+        ORDER BY h.curso, h.ano, h.turma`,
+      [institutionId]
     );
     if (req.query.apenas_opcoes === "1" || req.query.apenas_opcoes === "true") {
       const [teachers] = await db.query(
         `SELECT DISTINCT h.professor
            FROM horarios_importados h
            JOIN importacoes_horarios i ON i.id = h.importacao_id
-          WHERE i.status = 'APROVADA' AND i.ativa = TRUE AND h.categoria = 'TURMA'
+          WHERE i.instituicao_id = ? AND i.status = 'APROVADA' AND i.ativa = TRUE AND h.categoria = 'TURMA'
             AND h.professor IS NOT NULL AND h.professor <> ''
-          ORDER BY h.professor`
+          ORDER BY h.professor`,
+        [institutionId]
       );
       const payload = { turmas: options, professores: teachers.map((item) => item.professor), horarios: [] };
       return res.json(payload);
     }
-    const conditions = ["i.status = 'APROVADA'", "i.ativa = TRUE", "h.categoria = 'TURMA'"];
-    const params = [];
+    const conditions = ["i.instituicao_id = ?", "i.status = 'APROVADA'", "i.ativa = TRUE", "h.categoria = 'TURMA'"];
+    const params = [institutionId];
     for (const [queryName, column] of [
       ["turma", "h.turma"],
       ["curso", "h.curso"],
@@ -2154,8 +2293,8 @@ app.get("/api/horarios/publicados", async (req, res, next) => {
               b.nome AS bloco, i.id AS importacao_id, i.publicado_em
          FROM horarios_importados h
          JOIN importacoes_horarios i ON i.id = h.importacao_id
-         LEFT JOIN salas s ON s.id = h.sala_id
-         LEFT JOIN blocos b ON b.id = s.bloco_id
+         LEFT JOIN salas s ON s.id = h.sala_id AND s.instituicao_id = i.instituicao_id
+         LEFT JOIN blocos b ON b.id = s.bloco_id AND b.instituicao_id = i.instituicao_id
         WHERE ${conditions.join(" AND ")}
         ORDER BY ${dayOrderSql}, h.periodo, h.turma`,
       params
@@ -2192,6 +2331,7 @@ app.patch("/api/horarios/publicados/:id/sala", requireRole("CPD"), async (req, r
   try {
     await conn.beginTransaction();
     const result = await updatePublishedScheduleRoom(conn, {
+      institutionId: req.institution.id,
       scheduleId,
       roomId,
       userId: req.user.id,

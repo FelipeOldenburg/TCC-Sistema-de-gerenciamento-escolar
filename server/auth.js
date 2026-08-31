@@ -87,20 +87,20 @@ export const clearSessionCookie = (res) => {
   );
 };
 
-export const authenticateUser = async (db, username, password) => {
+export const authenticateUser = async (db, username, password, institutionId) => {
   const [rows] = await db.query(
-    `SELECT id, nome, usuario, senha_hash, senha_salt, papel
+    `SELECT id, instituicao_id, nome, usuario, senha_hash, senha_salt, papel
        FROM usuarios
-      WHERE usuario = ? AND ativo = TRUE
+      WHERE instituicao_id = ? AND usuario = ? AND ativo = TRUE
       LIMIT 1`,
-    [normalizeUsername(username)]
+    [institutionId, normalizeUsername(username)]
   );
 
   if (!rows.length) return null;
   const user = rows[0];
   if (!(await verifyPassword(String(password || ""), user.senha_salt, user.senha_hash))) return null;
 
-  return { id: user.id, nome: user.nome, usuario: user.usuario, papel: user.papel };
+  return { id: user.id, instituicao_id: user.instituicao_id, nome: user.nome, usuario: user.usuario, papel: user.papel };
 };
 
 export const createSession = async (db, userId) => {
@@ -125,12 +125,14 @@ const loadSessionUser = async (db, req) => {
   if (!token) return null;
 
   const [rows] = await db.query(
-    `SELECT u.id, u.nome, u.usuario, u.papel
+    `SELECT u.id, u.instituicao_id, i.slug AS instituicao_slug, u.nome, u.usuario, u.papel
        FROM sessoes s
        JOIN usuarios u ON u.id = s.usuario_id
+       JOIN instituicoes i ON i.id = u.instituicao_id
       WHERE s.token_hash = ?
         AND s.expires_at > NOW()
         AND u.ativo = TRUE
+        AND i.ativo = TRUE
       LIMIT 1`,
     [tokenHash(token)]
   );
@@ -176,7 +178,11 @@ export const createAuthMiddleware = (db) => {
   return { optionalAuth, requireAuth, requireRole };
 };
 
-export const ensureBootstrapUsers = async (db) => {
+export const ensureBootstrapUsers = async (db, institutionSlug = process.env.DEFAULT_INSTITUTION_SLUG || "cimol") => {
+  const [institutions] = await db.query("SELECT id FROM instituicoes WHERE slug = ? LIMIT 1", [institutionSlug]);
+  const institutionId = institutions[0]?.id;
+  if (!institutionId) throw new Error(`Instituicao ${institutionSlug} nao encontrada para criar usuarios iniciais.`);
+
   const isProduction = process.env.NODE_ENV === "production";
   const defaults = [
     {
@@ -197,7 +203,10 @@ export const ensureBootstrapUsers = async (db) => {
 
   for (const item of defaults) {
     const username = normalizeUsername(item.usuario);
-    const [existing] = await db.query("SELECT id FROM usuarios WHERE usuario = ? LIMIT 1", [username]);
+    const [existing] = await db.query("SELECT id FROM usuarios WHERE instituicao_id = ? AND usuario = ? LIMIT 1", [
+      institutionId,
+      username,
+    ]);
     if (existing.length) {
       if (process.env[item.passwordEnv]) {
         const { hash, salt } = await createPassword(item.password);
@@ -212,9 +221,9 @@ export const ensureBootstrapUsers = async (db) => {
 
     const { hash, salt } = await createPassword(item.password);
     await db.query(
-      `INSERT INTO usuarios (nome, usuario, senha_hash, senha_salt, papel)
-       VALUES (?, ?, ?, ?, ?)`,
-      [item.nome, username, hash, salt, item.papel]
+      `INSERT INTO usuarios (instituicao_id, nome, usuario, senha_hash, senha_salt, papel)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [institutionId, item.nome, username, hash, salt, item.papel]
     );
 
     if (!process.env[item.passwordEnv]) {
