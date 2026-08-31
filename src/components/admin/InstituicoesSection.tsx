@@ -34,6 +34,9 @@ type InstituicaoForm = {
   nome_sistema: string;
   subtitulo_admin: string;
   logo_url: string;
+  admin_nome: string;
+  admin_usuario: string;
+  admin_senha: string;
   cor_primaria_hsl: string;
   cor_acento_hsl: string;
   cor_header_hsl: string;
@@ -74,6 +77,9 @@ const emptyForm: InstituicaoForm = {
   nome_sistema: "Sistema de Gestão Escolar",
   subtitulo_admin: "Painel Administrativo",
   logo_url: "",
+  admin_nome: "Administrador da escola",
+  admin_usuario: "",
+  admin_senha: "",
   cor_primaria_hsl: "228 65% 48%",
   cor_acento_hsl: "45 100% 51%",
   cor_header_hsl: "228 62% 32%",
@@ -161,6 +167,9 @@ const toForm = (instituicao: Instituicao): InstituicaoForm => ({
   nome_sistema: instituicao.nome_sistema,
   subtitulo_admin: instituicao.subtitulo_admin,
   logo_url: instituicao.logo_url || "",
+  admin_nome: "",
+  admin_usuario: "",
+  admin_senha: "",
   cor_primaria_hsl: instituicao.cor_primaria_hsl,
   cor_acento_hsl: instituicao.cor_acento_hsl,
   cor_header_hsl: instituicao.cor_header_hsl,
@@ -312,7 +321,14 @@ export default function InstituicoesSection() {
           <h2 className="text-2xl font-heading font-bold text-foreground">Instituições</h2>
           <p className="text-sm text-muted-foreground">Controle as escolas vinculadas ao serviço.</p>
         </div>
-        <Button onClick={() => setShowForm(true)} className="gap-2">
+        <Button
+          onClick={() => {
+            setForm(emptyForm);
+            setEditingId(null);
+            setShowForm(true);
+          }}
+          className="gap-2"
+        >
           <Plus className="h-4 w-4" /> Nova instituição
         </Button>
       </div>
@@ -329,29 +345,46 @@ export default function InstituicoesSection() {
           <div className="grid gap-4 md:grid-cols-2">
             <div>
               <label className="text-sm font-medium mb-1 block">Nome *</label>
-              <Input value={form.nome} onChange={(event) => setForm({ ...form, nome: event.target.value })} maxLength={120} />
+              <Input required value={form.nome} onChange={(event) => setForm({ ...form, nome: event.target.value })} maxLength={120} />
             </div>
             <div>
               <label className="text-sm font-medium mb-1 block">Slug *</label>
-              <Input value={form.slug} onChange={(event) => setForm({ ...form, slug: event.target.value })} maxLength={60} placeholder="exemplo-escola" />
+              <Input required value={form.slug} onChange={(event) => setForm({ ...form, slug: event.target.value })} maxLength={60} placeholder="exemplo-escola" />
             </div>
             <div>
               <label className="text-sm font-medium mb-1 block">Nome no painel *</label>
-              <Input value={form.nome_admin} onChange={(event) => setForm({ ...form, nome_admin: event.target.value })} maxLength={120} />
+              <Input required value={form.nome_admin} onChange={(event) => setForm({ ...form, nome_admin: event.target.value })} maxLength={120} />
             </div>
             <div>
               <label className="text-sm font-medium mb-1 block">Nome do sistema *</label>
-              <Input value={form.nome_sistema} onChange={(event) => setForm({ ...form, nome_sistema: event.target.value })} maxLength={160} />
+              <Input required value={form.nome_sistema} onChange={(event) => setForm({ ...form, nome_sistema: event.target.value })} maxLength={160} />
             </div>
             <div>
               <label className="text-sm font-medium mb-1 block">Subtítulo do painel *</label>
-              <Input value={form.subtitulo_admin} onChange={(event) => setForm({ ...form, subtitulo_admin: event.target.value })} maxLength={160} />
+              <Input required value={form.subtitulo_admin} onChange={(event) => setForm({ ...form, subtitulo_admin: event.target.value })} maxLength={160} />
             </div>
             <div>
               <label className="text-sm font-medium mb-1 block">URL do logo</label>
               <Input value={form.logo_url} onChange={(event) => setForm({ ...form, logo_url: event.target.value })} maxLength={500} placeholder="https://..." />
             </div>
           </div>
+
+          {!editingId && (
+            <div className="grid gap-4 md:grid-cols-3">
+              <div>
+                <label className="text-sm font-medium mb-1 block">Nome do admin *</label>
+                <Input required value={form.admin_nome} onChange={(event) => setForm({ ...form, admin_nome: event.target.value })} maxLength={120} />
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Usuário admin *</label>
+                <Input required value={form.admin_usuario} onChange={(event) => setForm({ ...form, admin_usuario: event.target.value })} maxLength={60} />
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Senha inicial *</label>
+                <Input required type="password" value={form.admin_senha} onChange={(event) => setForm({ ...form, admin_senha: event.target.value })} minLength={6} />
+              </div>
+            </div>
+          )}
 
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
             {colorFields.map((field) => (
@@ -376,7 +409,7 @@ export default function InstituicoesSection() {
 
           <label className="flex items-center gap-2 text-sm cursor-pointer">
             <Checkbox checked={form.ativo} onCheckedChange={(checked) => setForm({ ...form, ativo: checked === true })} />
-            Instituição ativa
+            Serviço ativo
           </label>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
@@ -435,7 +468,7 @@ export default function InstituicoesSection() {
                   <TableCell className="font-mono text-xs">{instituicao.slug}</TableCell>
                   <TableCell>
                     <Badge className={instituicao.ativo ? "bg-emerald-100 text-emerald-800 border-emerald-200" : "bg-slate-100 text-slate-700 border-slate-200"}>
-                      {instituicao.ativo ? "Ativa" : "Inativa"}
+                      {instituicao.ativo ? "Serviço ativo" : "Serviço bloqueado"}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">

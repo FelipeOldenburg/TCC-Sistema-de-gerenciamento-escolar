@@ -89,7 +89,7 @@ const loadInstitutionBySlug = async (slug) => {
   const [rows] = await db.query(
     `SELECT ${institutionSelect}
        FROM instituicoes
-      WHERE slug = ? AND ativo = TRUE
+      WHERE slug = ?
       LIMIT 1`,
     [slug]
   );
@@ -293,6 +293,9 @@ app.use("/api", async (req, res, next) => {
     req.institution = institution;
     if (req.user && Number(req.user.instituicao_id) !== Number(institution.id)) {
       req.user = null;
+    }
+    if (!institution.ativo && req.path !== "/instituicao" && req.path !== "/auth/logout") {
+      return res.status(403).json({ message: "Serviço indisponível para esta instituição." });
     }
     next();
   } catch (error) {
@@ -608,6 +611,16 @@ const normalizeInstitutionUserPayload = (body = {}) => {
   };
 };
 
+const normalizeInitialInstitutionAdmin = (body = {}) =>
+  normalizeInstitutionUserPayload({
+    nome: body.admin_nome,
+    usuario: body.admin_usuario,
+    senha: body.admin_senha,
+    papel: "CPD",
+    gerencia_instituicoes: false,
+    ativo: true,
+  });
+
 const validateInstitutionUserPayload = (user, { creating = false } = {}) => {
   if (!user.nome) throw httpError(400, "Informe o nome do usuário.");
   if (!/^[a-z0-9._-]{3,60}$/.test(user.usuario)) {
@@ -651,9 +664,12 @@ app.get("/api/instituicoes", requireInstitutionManager, async (_req, res, next) 
 
 app.post("/api/instituicoes", requireInstitutionManager, async (req, res, next) => {
   const institution = normalizeInstitutionPayload(req.body);
-  const conn = await db.getConnection();
+  const adminUser = normalizeInitialInstitutionAdmin(req.body);
+  let conn;
   try {
     validateInstitutionPayload(institution);
+    validateInstitutionUserPayload(adminUser, { creating: true });
+    conn = await db.getConnection();
     await conn.beginTransaction();
     const [result] = await conn.query(
       `INSERT INTO instituicoes
@@ -677,13 +693,21 @@ app.post("/api/instituicoes", requireInstitutionManager, async (req, res, next) 
       ]
     );
     await ensureDefaultPublicContent(result.insertId, conn);
+    const { hash, salt } = await createPassword(adminUser.senha);
+    const [adminResult] = await conn.query(
+      `INSERT INTO usuarios
+       (instituicao_id, nome, usuario, senha_hash, senha_salt, papel, gerencia_instituicoes, ativo)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       RETURNING id`,
+      [result.insertId, adminUser.nome, adminUser.usuario, hash, salt, adminUser.papel, false, true]
+    );
     await conn.commit();
-    res.status(201).json({ id: result.insertId });
+    res.status(201).json({ id: result.insertId, usuario_inicial_id: adminResult.insertId });
   } catch (error) {
-    await conn.rollback();
+    if (conn) await conn.rollback();
     next(error);
   } finally {
-    conn.release();
+    if (conn) conn.release();
   }
 });
 
