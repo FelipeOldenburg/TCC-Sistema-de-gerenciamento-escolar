@@ -50,7 +50,6 @@ type UsuarioInstituicao = {
   nome: string;
   usuario: string;
   papel: "ADMIN" | "CPD";
-  gerencia_instituicoes: boolean;
   ativo: boolean;
 };
 
@@ -59,7 +58,6 @@ type UsuarioForm = {
   usuario: string;
   senha: string;
   papel: "ADMIN" | "CPD";
-  gerencia_instituicoes: boolean;
   ativo: boolean;
 };
 
@@ -93,7 +91,6 @@ const emptyUserForm: UsuarioForm = {
   usuario: "",
   senha: "",
   papel: "ADMIN",
-  gerencia_instituicoes: false,
   ativo: true,
 };
 
@@ -280,7 +277,6 @@ export default function InstituicoesSection() {
       usuario: usuario.usuario,
       senha: "",
       papel: usuario.papel,
-      gerencia_instituicoes: usuario.gerencia_instituicoes,
       ativo: usuario.ativo,
     });
     setEditingUserId(usuario.id);
@@ -532,13 +528,7 @@ export default function InstituicoesSection() {
                   <label className="text-sm font-medium mb-1 block">Papel *</label>
                   <select
                     value={userForm.papel}
-                    onChange={(event) =>
-                      setUserForm({
-                        ...userForm,
-                        papel: event.target.value as UsuarioForm["papel"],
-                        gerencia_instituicoes: event.target.value === "CPD" && userForm.gerencia_instituicoes,
-                      })
-                    }
+                    onChange={(event) => setUserForm({ ...userForm, papel: event.target.value as UsuarioForm["papel"] })}
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                   >
                     <option value="ADMIN">ADMIN</option>
@@ -547,20 +537,10 @@ export default function InstituicoesSection() {
                 </div>
               </div>
 
-              <div className="flex flex-wrap gap-4">
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <Checkbox checked={userForm.ativo} onCheckedChange={(checked) => setUserForm({ ...userForm, ativo: checked === true })} />
-                  Usuário ativo
-                </label>
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <Checkbox
-                    checked={userForm.gerencia_instituicoes}
-                    disabled={userForm.papel !== "CPD"}
-                    onCheckedChange={(checked) => setUserForm({ ...userForm, gerencia_instituicoes: checked === true })}
-                  />
-                  Gerencia instituições
-                </label>
-              </div>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <Checkbox checked={userForm.ativo} onCheckedChange={(checked) => setUserForm({ ...userForm, ativo: checked === true })} />
+                Usuário ativo
+              </label>
 
               {userError && <p className="text-sm text-destructive">{userError}</p>}
               <div className="flex gap-2">
@@ -600,10 +580,7 @@ export default function InstituicoesSection() {
                     <TableCell className="font-medium">{usuario.nome}</TableCell>
                     <TableCell className="font-mono text-xs">{usuario.usuario}</TableCell>
                     <TableCell>
-                      <div className="flex gap-1 flex-wrap">
-                        <Badge variant="outline">{usuario.papel}</Badge>
-                        {usuario.gerencia_instituicoes && <Badge>Gestor</Badge>}
-                      </div>
+                      <Badge variant="outline">{usuario.papel}</Badge>
                     </TableCell>
                     <TableCell>
                       <Badge className={usuario.ativo ? "bg-emerald-100 text-emerald-800 border-emerald-200" : "bg-slate-100 text-slate-700 border-slate-200"}>

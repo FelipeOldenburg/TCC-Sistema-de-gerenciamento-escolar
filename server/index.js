@@ -12,13 +12,20 @@ import swaggerUi from "swagger-ui-express";
 import { fileURLToPath } from "url";
 import {
   authenticateUser,
+  authenticatePlatformUser,
   clearSessionCookie,
+  clearPlatformSessionCookie,
   createAuthMiddleware,
   createPassword,
+  createPlatformAuthMiddleware,
+  createPlatformSession,
   createSession,
   deleteSession,
+  deletePlatformSession,
+  ensureBootstrapPlatformUser,
   ensureBootstrapUsers,
   normalizeUsername,
+  setPlatformSessionCookie,
   setSessionCookie,
 } from "./auth.js";
 import { createDbPool, initializeSchema, isConnectionError, isDuplicateError, isForeignKeyError } from "./db.js";
@@ -249,6 +256,7 @@ const ensureReferenceRooms = async (institutionId) => {
 
 try {
   await initializeSchema(path.join(__dirname, "schema.sql"));
+  await ensureBootstrapPlatformUser(db);
   const defaultInstitution = await loadInstitutionBySlug(defaultInstitutionSlug);
   if (!defaultInstitution) throw new Error(`Instituicao padrao ${defaultInstitutionSlug} nao encontrada.`);
   await ensureBootstrapUsers(db, defaultInstitution.slug);
@@ -260,6 +268,7 @@ try {
 }
 
 const { optionalAuth, requireAuth, requireRole } = createAuthMiddleware(db);
+const { optionalPlatformAuth, requirePlatformAuth } = createPlatformAuthMiddleware(db);
 
 app.use((req, res, next) => {
   req.id = crypto.randomUUID();
@@ -285,8 +294,12 @@ app.use("/api", (_req, res, next) => {
   return res.status(503).json({ message: databaseUnavailableMessage });
 });
 app.use("/api", optionalAuth);
+app.use("/api", optionalPlatformAuth);
 app.use("/api", async (req, res, next) => {
   if (req.path === "/health") return next();
+  if (req.path.startsWith("/plataforma/") || req.path === "/instituicoes" || req.path.startsWith("/instituicoes/")) {
+    return next();
+  }
   try {
     const institution = await loadInstitutionBySlug(resolveInstitutionSlug(req));
     if (!institution) return res.status(404).json({ message: "Instituição não encontrada." });
@@ -517,11 +530,32 @@ app.post("/api/auth/logout", async (req, res, next) => {
 
 app.get("/api/auth/me", requireAuth, (req, res) => res.json({ user: req.user }));
 
-const requireInstitutionManager = (req, res, next) => {
-  if (!req.user) return res.status(401).json({ message: "Faça login para continuar." });
-  if (!req.user.gerencia_instituicoes) {
-    return res.status(403).json({ message: "Seu usuário não gerencia instituições." });
+app.post("/api/plataforma/auth/login", authRateLimit, async (req, res, next) => {
+  try {
+    const user = await authenticatePlatformUser(db, req.body?.usuario, req.body?.senha);
+    if (!user) return res.status(401).json({ message: "Usuário ou senha inválidos." });
+    const token = await createPlatformSession(db, user.id);
+    setPlatformSessionCookie(res, token);
+    res.json({ user });
+  } catch (error) {
+    next(error);
   }
+});
+
+app.post("/api/plataforma/auth/logout", async (req, res, next) => {
+  try {
+    await deletePlatformSession(db, req);
+    clearPlatformSessionCookie(res);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/plataforma/auth/me", requirePlatformAuth, (req, res) => res.json({ user: req.platformUser }));
+
+const requirePlatformManager = (req, res, next) => {
+  if (!req.platformUser) return res.status(401).json({ message: "Faça login na gestão da plataforma." });
   next();
 };
 
@@ -606,7 +640,7 @@ const normalizeInstitutionUserPayload = (body = {}) => {
     usuario: normalizeUsername(body.usuario).slice(0, 60),
     senha: String(body.senha || ""),
     papel,
-    gerencia_instituicoes: papel === "CPD" && asBoolean(body.gerencia_instituicoes),
+    gerencia_instituicoes: false,
     ativo: body.ativo == null ? true : asBoolean(body.ativo),
   };
 };
@@ -638,13 +672,12 @@ const serializeInstitutionUser = (row) => ({
   nome: row.nome,
   usuario: row.usuario,
   papel: row.papel,
-  gerencia_instituicoes: Boolean(row.gerencia_instituicoes),
   ativo: Boolean(row.ativo),
   created_at: row.created_at,
   updated_at: row.updated_at,
 });
 
-app.get("/api/instituicoes", requireInstitutionManager, async (_req, res, next) => {
+app.get("/api/instituicoes", requirePlatformManager, async (_req, res, next) => {
   try {
     const [rows] = await db.query(
       `SELECT i.id, i.slug, i.nome, i.nome_admin, i.nome_sistema, i.subtitulo_admin, i.logo_url,
@@ -662,7 +695,7 @@ app.get("/api/instituicoes", requireInstitutionManager, async (_req, res, next) 
   }
 });
 
-app.post("/api/instituicoes", requireInstitutionManager, async (req, res, next) => {
+app.post("/api/instituicoes", requirePlatformManager, async (req, res, next) => {
   const institution = normalizeInstitutionPayload(req.body);
   const adminUser = normalizeInitialInstitutionAdmin(req.body);
   let conn;
@@ -711,13 +744,10 @@ app.post("/api/instituicoes", requireInstitutionManager, async (req, res, next) 
   }
 });
 
-app.put("/api/instituicoes/:id", requireInstitutionManager, async (req, res, next) => {
+app.put("/api/instituicoes/:id", requirePlatformManager, async (req, res, next) => {
   const institution = normalizeInstitutionPayload(req.body);
   try {
     validateInstitutionPayload(institution);
-    if (Number(req.params.id) === Number(req.institution.id) && !institution.ativo) {
-      throw httpError(400, "Não desative a instituição usada no login atual.");
-    }
     const [result] = await db.query(
       `UPDATE instituicoes
           SET slug = ?, nome = ?, nome_admin = ?, nome_sistema = ?, subtitulo_admin = ?, logo_url = ?,
@@ -747,12 +777,12 @@ app.put("/api/instituicoes/:id", requireInstitutionManager, async (req, res, nex
   }
 });
 
-app.get("/api/instituicoes/:institutionId/usuarios", requireInstitutionManager, async (req, res, next) => {
+app.get("/api/instituicoes/:institutionId/usuarios", requirePlatformManager, async (req, res, next) => {
   try {
     const institutionId = parseInstitutionId(req.params.institutionId);
     await ensureInstitutionExists(db, institutionId);
     const [rows] = await db.query(
-      `SELECT id, instituicao_id, nome, usuario, papel, gerencia_instituicoes, ativo, created_at, updated_at
+      `SELECT id, instituicao_id, nome, usuario, papel, ativo, created_at, updated_at
          FROM usuarios
         WHERE instituicao_id = ?
         ORDER BY ativo DESC, papel DESC, nome`,
@@ -764,7 +794,7 @@ app.get("/api/instituicoes/:institutionId/usuarios", requireInstitutionManager, 
   }
 });
 
-app.post("/api/instituicoes/:institutionId/usuarios", requireInstitutionManager, async (req, res, next) => {
+app.post("/api/instituicoes/:institutionId/usuarios", requirePlatformManager, async (req, res, next) => {
   const user = normalizeInstitutionUserPayload(req.body);
   try {
     const institutionId = parseInstitutionId(req.params.institutionId);
@@ -776,7 +806,7 @@ app.post("/api/instituicoes/:institutionId/usuarios", requireInstitutionManager,
        (instituicao_id, nome, usuario, senha_hash, senha_salt, papel, gerencia_instituicoes, ativo)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING id`,
-      [institutionId, user.nome, user.usuario, hash, salt, user.papel, user.gerencia_instituicoes, user.ativo]
+      [institutionId, user.nome, user.usuario, hash, salt, user.papel, false, user.ativo]
     );
     res.status(201).json({ id: result.insertId });
   } catch (error) {
@@ -784,7 +814,7 @@ app.post("/api/instituicoes/:institutionId/usuarios", requireInstitutionManager,
   }
 });
 
-app.put("/api/instituicoes/:institutionId/usuarios/:userId", requireInstitutionManager, async (req, res, next) => {
+app.put("/api/instituicoes/:institutionId/usuarios/:userId", requirePlatformManager, async (req, res, next) => {
   const user = normalizeInstitutionUserPayload(req.body);
   try {
     const institutionId = parseInstitutionId(req.params.institutionId);
@@ -792,12 +822,8 @@ app.put("/api/instituicoes/:institutionId/usuarios/:userId", requireInstitutionM
     validateInstitutionUserPayload(user);
     await ensureInstitutionExists(db, institutionId);
 
-    if (userId === Number(req.user.id) && (!user.ativo || user.papel !== "CPD" || !user.gerencia_instituicoes)) {
-      throw httpError(400, "Não remova seu próprio acesso de gerenciamento.");
-    }
-
-    const updates = ["nome = ?", "usuario = ?", "papel = ?", "gerencia_instituicoes = ?", "ativo = ?"];
-    const params = [user.nome, user.usuario, user.papel, user.gerencia_instituicoes, user.ativo];
+    const updates = ["nome = ?", "usuario = ?", "papel = ?", "gerencia_instituicoes = FALSE", "ativo = ?"];
+    const params = [user.nome, user.usuario, user.papel, user.ativo];
     if (user.senha) {
       const { hash, salt } = await createPassword(user.senha);
       updates.push("senha_hash = ?", "senha_salt = ?");

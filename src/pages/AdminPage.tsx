@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import BlocosSection from "@/components/admin/BlocosSection";
 import EventosAdminSection from "@/components/admin/EventosAdminSection";
-import InstituicoesSection from "@/components/admin/InstituicoesSection";
 import OuvidoriaAdminSection from "@/components/admin/OuvidoriaAdminSection";
 import SalasSection from "@/components/admin/SalasSection";
 import SetoresAdminSection from "@/components/admin/SetoresAdminSection";
@@ -15,7 +14,7 @@ import UraniaImportacoesSection from "@/components/admin/UraniaImportacoesSectio
 import { apiFetch, apiUrl, type SessionUser, type UserRole } from "@/lib/api";
 import { useInstitutionBrand } from "@/lib/institution";
 
-type AdminTab = "horarios" | "instituicoes" | "blocos" | "salas" | "eventos" | "setores" | "ouvidoria" | "reorganizacao";
+type AdminTab = "horarios" | "blocos" | "salas" | "eventos" | "setores" | "ouvidoria" | "reorganizacao";
 
 type ReorganizacaoRegistro = {
   id: number;
@@ -50,9 +49,8 @@ type ReorganizacaoResposta = {
   } | null;
 };
 
-const sidebarItems: { id: AdminTab; label: string; icon: typeof FileUp; roles: UserRole[]; managerOnly?: boolean }[] = [
+const sidebarItems: { id: AdminTab; label: string; icon: typeof FileUp; roles: UserRole[] }[] = [
   { id: "horarios", label: "Turmas e Horários", icon: FileUp, roles: ["ADMIN", "CPD"] },
-  { id: "instituicoes", label: "Instituições", icon: Building2, roles: ["CPD"], managerOnly: true },
   { id: "blocos", label: "Blocos", icon: Building2, roles: ["CPD"] },
   { id: "salas", label: "Controle de Salas", icon: DoorOpen, roles: ["CPD"] },
   { id: "eventos", label: "Eventos", icon: CalendarDays, roles: ["CPD"] },
@@ -537,14 +535,12 @@ const AdminPageComponent = () => {
     return <div className="min-h-screen bg-background flex items-center justify-center text-muted-foreground">Verificando acesso...</div>;
   }
 
-  const visibleItems = sidebarItems.filter((item) => item.roles.includes(user.papel) && (!item.managerOnly || user.gerencia_instituicoes));
+  const visibleItems = sidebarItems.filter((item) => item.roles.includes(user.papel));
 
   const renderContent = () => {
     switch (activeTab) {
       case "horarios":
         return <UraniaImportacoesSection user={user} />;
-      case "instituicoes":
-        return <InstituicoesSection />;
       case "blocos":
         return <BlocosSection />;
       case "salas":

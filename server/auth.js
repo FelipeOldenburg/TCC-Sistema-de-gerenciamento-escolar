@@ -1,6 +1,7 @@
 import crypto from "crypto";
 
 const SESSION_COOKIE = "cimol_session";
+const PLATFORM_SESSION_COOKIE = "plataforma_session";
 const SESSION_DURATION_MS = 8 * 60 * 60 * 1000;
 
 export const normalizeUsername = (value) => String(value || "").trim().toLowerCase();
@@ -62,8 +63,8 @@ const parseCookies = (header = "") =>
 
 const tokenHash = (token) => crypto.createHash("sha256").update(token).digest("hex");
 
-const getRequestToken = (req) => {
-  const cookieToken = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+const getRequestToken = (req, cookieName = SESSION_COOKIE) => {
+  const cookieToken = parseCookies(req.headers.cookie)[cookieName];
   if (cookieToken) return cookieToken;
 
   const authorization = req.headers.authorization;
@@ -84,6 +85,22 @@ export const clearSessionCookie = (res) => {
   res.setHeader(
     "Set-Cookie",
     `${SESSION_COOKIE}=; ${sessionCookieAttributes()}; Max-Age=0`
+  );
+};
+
+export const setPlatformSessionCookie = (res, token) => {
+  res.setHeader(
+    "Set-Cookie",
+    `${PLATFORM_SESSION_COOKIE}=${encodeURIComponent(token)}; ${sessionCookieAttributes()}; Max-Age=${Math.floor(
+      SESSION_DURATION_MS / 1000
+    )}`
+  );
+};
+
+export const clearPlatformSessionCookie = (res) => {
+  res.setHeader(
+    "Set-Cookie",
+    `${PLATFORM_SESSION_COOKIE}=; ${sessionCookieAttributes()}; Max-Age=0`
   );
 };
 
@@ -121,9 +138,25 @@ export const createSession = async (db, userId) => {
   return token;
 };
 
+export const createPlatformSession = async (db, userId) => {
+  const token = crypto.randomBytes(32).toString("base64url");
+  const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
+  await db.query("DELETE FROM plataforma_sessoes WHERE expires_at <= NOW()");
+  await db.query(
+    "INSERT INTO plataforma_sessoes (token_hash, usuario_id, expires_at) VALUES (?, ?, ?)",
+    [tokenHash(token), userId, expiresAt]
+  );
+  return token;
+};
+
 export const deleteSession = async (db, req) => {
   const token = getRequestToken(req);
   if (token) await db.query("DELETE FROM sessoes WHERE token_hash = ?", [tokenHash(token)]);
+};
+
+export const deletePlatformSession = async (db, req) => {
+  const token = getRequestToken(req, PLATFORM_SESSION_COOKIE);
+  if (token) await db.query("DELETE FROM plataforma_sessoes WHERE token_hash = ?", [tokenHash(token)]);
 };
 
 const loadSessionUser = async (db, req) => {
@@ -186,6 +219,65 @@ export const createAuthMiddleware = (db) => {
   return { optionalAuth, requireAuth, requireRole };
 };
 
+export const authenticatePlatformUser = async (db, username, password) => {
+  const [rows] = await db.query(
+    `SELECT id, nome, usuario, senha_hash, senha_salt
+       FROM plataforma_usuarios
+      WHERE usuario = ? AND ativo = TRUE
+      LIMIT 1`,
+    [normalizeUsername(username)]
+  );
+
+  if (!rows.length) return null;
+  const user = rows[0];
+  if (!(await verifyPassword(String(password || ""), user.senha_salt, user.senha_hash))) return null;
+  return { id: user.id, nome: user.nome, usuario: user.usuario };
+};
+
+const loadPlatformSessionUser = async (db, req) => {
+  if (req.platformUser) return req.platformUser;
+  const token = getRequestToken(req, PLATFORM_SESSION_COOKIE);
+  if (!token) return null;
+
+  const [rows] = await db.query(
+    `SELECT u.id, u.nome, u.usuario
+       FROM plataforma_sessoes s
+       JOIN plataforma_usuarios u ON u.id = s.usuario_id
+      WHERE s.token_hash = ?
+        AND s.expires_at > NOW()
+        AND u.ativo = TRUE
+      LIMIT 1`,
+    [tokenHash(token)]
+  );
+
+  if (!rows.length) return null;
+  req.platformUser = rows[0];
+  return req.platformUser;
+};
+
+export const createPlatformAuthMiddleware = (db) => {
+  const optionalPlatformAuth = async (req, _res, next) => {
+    try {
+      await loadPlatformSessionUser(db, req);
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  const requirePlatformAuth = async (req, res, next) => {
+    try {
+      const user = await loadPlatformSessionUser(db, req);
+      if (!user) return res.status(401).json({ message: "Faça login para continuar." });
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  return { optionalPlatformAuth, requirePlatformAuth };
+};
+
 export const ensureBootstrapUsers = async (db, institutionSlug = process.env.DEFAULT_INSTITUTION_SLUG || "cimol") => {
   const [institutions] = await db.query("SELECT id FROM instituicoes WHERE slug = ? LIMIT 1", [institutionSlug]);
   const institutionId = institutions[0]?.id;
@@ -206,7 +298,6 @@ export const ensureBootstrapUsers = async (db, institutionSlug = process.env.DEF
       password: process.env.CPD_PASSWORD || (!isProduction ? "cpd123" : ""),
       passwordEnv: "CPD_PASSWORD",
       papel: "CPD",
-      gerenciaInstituicoes: process.env.CPD_MANAGES_INSTITUTIONS == null ? true : asBoolean(process.env.CPD_MANAGES_INSTITUTIONS),
     },
   ];
 
@@ -221,10 +312,8 @@ export const ensureBootstrapUsers = async (db, institutionSlug = process.env.DEF
         const { hash, salt } = await createPassword(item.password);
         await db.query(
           "UPDATE usuarios SET nome = ?, senha_hash = ?, senha_salt = ?, papel = ?, gerencia_instituicoes = ?, ativo = TRUE WHERE id = ?",
-          [item.nome, hash, salt, item.papel, Boolean(item.gerenciaInstituicoes), existing[0].id]
+          [item.nome, hash, salt, item.papel, false, existing[0].id]
         );
-      } else if (item.gerenciaInstituicoes) {
-        await db.query("UPDATE usuarios SET gerencia_instituicoes = TRUE WHERE id = ?", [existing[0].id]);
       }
       continue;
     }
@@ -234,7 +323,7 @@ export const ensureBootstrapUsers = async (db, institutionSlug = process.env.DEF
     await db.query(
       `INSERT INTO usuarios (instituicao_id, nome, usuario, senha_hash, senha_salt, papel, gerencia_instituicoes)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [institutionId, item.nome, username, hash, salt, item.papel, Boolean(item.gerenciaInstituicoes)]
+      [institutionId, item.nome, username, hash, salt, item.papel, false]
     );
 
     if (!process.env[item.passwordEnv]) {
@@ -243,4 +332,27 @@ export const ensureBootstrapUsers = async (db, institutionSlug = process.env.DEF
       );
     }
   }
+};
+
+export const ensureBootstrapPlatformUser = async (db) => {
+  const password = process.env.PLATFORM_ADMIN_PASSWORD || "";
+  if (!password) return;
+
+  const username = normalizeUsername(process.env.PLATFORM_ADMIN_USER || "plataforma");
+  const name = process.env.PLATFORM_ADMIN_NAME || "Gestor da plataforma";
+  const { hash, salt } = await createPassword(password);
+  const [existing] = await db.query("SELECT id FROM plataforma_usuarios WHERE usuario = ? LIMIT 1", [username]);
+
+  if (existing.length) {
+    await db.query(
+      "UPDATE plataforma_usuarios SET nome = ?, senha_hash = ?, senha_salt = ?, ativo = TRUE WHERE id = ?",
+      [name, hash, salt, existing[0].id]
+    );
+    return;
+  }
+
+  await db.query(
+    "INSERT INTO plataforma_usuarios (nome, usuario, senha_hash, senha_salt) VALUES (?, ?, ?, ?)",
+    [name, username, hash, salt]
+  );
 };

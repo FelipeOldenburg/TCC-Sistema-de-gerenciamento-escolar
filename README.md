@@ -85,7 +85,7 @@ Em Vercel ou qualquer ambiente publico, `DB_HOST` deve apontar para um PostgreSQ
 
 O cadastro base de instituicao fica em `instituicoes`. Em localhost a API usa `DEFAULT_INSTITUTION_SLUG=cimol`; em dominio real, o primeiro subdominio pode identificar a escola. A configuracao publica da marca esta em `GET /api/instituicao`.
 
-O painel administrativo de instituicoes fica disponivel para usuarios `CPD` com `gerencia_instituicoes=true`. O usuario inicial do CPD recebe essa permissao quando `CPD_MANAGES_INSTITUTIONS=true`.
+O painel administrativo da escola fica em `/admin` e usa usuarios `ADMIN`/`CPD` da propria instituicao. A gestao central das instituicoes fica separada em `/plataforma` e usa `PLATFORM_ADMIN_USER`/`PLATFORM_ADMIN_PASSWORD`.
 
 Se a API ficar em outro subdominio, configure `ALLOWED_ORIGINS` no backend e `VITE_API_BASE_URL` no build do frontend. Se quiser rodar tudo em um unico processo Express, execute `npm run build` e use `SERVE_STATIC=true`; nesse modo o Express serve o `dist/` e mantem as rotas `/api`.
 
