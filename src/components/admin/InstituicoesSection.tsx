@@ -1,7 +1,9 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { Building2, Edit, Plus, Save, Users, X } from "lucide-react";
+import { Building2, Edit, LogIn, Plus, Save, Users, X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
+import { selectInstitutionSlug } from "@/lib/institution";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -176,6 +178,7 @@ const toForm = (instituicao: Instituicao): InstituicaoForm => ({
 });
 
 export default function InstituicoesSection() {
+  const navigate = useNavigate();
   const [instituicoes, setInstituicoes] = useState<Instituicao[]>([]);
   const [form, setForm] = useState<InstituicaoForm>(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -220,6 +223,11 @@ export default function InstituicoesSection() {
     setEditingId(instituicao.id);
     setShowForm(true);
     setError("");
+  };
+
+  const enterInstitution = (instituicao: Instituicao) => {
+    selectInstitutionSlug(instituicao.slug);
+    navigate("/");
   };
 
   const save = async (event: FormEvent) => {
@@ -417,74 +425,66 @@ export default function InstituicoesSection() {
 
       {error && !showForm && <p className="text-sm text-destructive">{error}</p>}
 
-      <div className="glass-card rounded-2xl overflow-hidden">
-        <div className="p-5 border-b">
-          <h3 className="font-heading font-bold">Instituições cadastradas</h3>
-          <p className="text-xs text-muted-foreground">{instituicoes.length} registros</p>
-        </div>
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Instituição</TableHead>
-                <TableHead>Slug</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Dados</TableHead>
-                <TableHead className="text-right">Ações</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading && (
-                <TableRow>
-                  <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">Carregando...</TableCell>
-                </TableRow>
-              )}
-              {!loading && !instituicoes.length && (
-                <TableRow>
-                  <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">Nenhuma instituição cadastrada.</TableCell>
-                </TableRow>
-              )}
-              {instituicoes.map((instituicao) => (
-                <TableRow key={instituicao.id}>
-                  <TableCell>
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                        {instituicao.logo_url ? (
-                          <img src={instituicao.logo_url} alt={instituicao.nome} className="h-full w-full rounded-lg object-contain" />
-                        ) : (
-                          <Building2 className="h-4 w-4" />
-                        )}
-                      </div>
-                      <div>
-                        <p className="font-medium">{instituicao.nome}</p>
-                        <p className="text-xs text-muted-foreground">{instituicao.nome_sistema}</p>
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">{instituicao.slug}</TableCell>
-                  <TableCell>
-                    <Badge className={instituicao.ativo ? "bg-emerald-100 text-emerald-800 border-emerald-200" : "bg-slate-100 text-slate-700 border-slate-200"}>
-                      {instituicao.ativo ? "Serviço ativo" : "Serviço bloqueado"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {instituicao.total_usuarios} usuários · {instituicao.total_salas} salas · {instituicao.total_importacoes} importações
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex justify-end gap-1">
-                      <Button variant="ghost" size="sm" onClick={() => openUsers(instituicao)} className="gap-2">
-                        <Users className="h-4 w-4" /> Usuários
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => edit(instituicao)} title="Editar" aria-label="Editar instituição">
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+      <div>
+        <h3 className="font-heading font-bold">Instituições cadastradas</h3>
+        <p className="text-xs text-muted-foreground">{instituicoes.length} registros</p>
+      </div>
+
+      {loading && <p className="py-8 text-center text-sm text-muted-foreground">Carregando...</p>}
+      {!loading && !instituicoes.length && <p className="py-8 text-center text-sm text-muted-foreground">Nenhuma instituição cadastrada.</p>}
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {instituicoes.map((instituicao) => (
+          <article key={instituicao.id} className="glass-card rounded-2xl p-5 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  {instituicao.logo_url ? (
+                    <img src={instituicao.logo_url} alt={instituicao.nome} className="h-full w-full rounded-lg object-contain" />
+                  ) : (
+                    <Building2 className="h-5 w-5" />
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <h4 className="truncate font-heading font-bold text-foreground">{instituicao.nome}</h4>
+                  <p className="truncate font-mono text-xs text-muted-foreground">{instituicao.slug}</p>
+                </div>
+              </div>
+              <Badge className={instituicao.ativo ? "bg-emerald-100 text-emerald-800 border-emerald-200" : "bg-slate-100 text-slate-700 border-slate-200"}>
+                {instituicao.ativo ? "Ativo" : "Bloqueado"}
+              </Badge>
+            </div>
+
+            <p className="line-clamp-2 min-h-10 text-sm text-muted-foreground">{instituicao.nome_sistema}</p>
+
+            <div className="grid grid-cols-3 gap-2 border-y border-border py-3 text-center text-xs text-muted-foreground">
+              <div>
+                <span className="block text-base font-bold text-foreground">{instituicao.total_usuarios}</span>
+                Usuários
+              </div>
+              <div>
+                <span className="block text-base font-bold text-foreground">{instituicao.total_salas}</span>
+                Salas
+              </div>
+              <div>
+                <span className="block text-base font-bold text-foreground">{instituicao.total_importacoes}</span>
+                Importações
+              </div>
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-3">
+              <Button type="button" size="sm" onClick={() => enterInstitution(instituicao)} disabled={!instituicao.ativo} className="gap-2">
+                <LogIn className="h-4 w-4" /> Entrar
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => edit(instituicao)} className="gap-2">
+                <Edit className="h-4 w-4" /> Gerenciar
+              </Button>
+              <Button type="button" variant="ghost" size="sm" onClick={() => openUsers(instituicao)} className="gap-2">
+                <Users className="h-4 w-4" /> Usuários
+              </Button>
+            </div>
+          </article>
+        ))}
       </div>
 
       {selectedInstitution && (

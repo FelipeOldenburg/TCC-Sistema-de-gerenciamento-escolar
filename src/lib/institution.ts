@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import cimolLogo from "@/assets/cimol-logo.png";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, INSTITUTION_SLUG_STORAGE_KEY } from "@/lib/api";
 
 export type InstitutionBrand = {
   slug: string;
@@ -66,6 +66,12 @@ const loadInstitutionBrand = async () => {
     throw error;
   });
   return pendingBrand;
+};
+
+export const selectInstitutionSlug = (slug: string) => {
+  window.localStorage.setItem(INSTITUTION_SLUG_STORAGE_KEY, slug);
+  cachedBrand = institutionBrand;
+  pendingBrand = null;
 };
 
 export const useInstitutionBrand = () => {

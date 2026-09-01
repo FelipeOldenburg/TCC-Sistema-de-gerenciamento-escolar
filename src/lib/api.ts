@@ -21,6 +21,12 @@ export class ApiError extends Error {
 }
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") || "";
+export const INSTITUTION_SLUG_STORAGE_KEY = "design-compass.institutionSlug";
+
+const selectedInstitutionSlug = () => {
+  if (typeof window === "undefined") return "";
+  return window.localStorage.getItem(INSTITUTION_SLUG_STORAGE_KEY) || "";
+};
 
 export const apiUrl = (url: string) => {
   if (!apiBaseUrl || /^https?:\/\//i.test(url)) return url;
@@ -31,6 +37,15 @@ export async function apiFetch<T>(url: string, init: RequestInit = {}): Promise<
   const headers = new Headers(init.headers);
   if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
+  }
+  if (
+    !headers.has("x-institution-slug") &&
+    url.startsWith("/api/") &&
+    !url.startsWith("/api/plataforma/") &&
+    !url.startsWith("/api/instituicoes")
+  ) {
+    const slug = selectedInstitutionSlug();
+    if (slug) headers.set("x-institution-slug", slug);
   }
 
   const response = await fetch(apiUrl(url), {
