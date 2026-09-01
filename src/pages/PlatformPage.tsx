@@ -21,6 +21,7 @@ const PlatformPage = () => {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    document.title = "Gestão da plataforma";
     apiFetch<{ user: PlatformUser }>("/api/plataforma/auth/me")
       .then((response) => setUser(response.user))
       .catch(() => setUser(null))
