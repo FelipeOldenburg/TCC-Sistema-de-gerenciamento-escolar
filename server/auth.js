@@ -160,7 +160,14 @@ export const deletePlatformSession = async (db, req) => {
 };
 
 const loadSessionUser = async (db, req) => {
-  if (req.user) return req.user;
+  const matchesRequestInstitution = (user) =>
+    !req.institution || Number(user.instituicao_id) === Number(req.institution.id);
+
+  if (req.user) {
+    if (matchesRequestInstitution(req.user)) return req.user;
+    req.user = null;
+    return null;
+  }
   const token = getRequestToken(req);
   if (!token) return null;
 
@@ -179,6 +186,7 @@ const loadSessionUser = async (db, req) => {
   );
 
   if (!rows.length) return null;
+  if (!matchesRequestInstitution(rows[0])) return null;
   req.user = rows[0];
   return req.user;
 };

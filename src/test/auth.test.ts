@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { authenticatePlatformUser, authenticateUser, createPassword, normalizeUsername } from "../../server/auth.js";
+import { describe, expect, it, vi } from "vitest";
+import { authenticatePlatformUser, authenticateUser, createAuthMiddleware, createPassword, normalizeUsername } from "../../server/auth.js";
 
 describe("auth por instituicao", () => {
   it("normaliza usuario e autentica somente na instituicao informada", async () => {
@@ -48,5 +48,32 @@ describe("auth por instituicao", () => {
       usuario: "gestor",
     });
     await expect(authenticatePlatformUser(db, "gestor", "errada")).resolves.toBeNull();
+  });
+
+  it("bloqueia sessao de outra instituicao", async () => {
+    const { requireAuth } = createAuthMiddleware({
+      query: async () => [
+        [
+          {
+            id: 10,
+            instituicao_id: 1,
+            instituicao_slug: "cimol",
+            nome: "Admin CIMOL",
+            usuario: "admin",
+            papel: "CPD",
+            gerencia_instituicoes: false,
+          },
+        ],
+      ],
+    });
+    const req = { headers: { cookie: "cimol_session=token" }, institution: { id: 2 } };
+    const res = { status: vi.fn(), json: vi.fn() };
+    const next = vi.fn();
+    res.status.mockReturnValue(res);
+
+    await requireAuth(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(next).not.toHaveBeenCalled();
   });
 });

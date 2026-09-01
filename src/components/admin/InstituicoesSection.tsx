@@ -1,10 +1,8 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { Building2, Edit, LogIn, Plus, Save, Users, X } from "lucide-react";
-import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { hslToHex, hexToHsl } from "@/lib/colors";
-import { selectInstitutionSlug } from "@/lib/institution";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -124,7 +122,6 @@ const toForm = (instituicao: Instituicao): InstituicaoForm => ({
 });
 
 export default function InstituicoesSection() {
-  const navigate = useNavigate();
   const [instituicoes, setInstituicoes] = useState<Instituicao[]>([]);
   const [form, setForm] = useState<InstituicaoForm>(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -172,8 +169,7 @@ export default function InstituicoesSection() {
   };
 
   const enterInstitution = (instituicao: Instituicao) => {
-    selectInstitutionSlug(instituicao.slug);
-    navigate("/");
+    window.open(`/?instituicao=${encodeURIComponent(instituicao.slug)}`, "_blank", "noopener,noreferrer");
   };
 
   const save = async (event: FormEvent) => {

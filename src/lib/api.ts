@@ -23,9 +23,21 @@ export class ApiError extends Error {
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") || "";
 export const INSTITUTION_SLUG_STORAGE_KEY = "design-compass.institutionSlug";
 
+const normalizeInstitutionSlug = (value: string | null) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "")
+    .slice(0, 60);
+
 const selectedInstitutionSlug = () => {
   if (typeof window === "undefined") return "";
-  return window.localStorage.getItem(INSTITUTION_SLUG_STORAGE_KEY) || "";
+  const urlSlug = normalizeInstitutionSlug(new URLSearchParams(window.location.search).get("instituicao"));
+  if (urlSlug) {
+    window.localStorage.setItem(INSTITUTION_SLUG_STORAGE_KEY, urlSlug);
+    return urlSlug;
+  }
+  return normalizeInstitutionSlug(window.localStorage.getItem(INSTITUTION_SLUG_STORAGE_KEY));
 };
 
 export const apiUrl = (url: string) => {

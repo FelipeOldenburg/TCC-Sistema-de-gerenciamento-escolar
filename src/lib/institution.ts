@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import cimolLogo from "@/assets/cimol-logo.png";
-import { apiFetch, INSTITUTION_SLUG_STORAGE_KEY } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 export type InstitutionBrand = {
   slug: string;
@@ -47,6 +47,7 @@ const setThemeColor = (name: string, value: string) => {
 };
 
 const applyInstitutionTheme = (brand: InstitutionBrand) => {
+  document.title = brand.name || "CIMOL";
   setThemeColor("--primary", brand.colors.primary);
   setThemeColor("--ring", brand.colors.primary);
   setThemeColor("--accent", brand.colors.accent);
@@ -75,12 +76,6 @@ const loadInstitutionBrand = async () => {
     throw error;
   });
   return pendingBrand;
-};
-
-export const selectInstitutionSlug = (slug: string) => {
-  window.localStorage.setItem(INSTITUTION_SLUG_STORAGE_KEY, slug);
-  cachedBrand = institutionBrand;
-  pendingBrand = null;
 };
 
 export const useInstitutionBrand = () => {
