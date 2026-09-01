@@ -8,7 +8,7 @@ export type InstitutionBrand = {
   adminName: string;
   systemName: string;
   adminSubtitle: string;
-  logo: string;
+  logo: string | null;
   colors: {
     primary: string;
     accent: string;
@@ -18,7 +18,7 @@ export type InstitutionBrand = {
   };
 };
 
-type InstitutionResponse = Omit<InstitutionBrand, "logo"> & {
+export type InstitutionResponse = Omit<InstitutionBrand, "logo"> & {
   logoUrl: string | null;
 };
 
@@ -55,12 +55,21 @@ const applyInstitutionTheme = (brand: InstitutionBrand) => {
   setThemeColor("--nav-active", brand.colors.navActive);
 };
 
+const toInstitutionBrand = (data: InstitutionResponse): InstitutionBrand => ({
+  ...data,
+  logo: data.logoUrl || (data.slug === "cimol" ? cimolLogo : null),
+});
+
+export const setInstitutionBrand = (data: InstitutionResponse) => {
+  cachedBrand = toInstitutionBrand(data);
+  applyInstitutionTheme(cachedBrand);
+  return cachedBrand;
+};
+
 const loadInstitutionBrand = async () => {
   if (pendingBrand) return pendingBrand;
   pendingBrand = apiFetch<InstitutionResponse>("/api/instituicao").then((data) => {
-    cachedBrand = { ...data, logo: data.logoUrl || cimolLogo };
-    applyInstitutionTheme(cachedBrand);
-    return cachedBrand;
+    return setInstitutionBrand(data);
   }).catch((error) => {
     pendingBrand = null;
     throw error;

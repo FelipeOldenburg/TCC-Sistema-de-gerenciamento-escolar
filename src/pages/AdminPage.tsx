@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { AlertCircle, ArrowLeft, Building2, CalendarDays, DoorOpen, Download, FileUp, LogOut, MessageSquareWarning, Paperclip, Plus, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, Building2, CalendarDays, DoorOpen, Download, FileUp, LogOut, MessageSquareWarning, Palette, Paperclip, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import BlocosSection from "@/components/admin/BlocosSection";
 import EventosAdminSection from "@/components/admin/EventosAdminSection";
+import InstitutionIdentitySection from "@/components/admin/InstitutionIdentitySection";
 import OuvidoriaAdminSection from "@/components/admin/OuvidoriaAdminSection";
 import SalasSection from "@/components/admin/SalasSection";
 import SetoresAdminSection from "@/components/admin/SetoresAdminSection";
@@ -14,7 +15,7 @@ import UraniaImportacoesSection from "@/components/admin/UraniaImportacoesSectio
 import { apiFetch, apiUrl, type SessionUser, type UserRole } from "@/lib/api";
 import { useInstitutionBrand } from "@/lib/institution";
 
-type AdminTab = "horarios" | "blocos" | "salas" | "eventos" | "setores" | "ouvidoria" | "reorganizacao";
+type AdminTab = "horarios" | "identidade" | "blocos" | "salas" | "eventos" | "setores" | "ouvidoria" | "reorganizacao";
 
 type ReorganizacaoRegistro = {
   id: number;
@@ -51,6 +52,7 @@ type ReorganizacaoResposta = {
 
 const sidebarItems: { id: AdminTab; label: string; icon: typeof FileUp; roles: UserRole[] }[] = [
   { id: "horarios", label: "Turmas e Horários", icon: FileUp, roles: ["ADMIN", "CPD"] },
+  { id: "identidade", label: "Identidade", icon: Palette, roles: ["CPD"] },
   { id: "blocos", label: "Blocos", icon: Building2, roles: ["CPD"] },
   { id: "salas", label: "Controle de Salas", icon: DoorOpen, roles: ["CPD"] },
   { id: "eventos", label: "Eventos", icon: CalendarDays, roles: ["CPD"] },
@@ -541,6 +543,8 @@ const AdminPageComponent = () => {
     switch (activeTab) {
       case "horarios":
         return <UraniaImportacoesSection user={user} />;
+      case "identidade":
+        return <InstitutionIdentitySection />;
       case "blocos":
         return <BlocosSection />;
       case "salas":
@@ -562,7 +566,11 @@ const AdminPageComponent = () => {
         <div className="p-4 border-b border-border">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg overflow-hidden bg-accent/20 p-0.5">
-              <img src={brand.logo} alt={brand.name} className="w-full h-full object-contain" />
+              {brand.logo ? (
+                <img src={brand.logo} alt={brand.name} className="w-full h-full object-contain" />
+              ) : (
+                <Building2 className="h-full w-full p-2 text-primary" />
+              )}
             </div>
             <div>
               <p className="font-heading font-bold text-sm text-foreground">{brand.adminName}</p>
@@ -615,7 +623,11 @@ const AdminPageComponent = () => {
       <div className="md:hidden fixed top-0 left-0 right-0 bg-card border-b border-border p-3 z-30 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg overflow-hidden bg-accent/20 p-0.5">
-            <img src={brand.logo} alt={brand.name} className="w-full h-full object-contain" />
+            {brand.logo ? (
+              <img src={brand.logo} alt={brand.name} className="w-full h-full object-contain" />
+            ) : (
+              <Building2 className="h-full w-full p-2 text-primary" />
+            )}
           </div>
           <span className="font-heading font-bold text-sm">{user.papel === "CPD" ? "CPD" : "URÂNIA"}</span>
         </div>

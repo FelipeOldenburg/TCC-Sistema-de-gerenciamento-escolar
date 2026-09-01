@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Bell, ChevronRight, Clock, Search, Settings } from "lucide-react";
+import { ArrowLeft, Bell, Building2, ChevronRight, Clock, Search, Settings } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch, type SessionUser } from "@/lib/api";
 import designMoveisImg from "@/assets/cursos/design-moveis.png";
@@ -461,7 +461,11 @@ const HorariosSection = () => {
             const image = courseImages[courseName as keyof typeof courseImages] || brand.logo;
             return <button key={courseName} onClick={() => openCourse(courseName)} className="glass-card glass-card-hover group overflow-hidden rounded-xl border border-border bg-card p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" style={{ animationDelay: `${index * 60}ms` }}>
               <span className="flex h-32 w-full items-center justify-center border-b border-border bg-background p-3">
-                <img src={image} alt="" className="h-full w-full object-contain drop-shadow-sm transition-transform duration-300 group-hover:scale-105" />
+                {image ? (
+                  <img src={image} alt="" className="h-full w-full object-contain drop-shadow-sm transition-transform duration-300 group-hover:scale-105" />
+                ) : (
+                  <Building2 className="h-12 w-12 text-muted-foreground transition-transform duration-300 group-hover:scale-105" />
+                )}
               </span>
               <span className="flex min-h-16 items-center justify-between gap-3 px-4 py-3">
                 <span className="font-semibold text-card-foreground text-sm leading-tight">{courseName}</span>

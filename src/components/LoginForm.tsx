@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { Building2, Check, Copy } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -59,7 +59,11 @@ const LoginForm = ({ onLoginSuccess }: LoginFormProps) => {
       <div className="glass-card rounded-3xl p-8 w-full max-w-md space-y-6 shadow-2xl">
         <div className="flex flex-col items-center gap-3 mb-8">
           <div className="w-16 h-16 rounded-xl overflow-hidden bg-accent/20 p-1 ring-2 ring-accent/30">
-            <img src={brand.logo} alt={brand.name} className="w-full h-full object-contain" />
+            {brand.logo ? (
+              <img src={brand.logo} alt={brand.name} className="w-full h-full object-contain" />
+            ) : (
+              <Building2 className="h-full w-full p-3 text-primary" />
+            )}
           </div>
           <div className="text-center">
             <h1 className="text-2xl font-heading font-bold text-foreground">{brand.name}</h1>

@@ -1,4 +1,4 @@
-import { User } from "lucide-react";
+import { Building2, User } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useInstitutionBrand } from "@/lib/institution";
 
@@ -9,7 +9,11 @@ const AppHeader = () => {
     <header className="bg-header px-4 md:px-6 py-3 flex items-center justify-between shadow-lg relative z-20">
       <div className="flex items-center gap-3">
         <div className="w-11 h-11 rounded-lg overflow-hidden bg-accent/20 p-0.5 ring-2 ring-accent/30">
-          <img src={brand.logo} alt={brand.name} className="w-full h-full object-contain" />
+          {brand.logo ? (
+            <img src={brand.logo} alt={brand.name} className="w-full h-full object-contain" />
+          ) : (
+            <Building2 className="h-full w-full p-2 text-primary-foreground" />
+          )}
         </div>
         <div>
           <h1 className="text-primary-foreground font-heading font-bold text-base md:text-lg leading-tight">

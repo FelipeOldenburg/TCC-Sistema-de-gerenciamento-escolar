@@ -560,11 +560,11 @@ const requirePlatformManager = (req, res, next) => {
 };
 
 const defaultInstitutionColors = {
-  cor_primaria_hsl: "228 65% 48%",
-  cor_acento_hsl: "45 100% 51%",
-  cor_header_hsl: "228 62% 32%",
-  cor_nav_hsl: "228 62% 42%",
-  cor_nav_ativa_hsl: "228 50% 52%",
+  cor_primaria_hsl: "220 9% 46%",
+  cor_acento_hsl: "215 16% 47%",
+  cor_header_hsl: "222 10% 24%",
+  cor_nav_hsl: "220 9% 32%",
+  cor_nav_ativa_hsl: "220 8% 42%",
 };
 
 const hslColorPattern = /^\d{1,3}(?:\.\d+)?\s+\d{1,3}(?:\.\d+)?%\s+\d{1,3}(?:\.\d+)?%$/;
@@ -593,6 +593,18 @@ const normalizeInstitutionPayload = (body = {}) => ({
   ativo: body.ativo == null ? true : asBoolean(body.ativo),
 });
 
+const normalizeInstitutionBrandPayload = (body = {}) => ({
+  nome_admin: sanitizeFreeText(body.nome_admin, 120),
+  nome_sistema: sanitizeFreeText(body.nome_sistema, 160),
+  subtitulo_admin: sanitizeFreeText(body.subtitulo_admin, 160),
+  logo_url: sanitizeFreeText(body.logo_url, 500) || null,
+  cor_primaria_hsl: sanitizeFreeText(body.cor_primaria_hsl, 40) || defaultInstitutionColors.cor_primaria_hsl,
+  cor_acento_hsl: sanitizeFreeText(body.cor_acento_hsl, 40) || defaultInstitutionColors.cor_acento_hsl,
+  cor_header_hsl: sanitizeFreeText(body.cor_header_hsl, 40) || defaultInstitutionColors.cor_header_hsl,
+  cor_nav_hsl: sanitizeFreeText(body.cor_nav_hsl, 40) || defaultInstitutionColors.cor_nav_hsl,
+  cor_nav_ativa_hsl: sanitizeFreeText(body.cor_nav_ativa_hsl, 40) || defaultInstitutionColors.cor_nav_ativa_hsl,
+});
+
 const validateInstitutionPayload = (institution) => {
   if (!institution.slug || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(institution.slug)) {
     throw httpError(400, "Informe um slug válido para o subdomínio.");
@@ -607,6 +619,47 @@ const validateInstitutionPayload = (institution) => {
     if (!hslColorPattern.test(institution[field])) throw httpError(400, "Informe cores HSL válidas.");
   }
 };
+
+const validateInstitutionBrandPayload = (brand) => {
+  if (!brand.nome_admin || !brand.nome_sistema || !brand.subtitulo_admin) {
+    throw httpError(400, "Preencha nome administrativo, nome do sistema e subtítulo.");
+  }
+  if (brand.logo_url && !/^https?:\/\//i.test(brand.logo_url)) {
+    throw httpError(400, "Informe uma URL de logo iniciando com http:// ou https://.");
+  }
+  for (const field of Object.keys(defaultInstitutionColors)) {
+    if (!hslColorPattern.test(brand[field])) throw httpError(400, "Informe cores HSL válidas.");
+  }
+};
+
+app.put("/api/instituicao", requireRole("CPD"), async (req, res, next) => {
+  const brand = normalizeInstitutionBrandPayload(req.body);
+  try {
+    validateInstitutionBrandPayload(brand);
+    await db.query(
+      `UPDATE instituicoes
+          SET nome_admin = ?, nome_sistema = ?, subtitulo_admin = ?, logo_url = ?,
+              cor_primaria_hsl = ?, cor_acento_hsl = ?, cor_header_hsl = ?, cor_nav_hsl = ?,
+              cor_nav_ativa_hsl = ?
+        WHERE id = ?`,
+      [
+        brand.nome_admin,
+        brand.nome_sistema,
+        brand.subtitulo_admin,
+        brand.logo_url,
+        brand.cor_primaria_hsl,
+        brand.cor_acento_hsl,
+        brand.cor_header_hsl,
+        brand.cor_nav_hsl,
+        brand.cor_nav_ativa_hsl,
+        req.institution.id,
+      ]
+    );
+    res.json(serializeInstitutionBrand(await loadInstitutionBySlug(req.institution.slug)));
+  } catch (error) {
+    next(error);
+  }
+});
 
 const serializeAdminInstitution = (row) => ({
   ...row,
