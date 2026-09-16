@@ -4,28 +4,74 @@ import pg from "pg";
 const { Client, Pool } = pg;
 
 const asBoolean = (value) => value === true || value === 1 || value === "1" || value === "true" || value === "on";
-const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || "";
-const parsedDatabaseUrl = databaseUrl ? new URL(databaseUrl) : null;
-const databaseName = process.env.DB_NAME || parsedDatabaseUrl?.pathname.replace(/^\/+/, "").split("?")[0] || "cimol";
 
-if (!/^[A-Za-z0-9_]+$/.test(databaseName)) {
-  throw new Error("DB_NAME contem caracteres invalidos.");
-}
+export const resolveDbConfig = (env = process.env) => {
+  const databaseUrl = env.DATABASE_URL || env.POSTGRES_URL || "";
+  const parsedDatabaseUrl = databaseUrl ? new URL(databaseUrl) : null;
+  const databaseName = env.DB_NAME || parsedDatabaseUrl?.pathname.replace(/^\/+/, "").split("?")[0] || "cimol";
 
-const databaseSsl = asBoolean(process.env.DB_SSL)
-  ? { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false" }
-  : undefined;
+  if (!/^[A-Za-z0-9_]+$/.test(databaseName)) {
+    throw new Error("DB_NAME contem caracteres invalidos.");
+  }
 
-const poolConfig = parsedDatabaseUrl
-  ? { connectionString: databaseUrl, ssl: databaseSsl }
-  : {
-      host: process.env.DB_HOST || "localhost",
-      port: Number(process.env.DB_PORT || 5432),
-      user: process.env.DB_USER || "postgres",
-      password: process.env.DB_PASSWORD || "",
-      database: databaseName,
-      ssl: databaseSsl,
-    };
+  const sslMode = parsedDatabaseUrl?.searchParams.get("sslmode")?.toLowerCase();
+  const urlSsl = parsedDatabaseUrl?.searchParams.get("ssl")?.toLowerCase();
+  const sslCa = String(env.DB_SSL_CA || "").trim();
+  const sslCaFile = String(env.DB_SSL_CA_FILE || parsedDatabaseUrl?.searchParams.get("sslrootcert") || "").trim();
+  const shouldUseSsl =
+    asBoolean(env.DB_SSL) ||
+    ["require", "verify-ca", "verify-full"].includes(sslMode) ||
+    ["1", "true"].includes(urlSsl) ||
+    Boolean(sslCa || sslCaFile);
+  const certificateAuthority = shouldUseSsl
+    ? sslCa
+      ? sslCa.replace(/\\n/g, "\n")
+      : sslCaFile
+        ? fs.readFileSync(sslCaFile, "utf8")
+        : undefined
+    : undefined;
+  const databaseSsl = shouldUseSsl
+    ? { rejectUnauthorized: env.DB_SSL_REJECT_UNAUTHORIZED !== "false", ...(certificateAuthority ? { ca: certificateAuthority } : {}) }
+    : undefined;
+  const insecureSslMode = ["disable", "prefer", "no-verify"].includes(sslMode);
+  const urlDisablesSsl = ["0", "false"].includes(urlSsl);
+  const databaseHost = parsedDatabaseUrl?.hostname || String(env.DB_HOST || "");
+  const isSupabaseHost = /(?:^|\.)supabase(?:\.co|\.com)$/.test(databaseHost.toLowerCase());
+
+  if (
+    env.NODE_ENV === "production" &&
+    isSupabaseHost &&
+    (!databaseSsl || !databaseSsl.rejectUnauthorized || !databaseSsl.ca || insecureSslMode || urlDisablesSsl)
+  ) {
+    throw new Error("Supabase em produção exige SSL com a CA do projeto e validação de certificado.");
+  }
+
+  const connectionString = parsedDatabaseUrl
+    ? (() => {
+        const url = new URL(databaseUrl);
+        for (const key of ["ssl", "sslmode", "sslcert", "sslkey", "sslrootcert", "uselibpqcompat", "sslnegotiation"]) {
+          url.searchParams.delete(key);
+        }
+        return url.toString();
+      })()
+    : undefined;
+
+  return {
+    databaseName,
+    shouldCreateDatabase: asBoolean(env.DB_CREATE_DATABASE),
+    connectionLimit: Number(env.DB_CONNECTION_LIMIT || (env.VERCEL ? 1 : 10)),
+    poolConfig: parsedDatabaseUrl
+      ? { connectionString, ssl: databaseSsl }
+      : {
+          host: env.DB_HOST || "localhost",
+          port: Number(env.DB_PORT || 5432),
+          user: env.DB_USER || "postgres",
+          password: env.DB_PASSWORD || "",
+          database: databaseName,
+          ssl: databaseSsl,
+        },
+  };
+};
 
 const quoteIdentifier = (value) => `"${String(value).replace(/"/g, "\"\"")}"`;
 
@@ -47,11 +93,10 @@ const runQuery = async (client, sql, params = []) => {
   return wrapResult(sql, await client.query(text, values));
 };
 
-export const initializeSchema = async (schemaPath) => {
-  const shouldCreateDatabase =
-    process.env.DB_CREATE_DATABASE == null ? !parsedDatabaseUrl : asBoolean(process.env.DB_CREATE_DATABASE);
+export const initializeSchema = async (schemaPath, { createDatabase = false } = {}) => {
+  const { databaseName, shouldCreateDatabase, poolConfig } = resolveDbConfig();
 
-  if (shouldCreateDatabase) {
+  if (createDatabase && shouldCreateDatabase) {
     const client = new Client({ ...poolConfig, database: process.env.POSTGRES_MAINTENANCE_DB || "postgres" });
     await client.connect();
     try {
@@ -71,13 +116,15 @@ export const initializeSchema = async (schemaPath) => {
 };
 
 export const createDbPool = () => {
+  const { connectionLimit, poolConfig } = resolveDbConfig();
   const pool = new Pool({
     ...poolConfig,
-    max: Number(process.env.DB_CONNECTION_LIMIT || (process.env.VERCEL ? 4 : 10)),
+    max: connectionLimit,
   });
 
   return {
     query: (sql, params) => runQuery(pool, sql, params),
+    end: () => pool.end(),
     getConnection: async () => {
       const client = await pool.connect();
       return {
