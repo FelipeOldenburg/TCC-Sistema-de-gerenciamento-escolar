@@ -7,11 +7,14 @@ import {
   GraduationCap,
   MapPin,
   Monitor,
+  MessageSquareWarning,
   Shield,
   Users,
   Wrench,
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import type { ReportContext } from "@/components/sections/ReclamacoesSection";
 
 type Setor = {
   id: number;
@@ -23,6 +26,9 @@ type Setor = {
   horario_atendimento: string | null;
   icone: string;
   cor: string;
+  mapa_id: number | null;
+  mapa_area_id: number | null;
+  mapa_nome: string | null;
 };
 
 const iconMap = {
@@ -49,7 +55,11 @@ const colorMap: Record<string, string> = {
   rose: "from-rose-500 to-pink-400",
 };
 
-const SetoresSection = () => {
+const SetoresSection = ({ selectedSectorId, onViewMap, onReportContext }: {
+  selectedSectorId?: number | null;
+  onViewMap?: (areaId: number) => void;
+  onReportContext?: (context: ReportContext) => void;
+}) => {
   const [setores, setSetores] = useState<Setor[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -63,6 +73,10 @@ const SetoresSection = () => {
       .catch((err) => setError(err instanceof Error ? err.message : "Erro ao carregar setores."))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (selectedSectorId && setores.length) document.getElementById(`setor-${selectedSectorId}`)?.scrollIntoView({ block: "center" });
+  }, [selectedSectorId, setores]);
 
   return (
     <div className="animate-fade-in">
@@ -89,7 +103,8 @@ const SetoresSection = () => {
           return (
             <article
               key={setor.id}
-              className="glass-card glass-card-hover rounded-xl p-6 space-y-4"
+              id={`setor-${setor.id}`}
+              className={`glass-card glass-card-hover rounded-xl p-6 space-y-4 ${selectedSectorId === setor.id ? "ring-2 ring-primary" : ""}`}
               style={{ animationDelay: `${index * 60}ms` }}
             >
               <div className="flex items-start gap-4">
@@ -112,6 +127,16 @@ const SetoresSection = () => {
                 {setor.responsavel && <p><span className="font-medium">Responsável:</span> {setor.responsavel}</p>}
                 {setor.horario_atendimento && <p><span className="font-medium">Atendimento:</span> {setor.horario_atendimento}</p>}
                 {setor.contato && <p><span className="font-medium">Contato:</span> {setor.contato}</p>}
+              </div>
+              <div className="flex flex-wrap gap-2 border-t pt-3">
+                {setor.mapa_area_id && (
+                  <Button size="sm" variant="outline" onClick={() => onViewMap?.(setor.mapa_area_id!)}>
+                    <MapPin className="mr-1 h-4 w-4" /> Ver no mapa
+                  </Button>
+                )}
+                <Button size="sm" variant="ghost" onClick={() => onReportContext?.({ origem: "SETOR", label: setor.nome, setor_id: setor.id })}>
+                  <MessageSquareWarning className="mr-1 h-4 w-4" /> Relatar problema
+                </Button>
               </div>
             </article>
           );

@@ -90,6 +90,68 @@ describe("HorariosSection", () => {
     expect(screen.queryByText("MEC 21 A · Mecânica · 2º ano")).not.toBeInTheDocument();
   });
 
+  it("mostra apenas intervalos ligados ao grupo da turma", async () => {
+    const option = { ...turmas[0], grupo_ids: [1, 2, 3] };
+    const otherOption = { turma: "MEC 21 A", curso: "Mecânica", ano: "2", grupo_ids: [99] };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/auth/me")) return { ok: false, status: 401, json: async () => ({ message: "Não autenticado." }) } as Response;
+      if (url.endsWith("/api/intervalos")) return ok([
+        { id: 1, nome: "Recreio", hora_inicio: "09:30", hora_fim: "09:45", grupos: [{ id: 3, tipo: "CURSO", nome: "Informática" }] },
+        { id: 2, nome: "Outro turno", hora_inicio: "15:00", hora_fim: "15:15", grupos: [{ id: 99, tipo: "CURSO", nome: "Mecânica" }] },
+      ]);
+      if (url.includes("apenas_opcoes=1")) return ok({ turmas: [option, otherOption], professores: [], horarios: [] });
+      if (url.includes("turma=INFO%2063%201")) return ok({ turmas: [option], horarios: [{ id: 1, ...option, dia: "SEG", periodo: 1, hora_inicio: "07:30", disciplina: "Programação", professor: "Ana", sala_id: null, ambiente: null, sala: null, bloco: null }] });
+      throw new Error(`URL inesperada: ${url}`);
+    }));
+
+    render(<HorariosSection />);
+    const summary = await screen.findByRole("region", { name: "Intervalos e merenda por curso" });
+    expect(summary).toHaveTextContent("Recreio");
+    expect(summary).toHaveTextContent("Informática");
+    expect(summary).toHaveTextContent("Outro turno");
+    expect(summary).toHaveTextContent("Mecânica");
+    fireEvent.click(await screen.findByRole("button", { name: "Informática" }));
+    const intervals = await screen.findByRole("region", { name: "Intervalos da turma" });
+    expect(intervals).toHaveTextContent("Recreio");
+    expect(intervals).not.toHaveTextContent("Outro turno");
+  });
+
+  it("agrupa cursos com os mesmos horários em uma linha de manhã e tarde", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/auth/me")) return { ok: false, status: 401, json: async () => ({ message: "Não autenticado." }) } as Response;
+      if (url.endsWith("/api/intervalos")) return ok([
+        { id: 1, nome: "Intervalo da manhã", hora_inicio: "09:10", hora_fim: "09:25", grupos: [{ id: 1, tipo: "CURSO", nome: "Informática" }] },
+        { id: 2, nome: "Intervalo da manhã", hora_inicio: "09:10", hora_fim: "09:25", grupos: [{ id: 2, tipo: "CURSO", nome: "Eletrônica" }] },
+        { id: 3, nome: "Intervalo da tarde", hora_inicio: "14:40", hora_fim: "14:55", grupos: [{ id: 2, tipo: "CURSO", nome: "Eletrônica" }, { id: 1, tipo: "CURSO", nome: "Informática" }] },
+        { id: 4, nome: "Merenda noturna", hora_inicio: "18:45", hora_fim: "19:30", grupos: [{ id: 1, tipo: "CURSO", nome: "Informática" }, { id: 2, tipo: "CURSO", nome: "Eletrônica" }] },
+      ]);
+      if (url.includes("apenas_opcoes=1")) return ok({
+        turmas: [
+          { turma: "INFO 63 1", curso: "Informática", ano: "3", grupo_ids: [1] },
+          { turma: "ELE 63 1", curso: "Eletrônica", ano: "3", grupo_ids: [2] },
+        ],
+        professores: [],
+        horarios: [],
+      });
+      throw new Error("URL inesperada: " + url);
+    }));
+
+    render(<HorariosSection />);
+    const table = await screen.findByRole("table", { name: "Intervalos diurnos por curso" });
+    const row = within(table).getByText("09:10–09:25").closest('[role="row"]');
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText("Informática")).toBeInTheDocument();
+    expect(within(row as HTMLElement).getByText("Eletrônica")).toBeInTheDocument();
+    expect(within(row as HTMLElement).getByText("14:40–14:55")).toBeInTheDocument();
+    expect(within(table).getAllByText("09:10–09:25")).toHaveLength(1);
+    const night = screen.getByText("Merenda noturna").parentElement;
+    expect(night).toHaveTextContent("18:45–19:30");
+    expect(night).toHaveTextContent("Informática");
+    expect(night).toHaveTextContent("Eletrônica");
+  });
+
   it("bloqueia sala ocupada no mesmo período para CPD", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

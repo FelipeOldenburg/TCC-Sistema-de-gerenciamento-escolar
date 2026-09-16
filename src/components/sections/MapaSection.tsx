@@ -1,7 +1,12 @@
 import { Map } from "lucide-react";
 import SchoolMap from "@/components/SchoolMap";
+import type { ReportContext } from "@/components/sections/ReclamacoesSection";
 
-const MapaSection = () => {
+const MapaSection = ({ selectedAreaId, onSelectSector, onReportContext }: {
+  selectedAreaId?: number | null;
+  onSelectSector?: (sectorId: number) => void;
+  onReportContext?: (context: ReportContext) => void;
+}) => {
   return (
     <div className="animate-fade-in space-y-6">
       <div className="flex items-start gap-3">
@@ -14,7 +19,7 @@ const MapaSection = () => {
         </div>
       </div>
 
-      <SchoolMap />
+      <SchoolMap selectedAreaId={selectedAreaId} onSelectSector={onSelectSector} onReportContext={onReportContext} />
     </div>
   );
 };

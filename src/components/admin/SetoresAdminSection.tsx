@@ -150,7 +150,7 @@ export default function SetoresAdminSection() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h2 className="text-2xl font-heading font-bold">Setores</h2>
-          <p className="text-sm text-muted-foreground">Gerencie os setores exibidos no site e usados pela ouvidoria.</p>
+          <p className="text-sm text-muted-foreground">Gerencie os setores exibidos no site e usados nos relatos.</p>
         </div>
         <Button onClick={openNew} className="gap-2">
           <Plus className="w-4 h-4" /> Novo setor

@@ -2,10 +2,6 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import SchoolMap from "@/components/SchoolMap";
 
-const blocks = [
-  { id: 1, nome: "Bloco A", descricao: "Prédio principal", total_salas: 1 },
-];
-
 const rooms = [
   {
     id: 10,
@@ -53,13 +49,13 @@ describe("SchoolMap", () => {
       const url = String(input);
       return {
         ok: true,
-        json: async () => url.endsWith("/api/blocos") ? blocks : url.endsWith("/ocupacao") ? occupancy : rooms,
+        json: async () => url.endsWith("/api/mapas") ? [] : url.endsWith("/ocupacao") ? occupancy : rooms,
       } as Response;
     }));
 
     render(<SchoolMap />);
 
-    await waitFor(() => expect(screen.getByText("Laboratório 101")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Mapa ainda não configurado")).toBeInTheDocument());
     fireEvent.change(screen.getByRole("textbox", { name: "Buscar uma sala ou ambiente" }), {
       target: { value: "laboratorio 101" },
     });
@@ -74,5 +70,21 @@ describe("SchoolMap", () => {
     expect(within(details).getByText("Computadores")).toBeInTheDocument();
     await waitFor(() => expect(within(details).getAllByText(/62-1/).length).toBeGreaterThan(0));
     expect(within(details).getByText("Acesso pelo corredor principal.")).toBeInTheDocument();
+  });
+
+  it("renderiza e seleciona somente áreas recebidas da API", async () => {
+    const maps = [{
+      id: 3, nome: "Térreo", piso: "Piso 1", largura: 100, altura: 80,
+      areas: [{ id: 4, mapa_id: 3, tipo: "SETOR", nome: "Biblioteca", caminho_svg: "M0 0 L50 0 L50 50 Z", bloco_id: null, sala_id: null, setor_id: 8, bloco_nome: null, sala_nome: null, setor_nome: "Biblioteca" }],
+    }];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => ({
+      ok: true,
+      json: async () => String(input).endsWith("/api/mapas") ? maps : rooms,
+    } as Response)));
+
+    render(<SchoolMap />);
+    const area = await screen.findByRole("button", { name: "Biblioteca" });
+    fireEvent.keyDown(area, { key: "Enter" });
+    expect(screen.getByRole("region", { name: "Detalhes da área selecionada" })).toHaveTextContent("Biblioteca");
   });
 });

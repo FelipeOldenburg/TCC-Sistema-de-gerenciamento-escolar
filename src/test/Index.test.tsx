@@ -8,7 +8,10 @@ vi.mock("@/components/sections/HorariosSection", () => ({ default: () => <div>Co
 vi.mock("@/components/sections/MapaSection", () => ({ default: () => <div>Conteudo Mapa</div> }));
 vi.mock("@/components/sections/EventosSection", () => ({ default: () => <div>Conteudo Eventos</div> }));
 vi.mock("@/components/sections/SetoresSection", () => ({ default: () => <div>Conteudo Setores</div> }));
-vi.mock("@/components/sections/ReclamacoesSection", () => ({ default: () => <div>Conteudo Ouvidoria</div> }));
+vi.mock("@/components/sections/ReclamacoesSection", () => ({
+  default: () => <div>Conteudo Ouvidoria</div>,
+  ProblemReportDialog: () => null,
+}));
 
 describe("Index", () => {
   afterEach(() => {

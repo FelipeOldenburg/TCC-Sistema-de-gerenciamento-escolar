@@ -1,19 +1,18 @@
 import { Calendar, MapPin, CalendarDays, Building2, MessageSquareWarning } from "lucide-react";
 import { useRef, useEffect } from "react";
+import { type HomeTabId } from "@/models/homeTabs";
 
 const tabs = [
   { id: "horarios", label: "Horários", icon: Calendar },
   { id: "mapa", label: "Mapa", icon: MapPin },
   { id: "eventos", label: "Eventos", icon: CalendarDays },
   { id: "setores", label: "Setores", icon: Building2 },
-  { id: "reclamacoes", label: "Ouvidoria", icon: MessageSquareWarning },
+  { id: "reclamacoes", label: "Relatar problema", icon: MessageSquareWarning },
 ] as const;
 
-export type TabId = (typeof tabs)[number]["id"];
-
 interface TabNavigationProps {
-  activeTab: TabId;
-  onTabChange: (tab: TabId) => void;
+  activeTab: HomeTabId;
+  onTabChange: (tab: HomeTabId) => void;
 }
 
 const TabNavigation = ({ activeTab, onTabChange }: TabNavigationProps) => {

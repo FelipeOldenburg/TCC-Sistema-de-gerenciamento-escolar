@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Bell, Building2, ChevronRight, Clock, Search, Settings } from "lucide-react";
+import { ArrowLeft, Bell, Building2, ChevronRight, Clock, MessageSquareWarning, Search, Settings } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch, type SessionUser } from "@/lib/api";
 import designMoveisImg from "@/assets/cursos/design-moveis.png";
@@ -16,8 +16,16 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useInstitutionBrand } from "@/lib/institution";
+import type { ReportContext } from "@/components/sections/ReclamacoesSection";
 
-type ClassOption = { turma: string; curso: string | null; ano: string | null };
+type ClassOption = { turma: string; curso: string | null; ano: string | null; grupo_ids: number[] };
+type Interval = {
+  id: number;
+  nome: string;
+  hora_inicio: string;
+  hora_fim: string;
+  grupos: { id: number; tipo?: "CURSO" | "ANO" | "SERIE" | "TURMA" | "NIVEL"; nome?: string }[];
+};
 type RoomOption = {
   id: number;
   nome: string;
@@ -93,6 +101,9 @@ const normalizeSearch = (value: string) =>
   value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR");
 const sameSlot = (a: Pick<PublishedSchedule, "dia" | "periodo" | "hora_inicio">, b: Pick<PublishedSchedule, "dia" | "periodo" | "hora_inicio">) =>
   a.dia === b.dia && a.periodo === b.periodo;
+const groupNames = (groups: Interval["grupos"]) => groups.map((group) =>
+  group.tipo === "CURSO" ? group.nome : [group.tipo === "SERIE" ? "Série" : group.tipo === "NIVEL" ? "Nível" : group.tipo === "TURMA" ? "Turma" : "Ano", group.nome].filter(Boolean).join(" ")
+).filter(Boolean);
 const storedText = (value: unknown) => typeof value === "string" ? value : "";
 const readStoredScheduleState = (): StoredScheduleState => {
   try {
@@ -109,7 +120,7 @@ const readStoredScheduleState = (): StoredScheduleState => {
   }
 };
 
-const HorariosSection = () => {
+const HorariosSection = ({ onReportContext }: { onReportContext?: (context: ReportContext) => void }) => {
   const brand = useInstitutionBrand();
   const [storedState] = useState(readStoredScheduleState);
   const [view, setView] = useState<"cursos" | "tabela">(storedState.className || storedState.teacherQuery ? storedState.view : "cursos");
@@ -139,6 +150,8 @@ const HorariosSection = () => {
   const [notificationClass, setNotificationClass] = useState("");
   const [savingNotification, setSavingNotification] = useState(false);
   const [selectedMobileDay, setSelectedMobileDay] = useState("");
+  const [intervals, setIntervals] = useState<Interval[]>([]);
+  const [intervalError, setIntervalError] = useState("");
 
   const isCpd = user?.papel === "CPD";
 
@@ -150,6 +163,12 @@ const HorariosSection = () => {
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Erro ao carregar horários."))
       .finally(() => setLoadingOptions(false));
+  }, []);
+
+  useEffect(() => {
+    apiFetch<Interval[]>("/api/intervalos")
+      .then((data) => { setIntervals(data); setIntervalError(""); })
+      .catch((err) => setIntervalError(err instanceof Error ? err.message : "Erro ao carregar intervalos."));
   }, []);
 
   useEffect(() => {
@@ -224,6 +243,42 @@ const HorariosSection = () => {
     () => options.filter((item) => (item.curso || "Outros") === course && (!year || (item.ano || "Não informado") === year)),
     [options, course, year]
   );
+  const visibleIntervals = useMemo(() => {
+    const groupIds = new Set(
+      options
+        .filter((option) => className ? option.turma === className : schedules.some((schedule) => schedule.turma === option.turma))
+        .flatMap((option) => option.grupo_ids || [])
+    );
+    return intervals.filter((interval) => interval.grupos.some((group) => groupIds.has(group.id)));
+  }, [className, intervals, options, schedules]);
+  const intervalOverview = useMemo(() => {
+    const slots = new Map<string, Interval>();
+    for (const interval of intervals) {
+      const key = [interval.nome, interval.hora_inicio, interval.hora_fim].join("|");
+      const existing = slots.get(key);
+      if (!existing) {
+        slots.set(key, { ...interval, grupos: [...interval.grupos] });
+      } else {
+        for (const group of interval.grupos) {
+          if (!existing.grupos.some((item) => item.id === group.id)) existing.grupos.push(group);
+        }
+      }
+    }
+
+    const rows = new Map<string, { groups: Interval["grupos"]; morning: Interval[]; afternoon: Interval[] }>();
+    const night: Interval[] = [];
+    for (const interval of [...slots.values()].sort((a, b) => a.hora_inicio.localeCompare(b.hora_inicio))) {
+      interval.grupos.sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
+      if (interval.hora_inicio >= "18:00") {
+        night.push(interval);
+        continue;
+      }
+      const key = interval.grupos.map((group) => group.id).sort((a, b) => a - b).join(",");
+      if (!rows.has(key)) rows.set(key, { groups: interval.grupos, morning: [], afternoon: [] });
+      rows.get(key)![interval.hora_inicio < "12:00" ? "morning" : "afternoon"].push(interval);
+    }
+    return { rows: [...rows.values()], night };
+  }, [intervals]);
   const schedulesByDay = useMemo(() => {
     const extraDays = ["SAB", "DOM"].filter((day) => schedules.some((schedule) => schedule.dia === day));
     return [...weekdayOrder, ...extraDays].map((day) => ({
@@ -474,6 +529,55 @@ const HorariosSection = () => {
             </button>;
           })}
         </div>
+        {intervalError && <p role="alert" className="mt-6 text-sm text-destructive">{intervalError}</p>}
+        {!!intervals.length && (
+          <section aria-label="Intervalos e merenda por curso" className="glass-card mt-6 rounded-2xl p-5">
+            <div className="flex items-center gap-2">
+              <Clock className="h-5 w-5 text-primary" />
+              <h3 className="font-heading text-lg font-bold">Horários de intervalos e merenda</h3>
+            </div>
+            {!!intervalOverview.rows.length && (
+              <div role="table" aria-label="Intervalos diurnos por curso" className="mt-4 overflow-hidden rounded-xl border bg-background">
+                <div role="row" className="hidden grid-cols-[minmax(0,1.4fr)_1fr_1fr] gap-4 border-b bg-muted/50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:grid">
+                  <span role="columnheader">Cursos</span><span role="columnheader">Manhã</span><span role="columnheader">Tarde</span>
+                </div>
+                {intervalOverview.rows.map((row) => (
+                  <div role="row" key={row.groups.map((group) => group.id).join("-")} className="grid grid-cols-2 gap-3 border-b p-4 last:border-b-0 sm:grid-cols-[minmax(0,1.4fr)_1fr_1fr] sm:items-center sm:gap-4">
+                    <div role="cell" className="col-span-2 space-y-1 sm:col-span-1">
+                      <span className="text-xs font-semibold uppercase text-muted-foreground sm:hidden">Cursos</span>
+                      {groupNames(row.groups).map((name) => <span key={name} className="block text-sm font-semibold text-foreground">{name}</span>)}
+                    </div>
+                    {(["morning", "afternoon"] as const).map((period) => (
+                      <div role="cell" key={period} className="min-w-0">
+                        <span className="text-xs font-semibold uppercase text-muted-foreground sm:hidden">{period === "morning" ? "Manhã" : "Tarde"}</span>
+                        {row[period].length ? row[period].map((interval) => (
+                          <div key={interval.id} className="mt-1 first:mt-0">
+                            <span className="block whitespace-nowrap font-semibold tabular-nums text-primary">{interval.hora_inicio}–{interval.hora_fim}</span>
+                            <span className="text-xs text-muted-foreground">{interval.nome}</span>
+                          </div>
+                        )) : <span className="text-muted-foreground">—</span>}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+            {!!intervalOverview.night.length && (
+              <div className="mt-5 border-t pt-4">
+                <h4 className="text-sm font-semibold text-foreground">Noturno</h4>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  {intervalOverview.night.map((interval) => (
+                    <div key={interval.id} className="rounded-xl border bg-background p-4">
+                      <p className="text-sm font-semibold">{interval.nome}</p>
+                      <p className="mt-1 font-semibold tabular-nums text-primary">{interval.hora_inicio}–{interval.hora_fim}</p>
+                      <p className="mt-2 text-xs text-muted-foreground">Cursos: {groupNames(interval.grupos).join(" · ")}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+        )}
       </div>
     );
   }
@@ -510,6 +614,19 @@ const HorariosSection = () => {
             <div className="space-y-1.5"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Ano</label><Select value={year} onValueChange={changeYear}><SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger><SelectContent>{years.map((item) => <SelectItem key={item} value={item}>{item === "Não informado" ? item : `${item}º ano`}</SelectItem>)}</SelectContent></Select></div>
             <div className="space-y-1.5"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Turma</label><Select value={className} onValueChange={changeClassName}><SelectTrigger className="w-[180px]"><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent>{classes.map((item) => <SelectItem key={item.turma} value={item.turma}>{item.turma}</SelectItem>)}</SelectContent></Select></div>
           </div>
+        )}
+        {intervalError && <p role="alert" className="mb-4 text-sm text-destructive">{intervalError}</p>}
+        {!!visibleIntervals.length && (
+          <section aria-label="Intervalos da turma" className="mb-6 rounded-xl border border-primary/20 bg-primary/5 p-4">
+            <h3 className="text-sm font-semibold text-foreground">Intervalos</h3>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {visibleIntervals.map((interval) => (
+                <span key={interval.id} className="rounded-full border bg-background px-3 py-1.5 text-sm">
+                  <span className="font-medium">{interval.nome}</span> · {interval.hora_inicio}–{interval.hora_fim}
+                </span>
+              ))}
+            </div>
+          </section>
         )}
         {error && <p className="text-sm text-destructive mb-4">{error}</p>}
         {loadingSchedules && <div className="rounded-xl border border-border py-10 text-center text-muted-foreground">Carregando...</div>}
@@ -569,6 +686,13 @@ const HorariosSection = () => {
                           <p><span className="font-medium text-foreground">Sala:</span> {schedule.sala || "—"}</p>
                           <p><span className="font-medium text-foreground">Professor:</span> {schedule.professor || "—"}</p>
                         </div>
+                        <Button type="button" size="sm" variant="ghost" className="mt-2 px-0" onClick={() => onReportContext?.({
+                          origem: "HORARIO",
+                          horario_id: schedule.id,
+                          label: `${dayLabels[schedule.dia] || schedule.dia} · ${schedule.hora_inicio || `${schedule.periodo}ª aula`} · ${schedule.disciplina}`,
+                        })}>
+                          <MessageSquareWarning className="mr-1 h-4 w-4" /> Relatar problema
+                        </Button>
                       </div>
                     ))}
                   </div>
@@ -580,7 +704,8 @@ const HorariosSection = () => {
                           {viewingTeacher && <TableHead>Turma</TableHead>}
                           <TableHead>Disciplina</TableHead>
                           <TableHead>Sala</TableHead>
-                          <TableHead>Professor</TableHead>
+                           <TableHead>Professor</TableHead>
+                           <TableHead><span className="sr-only">Ações</span></TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -607,7 +732,16 @@ const HorariosSection = () => {
                                 )}
                               </div>
                             </TableCell>
-                            <TableCell>{schedule.professor || "—"}</TableCell>
+                             <TableCell>{schedule.professor || "—"}</TableCell>
+                             <TableCell className="text-right">
+                               <Button type="button" variant="ghost" size="icon" aria-label={`Relatar problema em ${schedule.disciplina}`} onClick={() => onReportContext?.({
+                                 origem: "HORARIO",
+                                 horario_id: schedule.id,
+                                 label: `${dayLabels[schedule.dia] || schedule.dia} · ${schedule.hora_inicio || `${schedule.periodo}ª aula`} · ${schedule.disciplina}`,
+                               })}>
+                                 <MessageSquareWarning className="h-4 w-4" />
+                               </Button>
+                             </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>

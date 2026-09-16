@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { AlertCircle, ArrowLeft, Building2, CalendarDays, DoorOpen, Download, FileUp, LogOut, MessageSquareWarning, Palette, Paperclip, Plus, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, Building2, CalendarDays, Clock, DoorOpen, Download, FileUp, LogOut, MessageSquareWarning, Palette, Paperclip, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import BlocosSection from "@/components/admin/BlocosSection";
 import EventosAdminSection from "@/components/admin/EventosAdminSection";
 import InstitutionIdentitySection from "@/components/admin/InstitutionIdentitySection";
+import IntervalosAdminSection from "@/components/admin/IntervalosAdminSection";
 import OuvidoriaAdminSection from "@/components/admin/OuvidoriaAdminSection";
 import SalasSection from "@/components/admin/SalasSection";
 import SetoresAdminSection from "@/components/admin/SetoresAdminSection";
@@ -15,7 +16,7 @@ import UraniaImportacoesSection from "@/components/admin/UraniaImportacoesSectio
 import { apiFetch, apiUrl, type SessionUser, type UserRole } from "@/lib/api";
 import { useInstitutionBrand } from "@/lib/institution";
 
-type AdminTab = "horarios" | "identidade" | "blocos" | "salas" | "eventos" | "setores" | "ouvidoria" | "reorganizacao";
+type AdminTab = "horarios" | "intervalos" | "identidade" | "blocos" | "salas" | "eventos" | "setores" | "ouvidoria" | "reorganizacao";
 
 type ReorganizacaoRegistro = {
   id: number;
@@ -52,12 +53,13 @@ type ReorganizacaoResposta = {
 
 const sidebarItems: { id: AdminTab; label: string; icon: typeof FileUp; roles: UserRole[] }[] = [
   { id: "horarios", label: "Turmas e Horários", icon: FileUp, roles: ["ADMIN", "CPD"] },
+  { id: "intervalos", label: "Intervalos", icon: Clock, roles: ["CPD"] },
   { id: "identidade", label: "Identidade", icon: Palette, roles: ["CPD"] },
   { id: "blocos", label: "Blocos", icon: Building2, roles: ["CPD"] },
   { id: "salas", label: "Controle de Salas", icon: DoorOpen, roles: ["CPD"] },
   { id: "eventos", label: "Eventos", icon: CalendarDays, roles: ["CPD"] },
   { id: "setores", label: "Setores", icon: Building2, roles: ["CPD"] },
-  { id: "ouvidoria", label: "Ouvidoria", icon: MessageSquareWarning, roles: ["CPD"] },
+  { id: "ouvidoria", label: "Relatos", icon: MessageSquareWarning, roles: ["CPD"] },
   { id: "reorganizacao", label: "Reorganização", icon: AlertCircle, roles: ["CPD"] },
 ];
 
@@ -157,13 +159,9 @@ const ReorganizacaoSection = () => {
     setCarregando(true);
 
     try {
-      const resposta = await fetch(apiUrl("/api/reorganizacao?page_size=100"), { credentials: "include" });
-
-      if (!resposta.ok) {
-        throw new Error("Não foi possível carregar os registros.");
-      }
-
-      const dados = await resposta.json();
+      const dados = await apiFetch<ReorganizacaoRegistro[] | { items: ReorganizacaoRegistro[] }>(
+        "/api/reorganizacao?page_size=100"
+      );
       setRegistros(Array.isArray(dados) ? dados : dados.items);
     } catch (error) {
       setErro(error instanceof Error ? error.message : "Erro ao carregar registros.");
@@ -199,18 +197,10 @@ const ReorganizacaoSection = () => {
       if (quantidadeAlunos) formData.append("quantidade_alunos", quantidadeAlunos);
       if (arquivo) formData.append("arquivo", arquivo);
 
-      const resposta = await fetch(apiUrl("/api/reorganizacao"), {
-        credentials: "include",
+      const dados = await apiFetch<ReorganizacaoResposta>("/api/reorganizacao", {
         method: "POST",
         body: formData, // sem Content-Type manual — browser define multipart automaticamente
       });
-
-      if (!resposta.ok) {
-        const dados = await resposta.json().catch(() => null);
-        throw new Error(dados?.message || "Não foi possível salvar o registro.");
-      }
-
-      const dados = await resposta.json() as ReorganizacaoResposta;
       setResultado(dados);
       await carregarRegistros();
       setAlunoMatricula("");
@@ -233,14 +223,9 @@ const ReorganizacaoSection = () => {
     setErro("");
 
     try {
-      const resposta = await fetch(apiUrl(`/api/reorganizacao/${id}`), {
-        credentials: "include",
+      await apiFetch(`/api/reorganizacao/${id}`, {
         method: "DELETE",
       });
-
-      if (!resposta.ok) {
-        throw new Error("Não foi possível remover o registro.");
-      }
 
       setRegistros(registros.filter((registro) => registro.id !== id));
     } catch (error) {
@@ -543,6 +528,8 @@ const AdminPageComponent = () => {
     switch (activeTab) {
       case "horarios":
         return <UraniaImportacoesSection user={user} />;
+      case "intervalos":
+        return <IntervalosAdminSection />;
       case "identidade":
         return <InstitutionIdentitySection />;
       case "blocos":
@@ -640,7 +627,7 @@ const AdminPageComponent = () => {
         </div>
       </div>
 
-      <main className="flex-1 p-6 md:p-8 overflow-auto md:mt-0 mt-14">
+      <main className="flex-1 p-6 pb-24 md:p-8 overflow-auto md:mt-0 mt-14">
         <div className="max-w-6xl mx-auto">
           {renderContent()}
         </div>

@@ -1,441 +1,232 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  Building2,
-  DoorOpen,
-  Laptop2,
-  Layers3,
-  LocateFixed,
-  MapPin,
-  Minus,
-  Navigation,
-  Plus,
-  Projector,
-  RefreshCw,
-  Search,
-  Users,
-  Wifi,
-  Wind,
-  X,
-} from "lucide-react";
-import mapaEscola from "@/assets/mapa-escola.png";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Building2, MapPin, MessageSquareWarning, Search } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import type { ReportContext } from "@/components/sections/ReclamacoesSection";
 
-type Block = {
+type MapArea = {
+  id: number;
+  mapa_id: number;
+  tipo: "BLOCO" | "SALA" | "SETOR" | "OUTRO";
+  nome: string;
+  caminho_svg: string;
+  bloco_id: number | null;
+  sala_id: number | null;
+  setor_id: number | null;
+  bloco_nome: string | null;
+  sala_nome: string | null;
+  setor_nome: string | null;
+};
+
+type MapView = {
   id: number;
   nome: string;
-  descricao: string | null;
-  total_salas: number;
+  piso: string | null;
+  largura: number;
+  altura: number;
+  areas: MapArea[];
 };
 
 type Room = {
   id: number;
   nome: string;
-  bloco_id: number;
   bloco_nome: string;
   andar: string;
   capacidade: number | null;
   tipo: string;
-  status: "ATIVA" | "INATIVA" | "MANUTENCAO";
   acessivel: boolean;
   possui_computadores: boolean;
   possui_data_show: boolean;
   possui_internet: boolean;
   possui_ar_condicionado: boolean;
-  softwares: string[];
   observacoes: string | null;
+  softwares: string[];
 };
 
-type RoomOccupancy = {
-  id: number;
-  turma: string;
-  curso: string | null;
-  ano: string | null;
-  dia: string;
-  periodo: number;
-  hora_inicio: string | null;
-  disciplina: string;
-  professor: string | null;
-};
+type Occupation = { id: number; turma: string; dia: string; periodo: number; disciplina: string; professor: string | null };
 
-type RoomOccupancyResponse = { horarios: RoomOccupancy[] };
+const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
-const markerPositions = [
-  { left: "20%", top: "58%" },
-  { left: "38%", top: "25%" },
-  { left: "70%", top: "43%" },
-  { left: "57%", top: "69%" },
-  { left: "50%", top: "43%" },
-  { left: "30%", top: "43%" },
-  { left: "77%", top: "61%" },
-  { left: "47%", top: "78%" },
-];
-
-const collator = new Intl.Collator("pt-BR", { numeric: true, sensitivity: "base" });
-const weekdayCodes = ["DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SAB"] as const;
-
-function normalize(value: string) {
-  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-}
-
-function minutesFromTime(value: string | null) {
-  if (!value) return null;
-  const [hours, minutes] = value.split(":").map(Number);
-  return Number.isFinite(hours) && Number.isFinite(minutes) ? hours * 60 + minutes : null;
-}
-
-function scheduleLabel(schedule: RoomOccupancy) {
-  return `${schedule.hora_inicio || `${schedule.periodo}ª aula`} · ${schedule.turma} · ${schedule.disciplina}`;
-}
-
-export default function SchoolMap() {
-  const [blocks, setBlocks] = useState<Block[]>([]);
+const SchoolMap = ({
+  selectedAreaId,
+  onSelectSector,
+  onReportContext,
+}: {
+  selectedAreaId?: number | null;
+  onSelectSector?: (sectorId: number) => void;
+  onReportContext?: (context: ReportContext) => void;
+}) => {
+  const [maps, setMaps] = useState<MapView[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
-  const [selectedBlockId, setSelectedBlockId] = useState<number | null>(null);
-  const [selectedFloor, setSelectedFloor] = useState("");
+  const [activeMapId, setActiveMapId] = useState<number | null>(null);
+  const [activeAreaId, setActiveAreaId] = useState<number | null>(selectedAreaId || null);
   const [selectedRoomId, setSelectedRoomId] = useState<number | null>(null);
+  const [occupation, setOccupation] = useState<Occupation[]>([]);
   const [query, setQuery] = useState("");
-  const [zoom, setZoom] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [occupancy, setOccupancy] = useState<RoomOccupancy[]>([]);
-  const [occupancyLoading, setOccupancyLoading] = useState(false);
-  const [occupancyError, setOccupancyError] = useState("");
 
-  const loadMapData = async () => {
+  useEffect(() => {
     setLoading(true);
-    setError("");
-    const [blockResult, roomResult] = await Promise.allSettled([
-      apiFetch<Block[]>("/api/blocos"),
-      apiFetch<Room[]>("/api/salas"),
-    ]);
-
-    if (blockResult.status === "fulfilled") setBlocks(blockResult.value);
-    if (roomResult.status === "fulfilled") setRooms(roomResult.value);
-    if (blockResult.status === "rejected" || roomResult.status === "rejected") {
-      setError("Não foi possível carregar todos os ambientes. Tente novamente em instantes.");
-    }
-    setLoading(false);
-  };
-
-  useEffect(() => {
-    void loadMapData();
-  }, []);
-
-  const availableBlocks = useMemo(() => {
-    const merged = new Map<number, Block>(blocks.map((block) => [block.id, block]));
-    rooms.forEach((room) => {
-      if (!merged.has(room.bloco_id)) {
-        merged.set(room.bloco_id, {
-          id: room.bloco_id,
-          nome: room.bloco_nome,
-          descricao: null,
-          total_salas: rooms.filter((item) => item.bloco_id === room.bloco_id).length,
-        });
-      }
-    });
-    return [...merged.values()].sort((a, b) => collator.compare(a.nome, b.nome));
-  }, [blocks, rooms]);
+    Promise.all([apiFetch<MapView[]>("/api/mapas"), apiFetch<Room[]>("/api/salas")])
+      .then(([mapData, roomData]) => {
+        setMaps(mapData);
+        setRooms(roomData);
+        const selectedMap = selectedAreaId
+          ? mapData.find((map) => (map.areas || []).some((area) => area.id === selectedAreaId))
+          : null;
+        setActiveMapId(selectedMap?.id || mapData[0]?.id || null);
+        setActiveAreaId(selectedAreaId || null);
+        setError("");
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : "Não foi possível carregar o mapa."))
+      .finally(() => setLoading(false));
+  }, [selectedAreaId]);
 
   useEffect(() => {
-    if (selectedBlockId === null && availableBlocks.length > 0) {
-      setSelectedBlockId(availableBlocks[0].id);
-    }
-  }, [availableBlocks, selectedBlockId]);
-
-  const selectedBlock = availableBlocks.find((block) => block.id === selectedBlockId) ?? null;
-  const blockRooms = useMemo(
-    () => rooms.filter((room) => room.bloco_id === selectedBlockId),
-    [rooms, selectedBlockId],
-  );
-  const floors = useMemo(
-    () => [...new Set(blockRooms.map((room) => room.andar))].sort(collator.compare),
-    [blockRooms],
-  );
-
-  useEffect(() => {
-    if (!floors.includes(selectedFloor)) setSelectedFloor(floors[0] ?? "");
-  }, [floors, selectedFloor]);
-
-  const visibleRooms = useMemo(
-    () => blockRooms.filter((room) => room.andar === selectedFloor).sort((a, b) => collator.compare(a.nome, b.nome)),
-    [blockRooms, selectedFloor],
-  );
-  const selectedRoom = rooms.find((room) => room.id === selectedRoomId) ?? null;
-  useEffect(() => {
-    if (!selectedRoomId) {
-      setOccupancy([]);
-      setOccupancyError("");
-      return;
-    }
-
-    let ignore = false;
-    setOccupancyLoading(true);
-    setOccupancyError("");
-    apiFetch<RoomOccupancyResponse>(`/api/salas/${selectedRoomId}/ocupacao`)
-      .then((data) => { if (!ignore) setOccupancy(data.horarios || []); })
-      .catch(() => { if (!ignore) setOccupancyError("Não foi possível carregar a ocupação da sala."); })
-      .finally(() => { if (!ignore) setOccupancyLoading(false); });
-
-    return () => {
-      ignore = true;
-    };
+    if (!selectedRoomId) return setOccupation([]);
+    apiFetch<{ horarios: Occupation[] }>(`/api/salas/${selectedRoomId}/ocupacao`)
+      .then((data) => setOccupation(data.horarios))
+      .catch(() => setOccupation([]));
   }, [selectedRoomId]);
 
-  const roomTimeline = useMemo(() => {
-    const todayCode = weekdayCodes[new Date().getDay()];
-    const today = occupancy
-      .filter((schedule) => schedule.dia === todayCode)
-      .sort((a, b) => (minutesFromTime(a.hora_inicio) ?? a.periodo * 100) - (minutesFromTime(b.hora_inicio) ?? b.periodo * 100));
-    const now = new Date();
-    const nowMinutes = now.getHours() * 60 + now.getMinutes();
-    let current: RoomOccupancy | null = null;
-    let next: RoomOccupancy | null = null;
-
-    for (let index = 0; index < today.length; index += 1) {
-      const schedule = today[index];
-      const start = minutesFromTime(schedule.hora_inicio);
-      if (start === null) {
-        if (!next) next = schedule;
-        continue;
-      }
-      const nextStart = minutesFromTime(today[index + 1]?.hora_inicio ?? null);
-      // ponytail: fallback de 60 min até a importação trazer hora final.
-      const end = nextStart ?? start + 60;
-      if (start <= nowMinutes && nowMinutes < end) {
-        current = schedule;
-        next = today[index + 1] ?? null;
-        break;
-      }
-      if (start > nowMinutes) {
-        next = schedule;
-        break;
-      }
-    }
-
-    return { today, current, next };
-  }, [occupancy]);
-  const searchResults = useMemo(() => {
+  const activeMap = maps.find((map) => map.id === activeMapId) || null;
+  const activeArea = activeMap?.areas?.find((area) => area.id === activeAreaId) || null;
+  const selectedRoom = rooms.find((room) => room.id === selectedRoomId) || null;
+  const results = useMemo(() => {
     const term = normalize(query.trim());
     if (!term) return [];
-    return rooms
-      .filter((room) => normalize(`${room.nome} ${room.bloco_nome} ${room.andar} ${room.tipo}`).includes(term))
-      .sort((a, b) => collator.compare(a.nome, b.nome))
-      .slice(0, 7);
+    return rooms.filter((room) => normalize(`${room.nome} ${room.bloco_nome} ${room.tipo}`).includes(term)).slice(0, 8);
   }, [query, rooms]);
 
-  const selectBlock = (blockId: number) => {
-    setSelectedBlockId(blockId);
-    setSelectedRoomId(null);
+  const selectArea = (area: MapArea) => {
+    setActiveAreaId(area.id);
+    setSelectedRoomId(area.sala_id);
   };
 
   const selectRoom = (room: Room) => {
-    setSelectedBlockId(room.bloco_id);
-    setSelectedFloor(room.andar);
     setSelectedRoomId(room.id);
     setQuery("");
+    const map = maps.find((item) => (item.areas || []).some((area) => area.sala_id === room.id));
+    const area = map?.areas?.find((item) => item.sala_id === room.id);
+    if (map && area) {
+      setActiveMapId(map.id);
+      setActiveAreaId(area.id);
+    }
   };
 
-  const roomResources = selectedRoom
-    ? [
-        selectedRoom.possui_computadores && { label: "Computadores", icon: Laptop2 },
-        selectedRoom.possui_data_show && { label: "Data show", icon: Projector },
-        selectedRoom.possui_internet && { label: "Internet", icon: Wifi },
-        selectedRoom.possui_ar_condicionado && { label: "Ar-condicionado", icon: Wind },
-      ].filter(Boolean) as { label: string; icon: typeof Laptop2 }[]
-    : [];
+  if (loading) return <div className="glass-card rounded-2xl p-8 text-center text-muted-foreground">Carregando mapa...</div>;
+  if (error) return <p role="alert" className="glass-card rounded-2xl p-6 text-destructive">{error}</p>;
 
   return (
-    <div className="space-y-5">
-      <div className="relative z-20 max-w-2xl">
-        <label htmlFor="room-search" className="sr-only">Buscar uma sala ou ambiente</label>
+    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="space-y-4">
         <div className="relative">
-          <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
-          <input
-            id="room-search"
+          <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+          <Input
+            aria-label="Buscar uma sala ou ambiente"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Busque por sala, bloco, pavimento ou tipo"
-            autoComplete="off"
-            className="h-12 w-full rounded-xl border border-border bg-card pl-12 pr-11 text-sm shadow-sm outline-none transition focus:border-primary/50 focus:ring-4 focus:ring-primary/10"
+            placeholder="Buscar sala ou ambiente"
+            className="pl-9"
           />
           {query && (
-            <button type="button" onClick={() => setQuery("")} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Limpar busca">
-              <X className="h-4 w-4" />
-            </button>
+            <div role="listbox" aria-label="Resultados da busca" className="absolute z-20 mt-1 w-full rounded-xl border bg-card p-1 shadow-lg">
+              {results.map((room) => (
+                <button key={room.id} role="option" aria-selected={room.id === selectedRoomId} onClick={() => selectRoom(room)} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted">
+                  <span className="font-medium">{room.nome}</span> <span className="text-muted-foreground">· {room.bloco_nome}</span>
+                </button>
+              ))}
+              {!results.length && <p className="p-3 text-sm text-muted-foreground">Nenhuma sala encontrada.</p>}
+            </div>
           )}
         </div>
 
-        {query.trim() && (
-          <div className="absolute mt-2 max-h-80 w-full overflow-auto rounded-xl border bg-card p-2 shadow-xl" role="listbox" aria-label="Resultados da busca">
-            {searchResults.length > 0 ? searchResults.map((room) => (
-              <button key={room.id} type="button" role="option" aria-selected={room.id === selectedRoomId} onClick={() => selectRoom(room)} className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left hover:bg-muted">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><DoorOpen className="h-4 w-4" /></span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-semibold">{room.nome}</span>
-                  <span className="block truncate text-xs text-muted-foreground">{room.bloco_nome} · {room.andar} · {room.tipo}</span>
-                </span>
-              </button>
-            )) : (
-              <div className="px-4 py-6 text-center text-sm text-muted-foreground">Nenhum ambiente encontrado para “{query.trim()}”.</div>
+        {!maps.length ? (
+          <div className="glass-card flex min-h-80 flex-col items-center justify-center rounded-2xl p-8 text-center">
+            <MapPin className="mb-3 h-9 w-9 text-muted-foreground" />
+            <h3 className="font-heading text-lg font-bold">Mapa ainda não configurado</h3>
+            <p className="mt-2 max-w-md text-sm text-muted-foreground">As plantas reais serão publicadas aqui após a conferência dos documentos da instituição. A busca por salas continua disponível.</p>
+          </div>
+        ) : (
+          <div className="glass-card rounded-2xl p-4">
+            {maps.length > 1 && (
+              <div className="mb-3 flex gap-2 overflow-x-auto" aria-label="Pavimentos do mapa">
+                {maps.map((map) => (
+                  <Button key={map.id} size="sm" variant={map.id === activeMapId ? "default" : "outline"} onClick={() => { setActiveMapId(map.id); setActiveAreaId(null); setSelectedRoomId(null); }}>
+                    {map.nome}{map.piso ? ` · ${map.piso}` : ""}
+                  </Button>
+                ))}
+              </div>
+            )}
+            {activeMap && (
+              <svg viewBox={`0 0 ${activeMap.largura} ${activeMap.altura}`} className="h-auto max-h-[65vh] w-full rounded-xl bg-muted/30" aria-label={activeMap.nome} role="group">
+                {(activeMap.areas || []).map((area) => (
+                  <path
+                    key={area.id}
+                    d={area.caminho_svg}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={area.nome}
+                    aria-pressed={area.id === activeAreaId}
+                    onClick={() => selectArea(area)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectArea(area); }
+                    }}
+                    className={`cursor-pointer stroke-primary stroke-2 transition-colors focus:outline-none focus:stroke-accent ${area.id === activeAreaId ? "fill-primary/50" : "fill-primary/15 hover:fill-primary/30"}`}
+                  />
+                ))}
+              </svg>
             )}
           </div>
         )}
       </div>
 
-      {error && (
-        <div className="flex flex-col gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm sm:flex-row sm:items-center sm:justify-between" role="alert">
-          <span className="text-destructive">{error}</span>
-          <Button variant="outline" size="sm" onClick={() => void loadMapData()} className="gap-2 self-start sm:self-auto"><RefreshCw className="h-4 w-4" /> Tentar novamente</Button>
-        </div>
-      )}
-
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
-        <div className="space-y-5">
-          <section className="overflow-hidden rounded-2xl border bg-card shadow-sm" aria-labelledby="campus-map-title">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 sm:px-5">
-              <div>
-                <h3 id="campus-map-title" className="font-heading font-bold">Visão geral da escola</h3>
-                <p className="text-xs text-muted-foreground">Selecione um bloco para explorar seus ambientes</p>
-              </div>
-              <div className="flex items-center gap-1 rounded-lg border bg-background p-1">
-                <button type="button" onClick={() => setZoom((value) => Math.max(1, value - 0.1))} disabled={zoom <= 1} className="rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40" aria-label="Diminuir mapa"><Minus className="h-4 w-4" /></button>
-                <span className="w-10 text-center text-xs font-semibold" aria-live="polite">{Math.round(zoom * 100)}%</span>
-                <button type="button" onClick={() => setZoom((value) => Math.min(1.5, value + 0.1))} disabled={zoom >= 1.5} className="rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40" aria-label="Ampliar mapa"><Plus className="h-4 w-4" /></button>
-              </div>
-            </div>
-
-            <div className="relative aspect-[4/3] overflow-hidden bg-slate-100 sm:aspect-[16/10]">
-              <div className="absolute inset-0 transition-transform duration-300 ease-out" style={{ transform: `scale(${zoom})` }}>
-                <img src={mapaEscola} alt="Visão ilustrada do complexo escolar" className="h-full w-full object-cover" />
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/25 via-transparent to-white/5" />
-                {availableBlocks.slice(0, markerPositions.length).map((block, index) => {
-                  const isSelected = block.id === selectedBlockId;
-                  return (
-                    <button key={block.id} type="button" onClick={() => selectBlock(block.id)} className="group absolute -translate-x-1/2 -translate-y-1/2 text-left" style={markerPositions[index]} aria-label={`Selecionar ${block.nome}`} aria-pressed={isSelected}>
-                      <span className={`flex h-10 w-10 items-center justify-center rounded-full border-2 shadow-lg transition sm:h-11 sm:w-11 ${isSelected ? "scale-110 border-white bg-primary text-primary-foreground ring-4 ring-primary/25" : "border-white bg-card text-primary hover:scale-110"}`}><Building2 className="h-4 w-4 sm:h-5 sm:w-5" /></span>
-                      <span className={`absolute left-1/2 top-full mt-2 -translate-x-1/2 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs font-bold shadow-lg ${isSelected ? "bg-primary text-primary-foreground" : "bg-card text-card-foreground group-hover:bg-primary group-hover:text-primary-foreground"}`}>{block.nome}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="absolute bottom-3 left-3 flex items-center gap-2 rounded-lg bg-slate-950/70 px-3 py-2 text-xs text-white backdrop-blur-sm"><LocateFixed className="h-4 w-4 text-accent" /> Mapa ilustrativo</div>
+      <aside className="space-y-4">
+        {activeArea && (
+          <section className="glass-card rounded-2xl p-5" aria-label="Detalhes da área selecionada">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Área selecionada</p>
+            <h3 className="mt-1 font-heading text-lg font-bold">{activeArea.nome}</h3>
+            <p className="text-sm text-muted-foreground">{activeArea.setor_nome || activeArea.sala_nome || activeArea.bloco_nome || activeArea.tipo}</p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {activeArea.setor_id && <Button size="sm" variant="outline" onClick={() => onSelectSector?.(activeArea.setor_id!)}>Ver setor</Button>}
+              <Button size="sm" variant="ghost" className="gap-1" onClick={() => onReportContext?.({ origem: "MAPA", label: `${activeMap?.nome}: ${activeArea.nome}`, mapa_area_id: activeArea.id })}>
+                <MessageSquareWarning className="h-4 w-4" /> Relatar problema
+              </Button>
             </div>
           </section>
+        )}
 
-          <section className="rounded-2xl border bg-card p-4 shadow-sm sm:p-5" aria-labelledby="rooms-title">
-            <div className="flex flex-col gap-4 border-b pb-4 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-primary">{selectedBlock?.nome ?? "Ambientes"}</p>
-                <h3 id="rooms-title" className="mt-1 font-heading text-lg font-bold">Salas por pavimento</h3>
-                {selectedBlock?.descricao && <p className="mt-1 text-sm text-muted-foreground">{selectedBlock.descricao}</p>}
-              </div>
-              {floors.length > 0 && (
-                <div className="flex max-w-full gap-1 overflow-x-auto rounded-lg bg-muted p-1" aria-label="Selecionar pavimento">
-                  {floors.map((floor) => (
-                    <button key={floor} type="button" onClick={() => { setSelectedFloor(floor); setSelectedRoomId(null); }} className={`whitespace-nowrap rounded-md px-3 py-2 text-xs font-semibold ${floor === selectedFloor ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`} aria-pressed={floor === selectedFloor}>{floor}</button>
-                  ))}
-                </div>
-              )}
+        {selectedRoom ? (
+          <section className="glass-card rounded-2xl p-5" aria-label="Detalhes da sala selecionada">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sala selecionada</p>
+            <h3 className="mt-1 font-heading text-lg font-bold">{selectedRoom.nome}</h3>
+            <p className="text-sm text-muted-foreground">{selectedRoom.bloco_nome} · {selectedRoom.andar}</p>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              {selectedRoom.capacidade !== null && <span className="rounded-full bg-muted px-2 py-1">{selectedRoom.capacidade} lugares</span>}
+              {selectedRoom.acessivel && <span className="rounded-full bg-muted px-2 py-1">Acessível</span>}
+              {selectedRoom.possui_computadores && <span className="rounded-full bg-muted px-2 py-1">Computadores</span>}
+              {selectedRoom.possui_data_show && <span className="rounded-full bg-muted px-2 py-1">Projetor</span>}
             </div>
-
-            {loading ? (
-              <div className="grid gap-3 pt-4 sm:grid-cols-2 xl:grid-cols-3" aria-label="Carregando salas">{[0, 1, 2].map((item) => <div key={item} className="h-24 animate-pulse rounded-xl bg-muted" />)}</div>
-            ) : visibleRooms.length > 0 ? (
-              <div className="grid gap-3 pt-4 sm:grid-cols-2 xl:grid-cols-3">
-                {visibleRooms.map((room) => (
-                  <button key={room.id} type="button" onClick={() => selectRoom(room)} className={`flex items-center gap-3 rounded-xl border p-3 text-left transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md ${room.id === selectedRoomId ? "border-primary bg-primary/5 ring-2 ring-primary/10" : "bg-background"}`}>
-                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><DoorOpen className="h-5 w-5" /></span>
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-bold">{room.nome}</span>
-                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">{room.tipo}</span>
-                      <span className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground"><Users className="h-3 w-3" /> {room.capacidade == null ? "Capacidade a conferir" : `${room.capacidade} lugares`}</span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="flex flex-col items-center px-4 py-10 text-center">
-                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground"><DoorOpen className="h-5 w-5" /></span>
-                <p className="mt-3 text-sm font-semibold">Nenhuma sala cadastrada neste pavimento</p>
-                <p className="mt-1 max-w-sm text-xs text-muted-foreground">Assim que os ambientes forem cadastrados, eles aparecerão aqui automaticamente.</p>
-              </div>
-            )}
-          </section>
-        </div>
-
-        <aside className="space-y-4">
-          <section className="overflow-hidden rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/10 via-card to-card p-5 shadow-sm">
-            <div className="flex items-start justify-between gap-3">
-              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-md shadow-primary/20"><Navigation className="h-5 w-5" /></span>
-              <Badge variant="secondary" className="bg-primary/10 text-primary hover:bg-primary/10">Em breve</Badge>
+            {selectedRoom.observacoes && <p className="mt-3 text-sm">{selectedRoom.observacoes}</p>}
+            <div className="mt-4 border-t pt-3">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Horários publicados</p>
+              {occupation.slice(0, 5).map((item) => <p key={item.id} className="text-sm">{item.dia} · {item.periodo}ª · {item.turma} — {item.disciplina}</p>)}
+              {!occupation.length && <p className="text-sm text-muted-foreground">Nenhuma ocupação publicada.</p>}
             </div>
-            <h3 className="mt-4 font-heading font-bold">Meu percurso</h3>
-            <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">Quando os cursos estiverem vinculados às salas, você verá aqui os ambientes das suas próximas aulas.</p>
+            <Button size="sm" variant="outline" className="mt-4 w-full gap-1" onClick={() => onReportContext?.({ origem: "SALA", label: `${selectedRoom.nome} · ${selectedRoom.bloco_nome}`, sala_id: selectedRoom.id })}>
+              <MessageSquareWarning className="h-4 w-4" /> Relatar problema nesta sala
+            </Button>
           </section>
-
-          {selectedRoom ? (
-            <section className="rounded-2xl border bg-card p-5 shadow-sm" aria-label="Detalhes da sala selecionada" aria-live="polite">
-              <div className="flex items-start justify-between gap-3">
-                <div><p className="text-xs font-bold uppercase tracking-wider text-primary">Sala selecionada</p><h3 className="mt-1 font-heading text-xl font-bold">{selectedRoom.nome}</h3></div>
-                <button type="button" onClick={() => setSelectedRoomId(null)} className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Fechar detalhes da sala"><X className="h-4 w-4" /></button>
-              </div>
-              <div className="mt-4 space-y-2 rounded-xl bg-muted/60 p-3 text-sm">
-                <p className="flex items-center gap-2"><Building2 className="h-4 w-4 text-primary" /> {selectedRoom.bloco_nome}</p>
-                <p className="flex items-center gap-2"><Layers3 className="h-4 w-4 text-primary" /> {selectedRoom.andar}</p>
-                <p className="flex items-center gap-2"><Users className="h-4 w-4 text-primary" /> {selectedRoom.capacidade == null ? "Capacidade a conferir" : `${selectedRoom.capacidade} lugares`}</p>
-                {selectedRoom.acessivel && <p className="flex items-center gap-2"><Navigation className="h-4 w-4 text-primary" /> Acessível</p>}
-              </div>
-              <div className="mt-4 rounded-xl border bg-background p-3">
-                <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Ocupação hoje</p>
-                {occupancyLoading ? (
-                  <p className="mt-2 text-sm text-muted-foreground">Carregando ocupação...</p>
-                ) : occupancyError ? (
-                  <p className="mt-2 text-sm text-destructive">{occupancyError}</p>
-                ) : (
-                  <div className="mt-2 space-y-2 text-sm">
-                    <p><span className="font-semibold">Agora:</span> {roomTimeline.current ? scheduleLabel(roomTimeline.current) : "Sem aula em andamento"}</p>
-                    <p><span className="font-semibold">Próxima:</span> {roomTimeline.next ? scheduleLabel(roomTimeline.next) : "Nenhuma próxima aula hoje"}</p>
-                    {roomTimeline.today.length > 0 && (
-                      <div className="space-y-1 border-t pt-2 text-xs text-muted-foreground">
-                        {roomTimeline.today.slice(0, 5).map((schedule) => <p key={schedule.id}>{scheduleLabel(schedule)}</p>)}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-              <div className="mt-4">
-                <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Recursos</p>
-                {roomResources.length > 0 ? (
-                  <div className="mt-2 flex flex-wrap gap-2">{roomResources.map(({ label, icon: Icon }) => <span key={label} className="flex items-center gap-1.5 rounded-lg border bg-background px-2.5 py-2 text-xs font-medium"><Icon className="h-3.5 w-3.5 text-primary" /> {label}</span>)}</div>
-                ) : <p className="mt-2 text-sm text-muted-foreground">Nenhum recurso informado.</p>}
-              </div>
-              {selectedRoom.observacoes && <p className="mt-4 border-t pt-4 text-sm leading-relaxed text-muted-foreground">{selectedRoom.observacoes}</p>}
-            </section>
-          ) : (
-            <section className="rounded-2xl border bg-card p-5 shadow-sm">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted text-muted-foreground"><MapPin className="h-5 w-5" /></div>
-              <h3 className="mt-4 font-heading font-bold">Detalhes do ambiente</h3>
-              <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">Selecione uma sala no mapa ou use a busca para consultar localização, capacidade e recursos.</p>
-            </section>
-          )}
-
-          <section className="rounded-2xl border bg-card p-4 shadow-sm">
-            <p className="mb-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">Blocos</p>
-            <div className="space-y-1">
-              {availableBlocks.map((block, index) => (
-                <button key={block.id} type="button" onClick={() => selectBlock(block.id)} className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm ${block.id === selectedBlockId ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>
-                  <span className={`flex h-7 w-7 items-center justify-center rounded-md text-xs font-bold ${block.id === selectedBlockId ? "bg-white/15" : "bg-primary/10 text-primary"}`}>{index + 1}</span>
-                  <span className="min-w-0 flex-1 truncate font-semibold">{block.nome}</span>
-                  <span className={block.id === selectedBlockId ? "text-primary-foreground/70" : "text-muted-foreground"}>{block.total_salas}</span>
-                </button>
-              ))}
-              {!loading && availableBlocks.length === 0 && <p className="px-3 py-4 text-center text-xs text-muted-foreground">Nenhum bloco cadastrado.</p>}
-            </div>
-          </section>
-        </aside>
-      </div>
+        ) : (
+          <div className="glass-card rounded-2xl p-5 text-center text-sm text-muted-foreground">
+            <Building2 className="mx-auto mb-2 h-6 w-6" /> Busque uma sala ou selecione uma área do mapa.
+          </div>
+        )}
+      </aside>
     </div>
   );
-}
+};
+
+export default SchoolMap;
