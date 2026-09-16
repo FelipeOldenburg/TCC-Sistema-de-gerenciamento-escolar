@@ -8,7 +8,10 @@ export default defineConfig({
     host: "::",
     port: 8080,
     proxy: {
-      "/api": process.env.VITE_API_PROXY_TARGET || "http://localhost:3001",
+      "/api": {
+        target: process.env.VITE_API_PROXY_TARGET || "http://localhost:3001",
+        changeOrigin: false,
+      },
     },
     hmr: {
       overlay: false,
