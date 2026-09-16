@@ -72,3 +72,32 @@ Toda alteração deve ser integrada à branch `main` ao final do fluxo. Antes da
   - mudanças apenas em documentação: validação manual do diff é suficiente.
 - Rodar `npm run lint` e `npm test` em comandos separados, não em paralelo, porque o Vitest cria arquivos temporários de config que podem ser lidos pelo ESLint.
 - Evitar adicionar dependências, componentes `ui` ou wrappers globais sem uso real. Reutilizar os componentes existentes em `src/components/ui` e apagar scaffold que não estiver importado.
+
+## Contexto do projeto
+
+O CIMOL é um sistema escolar para consulta de horários, gestão de salas e integração com o URÂNIA UP. Usa React/TypeScript/Vite no frontend e Express/PostgreSQL no backend, organizados em MVC.
+
+- Toda operação institucional preserva o escopo de `instituicao_id`; a resolução da instituição ocorre no backend e o frontend envia o slug pela API compartilhada.
+- `ADMIN` envia importações do URÂNIA; `CPD` gerencia revisão, salas, blocos, conteúdo e reorganização. A plataforma central possui autenticação separada.
+- Importações seguem `PENDENTE` para `APROVADA` ou `REJEITADA`; apenas uma publicação fica ativa por instituição e escopo.
+
+## Roteamento de contexto
+
+- Mudanças transversais, de autenticação, tenant ou schema: leia `docs/agent-context/architecture.md`.
+- Mudanças em `server/**`: leia `docs/agent-context/backend.md`; ao trabalhar a partir desse diretório, siga também `server/AGENTS.md`.
+- Mudanças em `src/**`: leia `docs/agent-context/frontend.md`; ao trabalhar a partir desse diretório, siga também `src/AGENTS.md`.
+- Mudanças no parser ou na importação do URÂNIA: leia `docs/agent-context/urania.md` e `server/parsers/AGENTS.md`.
+- Configuração de Obsidian, Graphify ou AI-Memory: leia `docs/agent-context/memory-tools.md`.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+When the user types `/graphify`, use the installed graphify skill or instructions before doing anything else.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

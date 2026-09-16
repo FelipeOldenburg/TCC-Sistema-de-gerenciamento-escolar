@@ -38,6 +38,23 @@ Aplicação React/Express/PostgreSQL para consulta de horários, integração co
 - Python 3 e BeautifulSoup 4 para os relatórios HTML do URÂNIA.
 - Swagger/OpenAPI em `/api-CIMOL/docs`.
 
+## Organização MVC
+
+```text
+src/
+  pages/ e components/  views React
+  controllers/          hooks com estado, efeitos e ações de tela
+  lib/                  transporte HTTP e utilitários compartilhados
+
+server/
+  index.js              composição da aplicação, middleware e inicialização
+  routes/               URL e autorização de cada domínio
+  controllers/          entrada HTTP e regras de coordenação
+  models/               consultas e persistência PostgreSQL
+```
+
+Novas funcionalidades devem ficar no domínio correspondente: a rota só liga URL, middleware e controller; o controller não contém SQL; o model recebe os dados já validados. Componentes React permanecem views; fluxos que coordenam autenticação, estado persistido ou múltiplas chamadas de dados usam um hook em `src/controllers/`.
+
 ## Pré-requisitos
 
 1. Node.js 18 ou superior.
@@ -53,7 +70,19 @@ python -m pip install -r server/requirements.txt
 
 Copie `.env.example` para `.env` e configure banco, usuários iniciais e senhas. Em Windows, se Python não estiver no `PATH`, informe o caminho em `PYTHON_BIN`.
 
-O servidor aplica o conteúdo idempotente de `server/schema.sql` ao iniciar. O arquivo também pode ser executado manualmente com `psql`.
+Para um banco já existente, valide as relações entre instituições, aplique o schema e valide novamente antes de iniciar a API:
+
+```bash
+npm run db:preflight
+npm run db:migrate
+npm run db:check
+```
+
+Para um ambiente vazio, execute `npm run db:bootstrap` no lugar de `db:migrate`: ele aplica o schema e cria usuários, conteúdo e salas iniciais. Não o execute rotineiramente em produção, pois ele pode redefinir as senhas de bootstrap configuradas no ambiente.
+
+`db:migrate` aplica o schema idempotente de forma explícita; a API nunca executa DDL no startup.
+
+Para criar um banco local do zero, defina `DB_CREATE_DATABASE=true` apenas durante `db:bootstrap` e volte-o para `false` em seguida. Em Supabase, mantenha-o sempre como `false`.
 
 ## Execução
 
@@ -81,13 +110,17 @@ COOKIE_SECURE=true
 COOKIE_SAMESITE=Lax
 ```
 
-Em Vercel ou qualquer ambiente publico, `DB_HOST` deve apontar para um PostgreSQL gerenciado/acessivel pela internet. `localhost` funciona apenas na maquina de desenvolvimento. Se o provedor ja entregar o banco criado, configure `DB_CREATE_DATABASE=false`.
+Em Vercel ou qualquer ambiente publico, `DB_HOST` deve apontar para um PostgreSQL gerenciado/acessivel pela internet. `localhost` funciona apenas na maquina de desenvolvimento. Em Supabase, configure uma `DATABASE_URL` exclusiva do servidor, `DB_SSL=true`, `DB_SSL_REJECT_UNAUTHORIZED=true`, a CA PEM baixada em **Database Settings → SSL Configuration** (em `DB_SSL_CA`, ou em `DB_SSL_CA_FILE` no desenvolvimento) e `DB_CREATE_DATABASE=false`. Em Vercel, o pool da aplicação usa uma conexão por instância por padrão.
+
+Execute `npm run db:preflight`, `npm run db:migrate` e `npm run db:check` antes de trocar o tráfego para uma nova versão. O preflight detecta relações entre instituições diferentes; a verificação final também exige as constraints compostas. Não exponha a URL do PostgreSQL, chaves Supabase ou credenciais de banco em variáveis `VITE_*`. O schema mantém RLS habilitado como bloqueio de acesso direto; a role usada pelo Express e as policies devem ser verificadas em homologação antes do corte.
+
+As operações de reorganização exigem uma sessão de CPD; a antiga chave `x-api-key` não é mais aceita.
 
 O cadastro base de instituicao fica em `instituicoes`. Em localhost a API usa `DEFAULT_INSTITUTION_SLUG=cimol`; em dominio real, o primeiro subdominio pode identificar a escola. A configuracao publica da marca esta em `GET /api/instituicao`.
 
 O painel administrativo da escola fica em `/admin` e usa usuarios `ADMIN`/`CPD` da propria instituicao. A gestao central das instituicoes fica separada em `/plataforma` e usa `PLATFORM_ADMIN_USER`/`PLATFORM_ADMIN_PASSWORD`.
 
-Se a API ficar em outro subdominio, configure `ALLOWED_ORIGINS` no backend e `VITE_API_BASE_URL` no build do frontend. Se quiser rodar tudo em um unico processo Express, execute `npm run build` e use `SERVE_STATIC=true`; nesse modo o Express serve o `dist/` e mantem as rotas `/api`.
+Se a API ficar em outro subdominio, configure `ALLOWED_ORIGINS` no backend e `VITE_API_BASE_URL` no build do frontend. Em sites diferentes, use `COOKIE_SAMESITE=None` junto de `COOKIE_SECURE=true`; mutações com sessão rejeitam origens que não estejam permitidas. Se quiser rodar tudo em um unico processo Express, execute `npm run build` e use `SERVE_STATIC=true`; nesse modo o Express serve o `dist/` e mantem as rotas `/api`.
 
 Nao use o servidor Vite (`npm run dev` ou `npm run dev:web`) como servidor publico. Ele existe apenas para desenvolvimento.
 
