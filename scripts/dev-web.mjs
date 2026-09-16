@@ -7,6 +7,14 @@ const allowedHosts = String(process.env.WEB_ALLOWED_HOSTS || "")
   .map((value) => value.trim())
   .filter(Boolean);
 
+if (process.argv.includes("--wait-for-api")) {
+  const healthUrl = new URL("/api/health", process.env.VITE_API_PROXY_TARGET || "http://localhost:3001");
+  console.log(`Aguardando API em ${healthUrl}...`);
+  while (!(await fetch(healthUrl).then((response) => response.ok).catch(() => false))) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
 const vite = await createServer({
   server: {
     host,

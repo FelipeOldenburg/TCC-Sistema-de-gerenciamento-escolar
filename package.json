@@ -4,15 +4,20 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"npm run dev:web\" \"npm run dev:api\"",
+    "dev": "concurrently \"npm run dev:web -- --wait-for-api\" \"npm run dev:api\"",
     "dev:web": "node scripts/dev-web.mjs",
     "dev:api": "node server/index.js",
     "start": "node server/index.js",
+    "db:migrate": "node scripts/migrate-database.mjs",
+    "db:bootstrap": "node scripts/bootstrap-database.mjs",
+    "db:preflight": "node scripts/check-database.mjs --preflight",
+    "db:check": "node scripts/check-database.mjs",
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "npm run test:server && vitest run",
+    "test:server": "node --test server/contentMvc.test.js server/db.test.js server/facilitiesMvc.test.js server/platformInstitutionMvc.test.js server/reorganizationMvc.test.js server/requestSecurity.test.js server/roomAssignmentService.test.js server/scheduleMvc.test.js server/scheduleTenant.test.js",
     "test:watch": "vitest"
   },
   "dependencies": {

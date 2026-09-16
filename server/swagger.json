@@ -12,15 +12,16 @@
     { "name": "Horários públicos" },
     { "name": "Eventos" },
     { "name": "Setores" },
-    { "name": "Ouvidoria" },
+    { "name": "Relatos" },
+    { "name": "Mapas" },
+    { "name": "Intervalos" },
     { "name": "Blocos" },
     { "name": "Salas" },
     { "name": "Reorganização" }
   ],
   "components": {
     "securitySchemes": {
-      "SessionCookie": { "type": "apiKey", "in": "cookie", "name": "cimol_session" },
-      "LegacyApiKey": { "type": "apiKey", "in": "header", "name": "x-api-key" }
+      "SessionCookie": { "type": "apiKey", "in": "cookie", "name": "cimol_session" }
     },
     "schemas": {
       "Error": {
@@ -102,20 +103,44 @@
           "ativo": { "type": "boolean" }
         }
       },
-      "OuvidoriaInput": {
+      "RelatoInput": {
         "type": "object",
-        "required": ["perfil", "categoria", "assunto", "mensagem"],
+        "required": ["categoria"],
         "properties": {
           "nome": { "type": "string", "nullable": true },
-          "perfil": { "type": "string", "enum": ["ALUNO", "DOCENTE", "RESPONSAVEL", "COMUNIDADE"] },
-          "categoria": { "type": "string", "enum": ["IDEIA", "MELHORIA", "PROBLEMA", "AVISO"] },
+          "perfil": { "type": "string", "nullable": true, "enum": ["ALUNO", "DOCENTE", "RESPONSAVEL", "COMUNIDADE"] },
+          "categoria": { "type": "string", "enum": ["HORARIO_INCORRETO", "SALA_LOCAL_INCORRETO", "SALA_INDISPONIVEL", "MUDANCA_NAO_ATUALIZADA", "CONFLITO_HORARIO", "LOCALIZACAO_INCORRETA", "INFORMACAO_INCORRETA"] },
+          "origem": { "type": "string", "enum": ["FORMULARIO", "HORARIO", "SALA", "SETOR", "MAPA"] },
           "setor_id": { "type": "integer", "nullable": true },
-          "assunto": { "type": "string" },
-          "mensagem": { "type": "string" }
+          "sala_id": { "type": "integer", "nullable": true },
+          "horario_id": { "type": "integer", "nullable": true },
+          "mapa_area_id": { "type": "integer", "nullable": true },
+          "assunto": { "type": "string", "nullable": true },
+          "mensagem": { "type": "string", "nullable": true }
+        }
+      },
+      "MapaInput": {
+        "type": "object",
+        "required": ["nome", "largura", "altura", "areas"],
+        "properties": {
+          "nome": { "type": "string" }, "piso": { "type": "string", "nullable": true },
+          "largura": { "type": "integer" }, "altura": { "type": "integer" }, "ativo": { "type": "boolean" },
+          "areas": { "type": "array", "items": { "type": "object", "required": ["tipo", "nome", "caminho_svg"], "properties": {
+            "id": { "type": "integer", "nullable": true, "description": "Obrigatório no PUT para preservar uma área existente; omita para criar uma nova." },
+            "tipo": { "type": "string", "enum": ["BLOCO", "SALA", "SETOR", "OUTRO"] }, "nome": { "type": "string" },
+            "caminho_svg": { "type": "string" }, "bloco_id": { "type": "integer", "nullable": true },
+            "sala_id": { "type": "integer", "nullable": true }, "setor_id": { "type": "integer", "nullable": true }
+          } } }
+        }
+      },
+      "IntervaloInput": {
+        "type": "object", "required": ["nome", "hora_inicio", "hora_fim", "grupo_ids"],
+        "properties": { "nome": { "type": "string" }, "hora_inicio": { "type": "string", "example": "09:30" },
+          "hora_fim": { "type": "string", "example": "09:45" }, "ativo": { "type": "boolean" },
+          "grupo_ids": { "type": "array", "items": { "type": "integer" } } }
         }
       }
-    }
-  },
+    },
   "paths": {
     "/api/health": {
       "get": { "summary": "Verificar API e banco", "responses": { "200": { "description": "Disponível" } } }
@@ -175,11 +200,30 @@
       "delete": { "tags": ["Setores"], "summary": "Excluir setor", "security": [{ "SessionCookie": [] }], "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } }], "responses": { "200": { "description": "Excluído" } } }
     },
     "/api/ouvidoria": {
-      "post": { "tags": ["Ouvidoria"], "summary": "Enviar manifestação", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OuvidoriaInput" } } } }, "responses": { "201": { "description": "Recebida" }, "400": { "description": "Texto inválido ou impróprio" } } },
-      "get": { "tags": ["Ouvidoria"], "summary": "Listar manifestações", "description": "Somente CPD.", "security": [{ "SessionCookie": [] }], "parameters": [{ "in": "query", "name": "status", "schema": { "type": "string", "enum": ["NOVA", "EM_ANALISE", "RESOLVIDA", "ARQUIVADA"] } }], "responses": { "200": { "description": "Manifestações" } } }
+      "post": { "tags": ["Relatos"], "summary": "Alias legado para enviar relato", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RelatoInput" } } } }, "responses": { "201": { "description": "Recebido" } } },
+      "get": { "tags": ["Relatos"], "summary": "Alias legado para listar relatos", "description": "Somente CPD.", "security": [{ "SessionCookie": [] }], "responses": { "200": { "description": "Relatos" } } }
     },
     "/api/ouvidoria/{id}": {
-      "patch": { "tags": ["Ouvidoria"], "summary": "Atualizar status da manifestação", "security": [{ "SessionCookie": [] }], "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["NOVA", "EM_ANALISE", "RESOLVIDA", "ARQUIVADA"] } } } } } }, "responses": { "200": { "description": "Status atualizado" } } }
+      "patch": { "tags": ["Relatos"], "summary": "Alias legado para atualizar status", "security": [{ "SessionCookie": [] }], "responses": { "200": { "description": "Status atualizado" } } }
+    },
+    "/api/relatos": {
+      "post": { "tags": ["Relatos"], "summary": "Enviar relato rápido", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RelatoInput" } } } }, "responses": { "201": { "description": "Recebido" }, "400": { "description": "Categoria ou contexto inválido" } } },
+      "get": { "tags": ["Relatos"], "summary": "Listar relatos", "description": "Somente CPD.", "security": [{ "SessionCookie": [] }], "responses": { "200": { "description": "Relatos paginados" } } }
+    },
+    "/api/relatos/{id}": { "patch": { "tags": ["Relatos"], "summary": "Atualizar status do relato", "description": "Somente CPD.", "security": [{ "SessionCookie": [] }], "responses": { "200": { "description": "Status atualizado" } } } },
+    "/api/mapas": {
+      "get": { "tags": ["Mapas"], "summary": "Listar mapas ativos e áreas", "responses": { "200": { "description": "Mapas" } } },
+      "post": { "tags": ["Mapas"], "summary": "Criar mapa com áreas", "description": "Somente CPD.", "security": [{ "SessionCookie": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MapaInput" } } } }, "responses": { "201": { "description": "Criado" } } }
+    },
+    "/api/mapas/{id}": { "put": { "tags": ["Mapas"], "summary": "Substituir mapa e áreas", "description": "Somente CPD.", "security": [{ "SessionCookie": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MapaInput" } } } }, "responses": { "200": { "description": "Atualizado" } } } },
+    "/api/grupos-academicos": { "get": { "tags": ["Intervalos"], "summary": "Listar grupos acadêmicos importados", "description": "Somente CPD.", "security": [{ "SessionCookie": [] }], "responses": { "200": { "description": "Grupos" } } } },
+    "/api/intervalos": {
+      "get": { "tags": ["Intervalos"], "summary": "Listar intervalos ativos", "responses": { "200": { "description": "Intervalos" } } },
+      "post": { "tags": ["Intervalos"], "summary": "Criar intervalo", "description": "Somente CPD.", "security": [{ "SessionCookie": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IntervaloInput" } } } }, "responses": { "201": { "description": "Criado" } } }
+    },
+    "/api/intervalos/{id}": {
+      "put": { "tags": ["Intervalos"], "summary": "Atualizar intervalo", "description": "Somente CPD.", "security": [{ "SessionCookie": [] }], "responses": { "200": { "description": "Atualizado" } } },
+      "delete": { "tags": ["Intervalos"], "summary": "Desativar intervalo", "description": "Somente CPD.", "security": [{ "SessionCookie": [] }], "responses": { "200": { "description": "Desativado" } } }
     },
     "/api/blocos": {
       "get": { "tags": ["Blocos"], "summary": "Listar blocos", "responses": { "200": { "description": "Blocos" } } },
@@ -199,8 +243,8 @@
       "delete": { "tags": ["Salas"], "summary": "Excluir sala", "security": [{ "SessionCookie": [] }], "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } }], "responses": { "200": { "description": "Excluída" } } }
     },
     "/api/reorganizacao": {
-      "get": { "tags": ["Reorganização"], "summary": "Listar solicitações", "security": [{ "SessionCookie": [] }, { "LegacyApiKey": [] }], "responses": { "200": { "description": "Solicitações" } } },
-      "post": { "tags": ["Reorganização"], "summary": "Criar solicitação", "security": [{ "SessionCookie": [] }, { "LegacyApiKey": [] }], "responses": { "201": { "description": "Criada" } } }
+      "get": { "tags": ["Reorganização"], "summary": "Listar solicitações", "security": [{ "SessionCookie": [] }], "responses": { "200": { "description": "Solicitações" } } },
+      "post": { "tags": ["Reorganização"], "summary": "Criar solicitação", "security": [{ "SessionCookie": [] }], "responses": { "201": { "description": "Criada" } } }
     }
   }
 }

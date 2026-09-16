@@ -11,10 +11,7 @@ const sessionCookieAttributes = () => {
   const sameSite = ["Strict", "Lax", "None"].includes(process.env.COOKIE_SAMESITE)
     ? process.env.COOKIE_SAMESITE
     : "Lax";
-  const secure =
-    process.env.COOKIE_SECURE == null
-      ? process.env.NODE_ENV === "production" || sameSite === "None"
-      : asBoolean(process.env.COOKIE_SECURE);
+  const secure = process.env.NODE_ENV === "production" || sameSite === "None" || asBoolean(process.env.COOKIE_SECURE);
   const domain = String(process.env.COOKIE_DOMAIN || "").trim();
   return [
     "HttpOnly",
@@ -151,7 +148,15 @@ export const createPlatformSession = async (db, userId) => {
 
 export const deleteSession = async (db, req) => {
   const token = getRequestToken(req);
-  if (token) await db.query("DELETE FROM sessoes WHERE token_hash = ?", [tokenHash(token)]);
+  if (!token || !req.institution?.id) return;
+  await db.query(
+    `DELETE FROM sessoes s
+      USING usuarios u
+     WHERE s.token_hash = ?
+       AND s.usuario_id = u.id
+       AND u.instituicao_id = ?`,
+    [tokenHash(token), req.institution.id]
+  );
 };
 
 export const deletePlatformSession = async (db, req) => {
@@ -322,6 +327,7 @@ export const ensureBootstrapUsers = async (db, institutionSlug = process.env.DEF
           "UPDATE usuarios SET nome = ?, senha_hash = ?, senha_salt = ?, papel = ?, gerencia_instituicoes = ?, ativo = TRUE WHERE id = ?",
           [item.nome, hash, salt, item.papel, false, existing[0].id]
         );
+        await db.query("DELETE FROM sessoes WHERE usuario_id = ?", [existing[0].id]);
       }
       continue;
     }
@@ -356,6 +362,7 @@ export const ensureBootstrapPlatformUser = async (db) => {
       "UPDATE plataforma_usuarios SET nome = ?, senha_hash = ?, senha_salt = ?, ativo = TRUE WHERE id = ?",
       [name, hash, salt, existing[0].id]
     );
+    await db.query("DELETE FROM plataforma_sessoes WHERE usuario_id = ?", [existing[0].id]);
     return;
   }
 
