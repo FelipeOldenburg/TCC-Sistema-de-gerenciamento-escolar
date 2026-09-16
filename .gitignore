@@ -16,8 +16,8 @@ dist-ssr
 __pycache__/
 *.py[cod]
 .venv/
-AGENTS.md
 Segundo-Cerebro-TCC
+graphify-out/
 
 # Editor directories and files
 .vscode/*
