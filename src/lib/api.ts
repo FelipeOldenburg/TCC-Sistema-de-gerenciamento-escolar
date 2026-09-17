@@ -30,7 +30,7 @@ const normalizeInstitutionSlug = (value: string | null) =>
     .replace(/[^a-z0-9-]/g, "")
     .slice(0, 60);
 
-const selectedInstitutionSlug = () => {
+export const selectedInstitutionSlug = () => {
   if (typeof window === "undefined") return "";
   const urlSlug = normalizeInstitutionSlug(new URLSearchParams(window.location.search).get("instituicao"));
   if (urlSlug) {

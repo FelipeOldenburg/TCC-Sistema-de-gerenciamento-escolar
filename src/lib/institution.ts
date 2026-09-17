@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import cimolLogo from "@/assets/cimol-logo.png";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, selectedInstitutionSlug } from "@/lib/api";
 
 export type InstitutionBrand = {
   slug: string;
@@ -39,7 +39,23 @@ export const institutionBrand: InstitutionBrand = {
 };
 
 let cachedBrand = institutionBrand;
-let pendingBrand: Promise<InstitutionBrand> | null = null;
+let pendingBrand: { slug: string; promise: Promise<InstitutionBrand> } | null = null;
+
+const loadingBrand: InstitutionBrand = {
+  slug: "",
+  name: "Carregando instituição...",
+  adminName: "Carregando instituição...",
+  systemName: "",
+  adminSubtitle: "",
+  logo: null,
+  colors: {
+    primary: "220 12% 40%",
+    accent: "220 12% 75%",
+    header: "220 12% 30%",
+    nav: "220 12% 40%",
+    navActive: "220 12% 50%",
+  },
+};
 
 const setThemeColor = (name: string, value: string) => {
   if (!/^\d{1,3}(?:\.\d+)?\s+\d{1,3}(?:\.\d+)?%\s+\d{1,3}(?:\.\d+)?%$/.test(value)) return;
@@ -67,31 +83,41 @@ export const setInstitutionBrand = (data: InstitutionResponse) => {
   return cachedBrand;
 };
 
-const loadInstitutionBrand = async () => {
-  if (pendingBrand) return pendingBrand;
-  pendingBrand = apiFetch<InstitutionResponse>("/api/instituicao").then((data) => {
-    return setInstitutionBrand(data);
+const loadInstitutionBrand = (slug: string) => {
+  if (pendingBrand?.slug === slug) return pendingBrand.promise;
+  const promise = apiFetch<InstitutionResponse>("/api/instituicao").then((data) => {
+    return selectedInstitutionSlug() === slug ? setInstitutionBrand(data) : toInstitutionBrand(data);
   }).catch((error) => {
-    pendingBrand = null;
+    if (pendingBrand?.slug === slug) pendingBrand = null;
     throw error;
   });
-  return pendingBrand;
+  pendingBrand = { slug, promise };
+  return promise;
 };
 
 export const useInstitutionBrand = () => {
+  const selectedSlug = selectedInstitutionSlug();
   const [brand, setBrand] = useState(cachedBrand);
+  const waitingForBrand = Boolean(selectedSlug && brand.slug !== selectedSlug);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     let active = true;
-    loadInstitutionBrand()
+    if (selectedSlug && cachedBrand.slug !== selectedSlug) applyInstitutionTheme(loadingBrand);
+    loadInstitutionBrand(selectedSlug)
       .then((loadedBrand) => {
         if (active) setBrand(loadedBrand);
       })
-      .catch(() => null);
+      .catch(() => {
+        if (active && selectedSlug) {
+          const unavailableBrand = { ...loadingBrand, slug: selectedSlug, name: "Instituição indisponível" };
+          applyInstitutionTheme(unavailableBrand);
+          setBrand(unavailableBrand);
+        }
+      });
     return () => {
       active = false;
     };
-  }, []);
+  }, [selectedSlug]);
 
-  return brand;
+  return waitingForBrand ? loadingBrand : brand;
 };
