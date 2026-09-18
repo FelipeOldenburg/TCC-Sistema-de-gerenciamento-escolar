@@ -506,7 +506,6 @@ BEGIN
 
   UPDATE alunos SET instituicao_id = cimol_id WHERE instituicao_id IS NULL;
   UPDATE usuarios SET instituicao_id = cimol_id WHERE instituicao_id IS NULL;
-  UPDATE usuarios SET gerencia_instituicoes = FALSE WHERE gerencia_instituicoes = TRUE;
   UPDATE blocos SET instituicao_id = cimol_id WHERE instituicao_id IS NULL;
   UPDATE salas SET instituicao_id = cimol_id WHERE instituicao_id IS NULL;
   UPDATE softwares SET instituicao_id = cimol_id WHERE instituicao_id IS NULL;
@@ -694,7 +693,7 @@ SELECT DISTINCT h.instituicao_id, grupo.tipo, grupo.nome
    ('TURMA', NULLIF(TRIM(h.turma), ''))
  ) AS grupo(tipo, nome)
  WHERE grupo.nome IS NOT NULL
-ON CONFLICT (instituicao_id, tipo, nome) DO UPDATE SET ativo = TRUE;
+ON CONFLICT (instituicao_id, tipo, nome) DO NOTHING;
 
 CREATE INDEX IF NOT EXISTS idx_alunos_instituicao_lookup
   ON alunos (instituicao_id, nome, ano, turma, curso);
