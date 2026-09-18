@@ -5,7 +5,7 @@ const { Client, Pool } = pg;
 
 const asBoolean = (value) => value === true || value === 1 || value === "1" || value === "true" || value === "on";
 
-export const resolveDbConfig = (env = process.env) => {
+export const resolveDbConfig = (env = process.env, { migration = false } = {}) => {
   const databaseUrl = env.DATABASE_URL || env.POSTGRES_URL || "";
   const parsedDatabaseUrl = databaseUrl ? new URL(databaseUrl) : null;
   const databaseName = env.DB_NAME || parsedDatabaseUrl?.pathname.replace(/^\/+/, "").split("?")[0] || "cimol";
@@ -36,7 +36,13 @@ export const resolveDbConfig = (env = process.env) => {
   const insecureSslMode = ["disable", "prefer", "no-verify"].includes(sslMode);
   const urlDisablesSsl = ["0", "false"].includes(urlSsl);
   const databaseHost = parsedDatabaseUrl?.hostname || String(env.DB_HOST || "");
-  const isSupabaseHost = /(?:^|\.)supabase(?:\.co|\.com)$/.test(databaseHost.toLowerCase());
+  const normalizedHost = databaseHost.toLowerCase();
+  const isSupabaseHost = /(?:^|\.)supabase(?:\.co|\.com)$/.test(normalizedHost);
+  const databasePort = parsedDatabaseUrl ? Number(parsedDatabaseUrl.port || 5432) : Number(env.DB_PORT || 5432);
+  const isSupabaseTransactionPooler = normalizedHost.endsWith(".pooler.supabase.com") || /^db\.[^.]+\.supabase\.co$/.test(normalizedHost);
+  const migrationPort = migration && databasePort === 6543 && isSupabaseTransactionPooler
+    ? 5432
+    : databasePort;
 
   if (
     env.NODE_ENV === "production" &&
@@ -49,6 +55,7 @@ export const resolveDbConfig = (env = process.env) => {
   const connectionString = parsedDatabaseUrl
     ? (() => {
         const url = new URL(databaseUrl);
+        if (migrationPort !== databasePort) url.port = String(migrationPort);
         for (const key of ["ssl", "sslmode", "sslcert", "sslkey", "sslrootcert", "uselibpqcompat", "sslnegotiation"]) {
           url.searchParams.delete(key);
         }
@@ -64,7 +71,7 @@ export const resolveDbConfig = (env = process.env) => {
       ? { connectionString, ssl: databaseSsl }
       : {
           host: env.DB_HOST || "localhost",
-          port: Number(env.DB_PORT || 5432),
+          port: migrationPort,
           user: env.DB_USER || "postgres",
           password: env.DB_PASSWORD || "",
           database: databaseName,
@@ -94,7 +101,7 @@ const runQuery = async (client, sql, params = []) => {
 };
 
 export const initializeSchema = async (schemaPath, { createDatabase = false } = {}) => {
-  const { databaseName, shouldCreateDatabase, poolConfig } = resolveDbConfig();
+  const { databaseName, shouldCreateDatabase, poolConfig } = resolveDbConfig(process.env, { migration: true });
 
   if (createDatabase && shouldCreateDatabase) {
     const client = new Client({ ...poolConfig, database: process.env.POSTGRES_MAINTENANCE_DB || "postgres" });

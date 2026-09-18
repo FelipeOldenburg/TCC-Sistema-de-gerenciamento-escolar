@@ -80,7 +80,7 @@ npm run db:check
 
 Para um ambiente vazio, execute `npm run db:bootstrap` no lugar de `db:migrate`: ele aplica o schema e cria usuários, conteúdo e salas iniciais. Não o execute rotineiramente em produção, pois ele pode redefinir as senhas de bootstrap configuradas no ambiente.
 
-`db:migrate` aplica o schema idempotente de forma explícita; a API nunca executa DDL no startup.
+`db:migrate` aplica o schema idempotente de forma explícita; a API nunca executa DDL no startup. Se a API estiver no pooler transacional do Supabase (porta 6543), o comando de migração usa a porta 5432 somente nesse processo. Ela corresponde ao pooler de sessão em redes IPv4; uma conexão direta ao banco continua preferível quando houver IPv6 ou o complemento IPv4.
 
 Para criar um banco local do zero, defina `DB_CREATE_DATABASE=true` apenas durante `db:bootstrap` e volte-o para `false` em seguida. Em Supabase, mantenha-o sempre como `false`.
 

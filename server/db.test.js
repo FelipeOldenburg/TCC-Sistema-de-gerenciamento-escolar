@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { resolveDbConfig } from "./db.js";
 
 const supabaseUrl = "postgresql://postgres:password@db.project.supabase.co:5432/postgres";
@@ -52,6 +53,35 @@ assert.deepEqual(local.poolConfig, {
 });
 assert.equal(local.shouldCreateDatabase, true);
 assert.equal(local.connectionLimit, 10);
+
+const transactionPooler = "postgresql://postgres.project:password@aws-0-us-east-2.pooler.supabase.com:6543/postgres";
+assert.equal(resolveDbConfig({ DATABASE_URL: transactionPooler }).poolConfig.connectionString, transactionPooler);
+assert.equal(
+  resolveDbConfig({ DATABASE_URL: transactionPooler }, { migration: true }).poolConfig.connectionString,
+  transactionPooler.replace(":6543", ":5432")
+);
+const dedicatedPooler = "postgresql://postgres:password@db.project.supabase.co:6543/postgres";
+assert.equal(resolveDbConfig({ DATABASE_URL: dedicatedPooler }).poolConfig.connectionString, dedicatedPooler);
+assert.equal(
+  resolveDbConfig({ DATABASE_URL: dedicatedPooler }, { migration: true }).poolConfig.connectionString,
+  dedicatedPooler.replace(":6543", ":5432")
+);
+
+const poolerFields = {
+  DB_HOST: "aws-0-us-east-2.pooler.supabase.com",
+  DB_PORT: "6543",
+  DB_USER: "postgres.project",
+  DB_PASSWORD: "password",
+  DB_NAME: "postgres",
+};
+assert.equal(resolveDbConfig(poolerFields).poolConfig.port, 6543);
+assert.equal(resolveDbConfig(poolerFields, { migration: true }).poolConfig.port, 5432);
+assert.equal(resolveDbConfig({ ...poolerFields, DB_HOST: "localhost" }, { migration: true }).poolConfig.port, 6543);
+
+const schema = fs.readFileSync(new URL("./schema.sql", import.meta.url), "utf8");
+assert.doesNotMatch(schema, /UPDATE\s+usuarios\s+SET\s+gerencia_instituicoes\s*=\s*FALSE/i);
+const groupSeed = schema.match(/INSERT INTO grupos_academicos\b[\s\S]*?;/i)?.[0] || "";
+assert.match(groupSeed, /ON CONFLICT\s*\(instituicao_id,\s*tipo,\s*nome\)\s+DO NOTHING/i);
 
 assert.throws(
   () =>
