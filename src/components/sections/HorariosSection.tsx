@@ -1,7 +1,7 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Bell, Building2, ChevronRight, Clock, MessageSquareWarning, Search, Settings } from "lucide-react";
 import { toast } from "sonner";
-import { apiFetch, type SessionUser } from "@/lib/api";
+import { ApiError, apiFetch, type SessionUser } from "@/lib/api";
 import designMoveisImg from "@/assets/cursos/design-moveis.png";
 import eletronicaImg from "@/assets/cursos/eletronica.png";
 import eletrotecnicaImg from "@/assets/cursos/eletrotecnica.png";
@@ -148,6 +148,10 @@ const HorariosSection = ({ onReportContext }: { onReportContext?: (context: Repo
   const [roomReason, setRoomReason] = useState("");
   const [notificationEmail, setNotificationEmail] = useState("");
   const [notificationClass, setNotificationClass] = useState("");
+  const [notificationCode, setNotificationCode] = useState("");
+  const [notificationStatus, setNotificationStatus] = useState<"PENDENTE" | "ATIVA" | "EXPIRADA" | "">("");
+  const [notificationExpiresAt, setNotificationExpiresAt] = useState("");
+  const [notificationAvailableAt, setNotificationAvailableAt] = useState("");
   const [savingNotification, setSavingNotification] = useState(false);
   const [selectedMobileDay, setSelectedMobileDay] = useState("");
   const [intervals, setIntervals] = useState<Interval[]>([]);
@@ -407,15 +411,39 @@ const HorariosSection = ({ onReportContext }: { onReportContext?: (context: Repo
       return;
     }
     setSavingNotification(true);
+    setNotificationAvailableAt("");
     try {
       const result = await apiFetch<{ email_enviado?: boolean }>("/api/horarios/notificacoes", {
         method: "POST",
         body: JSON.stringify({ email: notificationEmail, turma: notificationClass }),
       });
       toast.success(result.email_enviado ? "Confira seu e-mail para ativar o aviso." : "Cadastro pendente: configure o SMTP para enviar a confirmação.");
-      setNotificationEmail("");
+      setNotificationStatus("PENDENTE");
+      setNotificationCode("");
     } catch (err) {
+      if (err instanceof ApiError && err.code === "NOTIFICATION_REQUEST_LIMIT" && err.availableAt) {
+        setNotificationAvailableAt(err.availableAt);
+      }
       toast.error(err instanceof Error ? err.message : "Erro ao ativar aviso.");
+    } finally {
+      setSavingNotification(false);
+    }
+  };
+
+  const confirmScheduleNotification = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSavingNotification(true);
+    try {
+      const result = await apiFetch<{ status: "ATIVA"; expires_at?: string }>("/api/horarios/notificacoes/verificar", {
+        method: "POST",
+        body: JSON.stringify({ email: notificationEmail, turma: notificationClass, code: notificationCode }),
+      });
+      setNotificationStatus(result.status);
+      setNotificationExpiresAt(result.expires_at || "");
+      setNotificationCode("");
+      toast.success("Notificações ativadas para esta turma.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Código inválido ou expirado.");
     } finally {
       setSavingNotification(false);
     }
@@ -484,30 +512,57 @@ const HorariosSection = ({ onReportContext }: { onReportContext?: (context: Repo
             {matchingTeachers.map((teacher) => <option key={teacher} value={teacher} />)}
           </datalist>
         </form>
-        <form onSubmit={subscribeScheduleNotification} className="glass-card rounded-xl p-4 mb-6">
-          <label htmlFor="notification-email" className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Receber aviso de atualização</label>
-          <div className="mt-2 grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_auto]">
+        <div className="glass-card rounded-xl p-4 mb-6">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Notificações da grade</p>
+          <p className="mt-1 text-sm text-muted-foreground">Receba alterações de horário, sala e disciplina da turma escolhida.</p>
+          <form onSubmit={subscribeScheduleNotification} className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_auto]">
             <Input
               id="notification-email"
               type="email"
               value={notificationEmail}
               onChange={(event) => setNotificationEmail(event.target.value)}
-              placeholder="email@exemplo.com"
+              placeholder="usuario@estudante.rs.gov.br"
+              pattern="[^@\s]+@estudante\.rs\.gov\.br"
+              required
             />
             <select
               value={notificationClass}
               onChange={(event) => setNotificationClass(event.target.value)}
               className="h-10 rounded-md border bg-background px-3 text-sm"
+              required
             >
               <option value="">Turma</option>
               {notificationClassOptions.map((item) => <option key={item.turma} value={item.turma}>{item.turma}</option>)}
             </select>
             <Button type="submit" disabled={savingNotification || loadingOptions} className="md:w-auto">
               <Bell className="w-4 h-4 mr-2" />
-              {savingNotification ? "Salvando..." : "Receber aviso"}
+              {savingNotification ? "Enviando..." : "Receber aviso"}
             </Button>
-          </div>
-        </form>
+          </form>
+          {notificationStatus === "PENDENTE" && (
+            <form onSubmit={confirmScheduleNotification} className="mt-4 rounded-lg border border-primary/20 bg-primary/5 p-3">
+              <p className="text-sm font-medium">Verificação pendente</p>
+              <p className="mt-1 text-xs text-muted-foreground">Enviamos um código para {notificationEmail}. A turma acompanhada é {notificationClass}.</p>
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                <Input value={notificationCode} onChange={(event) => setNotificationCode(event.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" pattern="\d{6}" placeholder="Código de 6 dígitos" required />
+                <Button type="submit" disabled={savingNotification || notificationCode.length !== 6}>{savingNotification ? "Validando..." : "Confirmar e ativar"}</Button>
+              </div>
+            </form>
+          )}
+          {notificationStatus === "ATIVA" && (
+            <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+              <p className="font-semibold">Status: Ativo</p>
+              <p className="mt-1">E-mail: {notificationEmail}</p>
+              <p>Turma: {notificationClass}</p>
+              {notificationExpiresAt && <p>Válido até: {new Intl.DateTimeFormat("pt-BR", { dateStyle: "short" }).format(new Date(notificationExpiresAt))}</p>}
+            </div>
+          )}
+          {notificationAvailableAt && (
+            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              Limite de solicitações atingido. Você poderá solicitar um novo envio após {new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(notificationAvailableAt))}.
+            </p>
+          )}
+        </div>
         {loadingOptions && <div className="glass-card rounded-xl p-12 text-center text-muted-foreground">Carregando horários publicados...</div>}
         {error && <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">{error}</div>}
         {!loadingOptions && !error && !courses.length && <div className="glass-card rounded-xl p-12 text-center"><p className="font-medium">Nenhum horário publicado.</p><p className="text-sm text-muted-foreground mt-1">Os horários aparecerão aqui após aprovação do CPD.</p></div>}

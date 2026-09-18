@@ -5,6 +5,8 @@ export const createReorganizationController = ({
   reorganizationModel,
   roomAssignmentService,
   sanitizeFreeText,
+  scheduleModel,
+  notificationService,
 }) => ({
   list: async (req, res, next) => {
     try {
@@ -62,7 +64,35 @@ export const createReorganizationController = ({
           ...reorganization.nao_aplicadas.map((item) => item.sala_anterior),
         ]);
       }
+      if (reorganization?.aplicadas?.length) {
+        await scheduleModel.enqueueNotificationEvents(conn, {
+          institutionId,
+          events: reorganization.aplicadas.map((change) => ({
+            chave: `sala:${change.horario_id}:${change.sala_anterior || ""}:${change.sala_nova || ""}`,
+            turma,
+            payload: {
+              adicionadas: [],
+              removidas: [],
+              alteradas: [{
+                antes: { ...change, sala: change.sala_anterior },
+                depois: { ...change, sala: change.sala_nova },
+                sala_alterada: true,
+                horario_alterado: false,
+                disciplina_alterada: false,
+                professor_alterado: false,
+              }],
+            },
+          })),
+        });
+      }
       await conn.commit();
+      if (reorganization?.aplicadas?.length) {
+        try {
+          await notificationService.processPendingEvents({ institutionId });
+        } catch (notificationError) {
+          console.error({ notificationError, requestId }, "Falha ao enfileirar avisos da reorganização");
+        }
+      }
       return res.status(201).json({ id: requestId, reorganizacao: reorganization });
     } catch (error) {
       await conn.rollback();

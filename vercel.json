@@ -4,6 +4,12 @@
       "maxDuration": 30
     }
   },
+  "crons": [
+    {
+      "path": "/api/horarios/notificacoes/manutencao",
+      "schedule": "*/5 * * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/(.*)",

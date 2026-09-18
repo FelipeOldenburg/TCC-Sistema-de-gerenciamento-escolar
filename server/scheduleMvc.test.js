@@ -7,7 +7,7 @@ const app = Object.fromEntries(["get", "post", "patch", "put", "delete"].map((me
 const controller = Object.fromEntries(
   [
     "uploadUrania", "listImports", "getImport", "assignPendingRoom", "approveImport", "rejectImport",
-    "subscribeToNotifications", "confirmNotification", "listPublishedSchedules", "assignPublishedRoom",
+    "subscribeToNotifications", "confirmNotificationByCode", "confirmNotification", "maintainNotifications", "listPublishedSchedules", "assignPublishedRoom",
     "listAcademicGroups", "listIntervals", "saveInterval", "deactivateInterval",
   ].map((name) => [name, () => {}])
 );
@@ -26,7 +26,9 @@ assert.deepEqual(routes.map(([method, path]) => `${method} ${path}`), [
   "post /api/importacoes/:id/aprovar",
   "post /api/importacoes/:id/rejeitar",
   "post /api/horarios/notificacoes",
+  "post /api/horarios/notificacoes/verificar",
   "get /api/horarios/notificacoes/confirmar",
+  "get /api/horarios/notificacoes/manutencao",
   "get /api/horarios/publicados",
   "patch /api/horarios/publicados/:id/sala",
   "get /api/grupos-academicos",

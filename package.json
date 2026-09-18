@@ -17,7 +17,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "npm run test:server && vitest run",
-    "test:server": "node --test server/contentMvc.test.js server/db.test.js server/facilitiesMvc.test.js server/platformInstitutionMvc.test.js server/reorganizationMvc.test.js server/requestSecurity.test.js server/roomAssignmentService.test.js server/scheduleMvc.test.js server/scheduleTenant.test.js",
+    "test:server": "node --test server/contentMvc.test.js server/db.test.js server/facilitiesMvc.test.js server/platformInstitutionMvc.test.js server/reorganizationMvc.test.js server/requestSecurity.test.js server/roomAssignmentService.test.js server/scheduleMvc.test.js server/scheduleTenant.test.js server/scheduleNotification.test.js",
     "test:watch": "vitest"
   },
   "dependencies": {

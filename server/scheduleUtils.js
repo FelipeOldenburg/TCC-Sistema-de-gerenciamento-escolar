@@ -40,9 +40,9 @@ export const isUpperFloorRoom = (room) => {
 
 const roomLabel = (schedule) => schedule.sala_nome || schedule.sala || schedule.ambiente || "";
 const scheduleKey = (schedule) =>
-  [schedule.categoria || "TURMA", schedule.turma, schedule.dia, schedule.periodo, schedule.hora_inicio || ""].join("|");
+  [schedule.categoria || "TURMA", schedule.turma, schedule.dia, schedule.periodo].join("|");
 const scheduleFingerprint = (schedule) =>
-  [schedule.disciplina || "", schedule.professor || "", roomLabel(schedule), schedule.tipo_disciplina || ""].join("|");
+  [schedule.hora_inicio || "", schedule.disciplina || "", schedule.professor || "", roomLabel(schedule), schedule.tipo_disciplina || ""].join("|");
 const summary = (schedule) => ({
   turma: schedule.turma,
   dia: schedule.dia,
@@ -69,6 +69,7 @@ export const buildScheduleComparison = (candidateSchedules, activeSchedules, act
       changed.push({
         antes: summary(previous),
         depois: summary(schedule),
+        horario_alterado: (previous.hora_inicio || "") !== (schedule.hora_inicio || ""),
         sala_alterada: roomLabel(previous) !== roomLabel(schedule),
         professor_alterado: (previous.professor || "") !== (schedule.professor || ""),
         disciplina_alterada: (previous.disciplina || "") !== (schedule.disciplina || ""),
@@ -84,6 +85,12 @@ export const buildScheduleComparison = (candidateSchedules, activeSchedules, act
     }
   }
 
+  const byClass = (items) => items.reduce((result, item) => {
+    const turma = item.turma || item.depois?.turma || item.antes?.turma;
+    (result[turma] ||= []).push(item);
+    return result;
+  }, {});
+
   return {
     importacao_ativa_id: activeImport.id,
     importacao_ativa_titulo: activeImport.titulo,
@@ -94,12 +101,18 @@ export const buildScheduleComparison = (candidateSchedules, activeSchedules, act
     aulas_mudaram: added.length + removed.length + changed.length,
     turmas_afetadas: [...affectedClasses].sort((a, b) => a.localeCompare(b, "pt-BR")),
     salas_alteradas: changed.filter((item) => item.sala_alterada).length,
+    horarios_alterados: changed.filter((item) => item.horario_alterado).length,
     professores_alterados: changed.filter((item) => item.professor_alterado).length,
     disciplinas_alteradas: changed.filter((item) => item.disciplina_alterada).length,
     amostras: {
       adicionadas: added.slice(0, 5).map(summary),
       removidas: removed.slice(0, 5).map(summary),
       alteradas: changed.slice(0, 5),
+    },
+    detalhes_por_turma: {
+      adicionadas: byClass(added),
+      removidas: byClass(removed),
+      alteradas: byClass(changed),
     },
   };
 };

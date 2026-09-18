@@ -12,33 +12,9 @@ const parseJson = (value, fallback) => {
 };
 
 const normalizeEmail = (value) => String(value || "").trim().toLowerCase();
-const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+const isValidEmail = (value) => /^[^\s@]+@estudante\.rs\.gov\.br$/.test(value);
 const hashToken = (value) => crypto.createHash("sha256").update(value).digest("hex");
 const publicBaseUrl = (req) => String(process.env.PUBLIC_ORIGIN || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
-
-const sendEmail = async ({ to, subject, text }) => {
-  if (!process.env.SMTP_HOST) return { sent: false, reason: "SMTP_HOST ausente" };
-  if (!process.env.SMTP_FROM && !process.env.SMTP_USER) return { sent: false, reason: "SMTP_FROM ausente" };
-  const nodemailer = (await import("nodemailer")).default;
-  const port = Number(process.env.SMTP_PORT || 587);
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port,
-    secure: process.env.SMTP_SECURE
-      ? [true, 1, "1", "true", "on"].includes(process.env.SMTP_SECURE)
-      : port === 465,
-    auth: process.env.SMTP_USER
-      ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS || "" }
-      : undefined,
-  });
-  await transporter.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
-    to,
-    subject,
-    text,
-  });
-  return { sent: true };
-};
 
 export const createScheduleController = ({
   db,
@@ -47,35 +23,8 @@ export const createScheduleController = ({
   roomAssignmentService,
   sanitizeFreeText,
   scheduleModel,
+  notificationService,
 }) => {
-  const notifyScheduleSubscribers = async ({ subscribers, comparison }) => {
-    const result = { tentadas: subscribers.length, enviadas: 0, sem_smtp: 0, falhas: 0 };
-    const changedClasses = new Set(comparison.turmas_afetadas);
-    for (const subscriber of subscribers) {
-      if (!changedClasses.has(subscriber.turma)) continue;
-      try {
-        const sent = await sendEmail({
-          to: subscriber.email,
-          subject: `Horário atualizado - turma ${subscriber.turma}`,
-          text: [
-            `A grade da turma ${subscriber.turma} foi atualizada.`,
-            "",
-            `Aulas com mudança: ${comparison.aulas_mudaram}`,
-            `Turmas afetadas: ${comparison.turmas_afetadas.join(", ")}`,
-            "",
-            "Acesse o site do CIMOL para conferir os horários publicados.",
-          ].join("\n"),
-        });
-        if (sent.sent) result.enviadas += 1;
-        else result.sem_smtp += 1;
-      } catch (error) {
-        result.falhas += 1;
-        console.error({ error, email: subscriber.email, turma: subscriber.turma }, "Falha ao enviar notificação de horário");
-      }
-    }
-    return result;
-  };
-
   const uploadUrania = async (req, res, next) => {
     if (!req.files?.length) return res.status(400).json({ message: "Selecione ao menos um arquivo do URÂNIA." });
     try {
@@ -160,13 +109,13 @@ export const createScheduleController = ({
 
   const approveImport = async (req, res, next) => {
     try {
-      const { comparison, notificationSubscribers } = await scheduleModel.approveImport({
+      const { comparison } = await scheduleModel.approveImport({
         importId: req.params.id,
         institutionId: req.institution.id,
         userId: req.user.id,
       });
       const notificacoes = comparison?.aulas_mudaram
-        ? await notifyScheduleSubscribers({ subscribers: notificationSubscribers, comparison })
+        ? await notificationService.processPendingEvents({ institutionId: req.institution.id })
         : { tentadas: 0, enviadas: 0, sem_smtp: 0, falhas: 0 };
       return res.json({ ok: true, status: "APROVADA", ativa: true, notificacoes });
     } catch (error) {
@@ -194,30 +143,49 @@ export const createScheduleController = ({
   const subscribeToNotifications = async (req, res, next) => {
     const email = normalizeEmail(req.body?.email);
     const turma = sanitizeFreeText(req.body?.turma, 120);
-    if (!isValidEmail(email)) return next(httpError(400, "Informe um e-mail válido."));
+    if (!isValidEmail(email)) return next(httpError(400, "Use um e-mail no domínio @estudante.rs.gov.br."));
     if (!turma) return next(httpError(400, "Selecione uma turma."));
 
     try {
       const token = crypto.randomBytes(32).toString("base64url");
+      const code = String(crypto.randomInt(100000, 1000000));
       await scheduleModel.createNotificationSubscription({
         email,
         institutionId: req.institution.id,
         tokenHash: hashToken(token),
+        codeHash: hashToken(code),
         turma,
       });
       const confirmationUrl = `${publicBaseUrl(req)}/api/horarios/notificacoes/confirmar?token=${encodeURIComponent(token)}`;
-      const sent = await sendEmail({
-        to: email,
-        subject: `Confirmar aviso de horário - turma ${turma}`,
-        text: [
-          `Confirme que você quer receber avisos quando a grade da turma ${turma} mudar.`,
-          "",
-          confirmationUrl,
-          "",
-          "Se você não pediu isso, ignore este e-mail.",
-        ].join("\n"),
-      });
-      return res.status(201).json({ ok: true, pendente_confirmacao: true, email_enviado: sent.sent });
+      const sent = await notificationService.sendVerificationEmail({ to: email, turma, code, confirmationUrl });
+      return res.status(201).json({ ok: true, pendente_confirmacao: true, email_enviado: sent.sent, email, turma });
+    } catch (error) {
+      return next(error);
+    }
+  };
+
+  const confirmNotificationByCode = async (req, res, next) => {
+    const email = normalizeEmail(req.body?.email);
+    const turma = sanitizeFreeText(req.body?.turma, 120);
+    const code = String(req.body?.code || "").trim();
+    if (!isValidEmail(email) || !turma || !/^\d{6}$/.test(code)) {
+      return next(httpError(400, "Informe e-mail, turma e código válidos."));
+    }
+    try {
+      return res.json(await scheduleModel.confirmNotificationByCode({
+        institutionId: req.institution.id,
+        email,
+        turma,
+        codeHash: hashToken(code),
+      }));
+    } catch (error) {
+      return next(error);
+    }
+  };
+
+  const maintainNotifications = async (_req, res, next) => {
+    try {
+      return res.json({ ok: true, notificacoes: await notificationService.runMaintenance() });
     } catch (error) {
       return next(error);
     }
@@ -232,7 +200,7 @@ export const createScheduleController = ({
         tokenHash: hashToken(token),
       });
       if (!result.affectedRows) throw httpError(400, "Link de confirmação inválido ou expirado.");
-      return res.type("html").send("<p>Notificação de horários ativada. Você já pode fechar esta página.</p>");
+      return res.type("html").send("<p>Notificações de horários ativadas. Você já pode fechar esta página.</p>");
     } catch (error) {
       return next(error);
     }
@@ -281,7 +249,35 @@ export const createScheduleController = ({
         studentCount,
         reason,
       });
+      if (result.changed && result.alteracoes?.length) {
+        await scheduleModel.enqueueNotificationEvents(conn, {
+          institutionId: req.institution.id,
+          events: result.alteracoes.map((change) => ({
+            chave: `sala:${change.alteracao_id || `${change.horario_id}:${change.sala_anterior || ""}:${change.sala_nova || ""}`}`,
+            turma: result.turma,
+            payload: {
+              adicionadas: [],
+              removidas: [],
+              alteradas: [{
+                antes: { ...change, sala: change.sala_anterior },
+                depois: { ...change, sala: change.sala_nova },
+                sala_alterada: true,
+                horario_alterado: false,
+                disciplina_alterada: false,
+                professor_alterado: false,
+              }],
+            },
+          })),
+        });
+      }
       await conn.commit();
+      if (result.changed && result.alteracoes?.length) {
+        try {
+          await notificationService.processPendingEvents({ institutionId: req.institution.id });
+        } catch (notificationError) {
+          console.error({ notificationError, scheduleId }, "Falha ao enfileirar aviso de troca de sala");
+        }
+      }
       return res.json(result);
     } catch (error) {
       await conn.rollback();
@@ -363,11 +359,13 @@ export const createScheduleController = ({
     assignPublishedRoom,
     deactivateInterval,
     confirmNotification,
+    confirmNotificationByCode,
     getImport,
     listImports,
     listAcademicGroups,
     listIntervals,
     listPublishedSchedules,
+    maintainNotifications,
     rejectImport,
     saveInterval,
     subscribeToNotifications,

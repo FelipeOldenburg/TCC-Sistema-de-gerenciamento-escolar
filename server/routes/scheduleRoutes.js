@@ -1,7 +1,7 @@
 export const registerScheduleRoutes = (
   app,
   controller,
-  { notificationRateLimit, requireRole, uploadRateLimit, uraniaUpload }
+  { notificationMaintenance, notificationRateLimit, requireRole, uploadRateLimit, uraniaUpload }
 ) => {
   app.post(
     "/api/importacoes/urania",
@@ -17,7 +17,9 @@ export const registerScheduleRoutes = (
   app.post("/api/importacoes/:id/rejeitar", requireRole("CPD"), controller.rejectImport);
 
   app.post("/api/horarios/notificacoes", notificationRateLimit, controller.subscribeToNotifications);
+  app.post("/api/horarios/notificacoes/verificar", notificationRateLimit, controller.confirmNotificationByCode);
   app.get("/api/horarios/notificacoes/confirmar", controller.confirmNotification);
+  app.get("/api/horarios/notificacoes/manutencao", notificationMaintenance, controller.maintainNotifications);
   app.get("/api/horarios/publicados", controller.listPublishedSchedules);
   app.patch("/api/horarios/publicados/:id/sala", requireRole("CPD"), controller.assignPublishedRoom);
 

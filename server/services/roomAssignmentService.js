@@ -60,12 +60,13 @@ export const createRoomAssignmentService = ({ dayOrderSql, httpError, isFirstFlo
     }
 
     const changed = Number(schedule.sala_id || 0) !== Number(roomId || 0);
+    let changeResult = null;
     if (changed) {
       await conn.query("UPDATE horarios_importados SET sala_id = ? WHERE id = ?", [roomId, scheduleId]);
-      await conn.query(
+      const [changeResult] = await conn.query(
         `INSERT INTO sala_alteracoes
          (instituicao_id, horario_id, usuario_id, turma, dia, periodo, sala_anterior_id, sala_nova_id, quantidade_alunos, motivo)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
         [
           institutionId,
           scheduleId,
@@ -92,6 +93,7 @@ export const createRoomAssignmentService = ({ dayOrderSql, httpError, isFirstFlo
         ? [
             {
               horario_id: schedule.id,
+              alteracao_id: changeResult?.insertId || null,
               dia: schedule.dia,
               periodo: schedule.periodo,
               hora_inicio: schedule.hora_inicio,

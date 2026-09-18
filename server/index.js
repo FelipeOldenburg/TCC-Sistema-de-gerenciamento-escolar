@@ -38,6 +38,7 @@ import { registerScheduleRoutes } from "./routes/scheduleRoutes.js";
 import { isFirstFloorRoom, isUpperFloorRoom } from "./scheduleUtils.js";
 import { isAllowedRequestOrigin, isLocalhostOrigin } from "./requestSecurity.js";
 import { createRoomAssignmentService } from "./services/roomAssignmentService.js";
+import { createScheduleNotificationService, startScheduleNotificationScheduler } from "./services/scheduleNotificationService.js";
 import { ensureDefaultPublicContent } from "./seed.js";
 
 const app = express();
@@ -274,6 +275,14 @@ const notificationRateLimit = rateLimit({
   legacyHeaders: false,
 });
 
+const notificationMaintenance = (req, res, next) => {
+  const secret = String(process.env.NOTIFICATION_CRON_SECRET || process.env.CRON_SECRET || "");
+  if (!secret || req.get("authorization") !== `Bearer ${secret}`) {
+    return res.status(401).json({ message: "Não autorizado." });
+  }
+  next();
+};
+
 const documentUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
@@ -370,19 +379,6 @@ const roomAssignmentService = createRoomAssignmentService({
   isUpperFloorRoom,
 });
 const reorganizationModel = createReorganizationModel({ db });
-const reorganizationController = createReorganizationController({
-  asBoolean,
-  db,
-  positiveInt,
-  reorganizationModel,
-  roomAssignmentService,
-  sanitizeFreeText,
-});
-registerReorganizationRoutes(app, reorganizationController, {
-  documentUpload,
-  requireRole,
-  uploadRateLimit,
-});
 
 const facilitiesModel = createFacilitiesModel({ db, dayOrderSql });
 const facilitiesController = createFacilitiesController({
@@ -408,6 +404,7 @@ const contentController = createContentController({
 registerContentRoutes(app, contentController, { ouvidoriaRateLimit, requireRole });
 
 const scheduleModel = createScheduleModel({ db, dayOrderSql, httpError, normalizeLookup });
+const notificationService = createScheduleNotificationService({ scheduleModel });
 const scheduleController = createScheduleController({
   db,
   httpError,
@@ -415,13 +412,33 @@ const scheduleController = createScheduleController({
   roomAssignmentService,
   sanitizeFreeText,
   scheduleModel,
+  notificationService,
 });
 registerScheduleRoutes(app, scheduleController, {
+  notificationMaintenance,
   notificationRateLimit,
   requireRole,
   uploadRateLimit,
   uraniaUpload,
 });
+
+const reorganizationController = createReorganizationController({
+  asBoolean,
+  db,
+  notificationService,
+  positiveInt,
+  reorganizationModel,
+  roomAssignmentService,
+  sanitizeFreeText,
+  scheduleModel,
+});
+registerReorganizationRoutes(app, reorganizationController, {
+  documentUpload,
+  requireRole,
+  uploadRateLimit,
+});
+
+startScheduleNotificationScheduler({ notificationService });
 
 if (serveStaticFrontend) {
   app.get("*", (req, res, next) => {
@@ -443,6 +460,8 @@ app.use((error, req, res, _next) => {
     status = 400;
   }
   res.status(status).json({
+    ...(error.code ? { error: error.code } : {}),
+    ...(error.availableAt ? { availableAt: error.availableAt } : {}),
     message:
       status === 503
         ? databaseUnavailableMessage

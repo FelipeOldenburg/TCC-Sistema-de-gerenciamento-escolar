@@ -12,11 +12,15 @@ export type SessionUser = {
 
 export class ApiError extends Error {
   status: number;
+  code?: string;
+  availableAt?: string;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, details: { code?: string; availableAt?: string } = {}) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.code = details.code;
+    this.availableAt = details.availableAt;
   }
 }
 
@@ -67,7 +71,10 @@ export async function apiFetch<T>(url: string, init: RequestInit = {}): Promise<
   });
   const data = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new ApiError(data?.message || "Não foi possível concluir a operação.", response.status);
+    throw new ApiError(data?.message || "Não foi possível concluir a operação.", response.status, {
+      code: data?.error,
+      availableAt: data?.availableAt,
+    });
   }
   return data as T;
 }

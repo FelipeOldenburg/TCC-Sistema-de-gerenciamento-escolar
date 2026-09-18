@@ -110,6 +110,8 @@ COOKIE_SECURE=true
 COOKIE_SAMESITE=Lax
 ```
 
+Para avisos da grade, configure também `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` e `NOTIFICATION_CRON_SECRET` (ou `CRON_SECRET`). O `vercel.json` agenda `/api/horarios/notificacoes/manutencao` a cada cinco minutos; em servidor persistente o scheduler interno também executa a mesma rotina. O schema deve ser aplicado com `npm run db:migrate` antes do deploy.
+
 Em Vercel ou qualquer ambiente publico, `DB_HOST` deve apontar para um PostgreSQL gerenciado/acessivel pela internet. `localhost` funciona apenas na maquina de desenvolvimento. Em Supabase, configure uma `DATABASE_URL` exclusiva do servidor, `DB_SSL=true`, `DB_SSL_REJECT_UNAUTHORIZED=true`, a CA PEM baixada em **Database Settings → SSL Configuration** (em `DB_SSL_CA`, ou em `DB_SSL_CA_FILE` no desenvolvimento) e `DB_CREATE_DATABASE=false`. Em Vercel, o pool da aplicação usa uma conexão por instância por padrão.
 
 Execute `npm run db:preflight`, `npm run db:migrate` e `npm run db:check` antes de trocar o tráfego para uma nova versão. O preflight detecta relações entre instituições diferentes; a verificação final também exige as constraints compostas. Não exponha a URL do PostgreSQL, chaves Supabase ou credenciais de banco em variáveis `VITE_*`. O schema mantém RLS habilitado como bloqueio de acesso direto; a role usada pelo Express e as policies devem ser verificadas em homologação antes do corte.

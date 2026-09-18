@@ -2,6 +2,13 @@ import crypto from "crypto";
 import { buildScheduleComparison } from "../scheduleUtils.js";
 
 export const createScheduleModel = ({ db, dayOrderSql, httpError, normalizeLookup }) => {
+  const notificationLimitError = (availableAt) => {
+    const error = httpError(429, "Você atingiu o limite de solicitações. Tente novamente após o período de 5 horas.");
+    error.code = "NOTIFICATION_REQUEST_LIMIT";
+    error.availableAt = availableAt instanceof Date ? availableAt.toISOString() : availableAt;
+    return error;
+  };
+
   const scheduleComparisonSelect = `
     SELECT h.categoria, h.turma, h.dia, h.periodo,
            TO_CHAR(h.hora_inicio, 'HH24:MI') AS hora_inicio,
@@ -126,17 +133,45 @@ export const createScheduleModel = ({ db, dayOrderSql, httpError, normalizeLooku
     return buildScheduleComparison(candidateSchedules, activeSchedules, activeImports[0]);
   };
 
-  const loadScheduleNotificationSubscribers = async (conn, classes, institutionId) => {
-    if (!classes.length) return [];
-    const [rows] = await conn.query(
-      `SELECT email, turma
-         FROM horario_notificacoes
-        WHERE ativo = TRUE
-          AND instituicao_id = ?
-          AND turma IN (${classes.map(() => "?").join(",")})`,
-      [institutionId, ...classes]
-    );
-    return rows;
+  const enqueueNotificationEvents = async (conn, { institutionId, events }) => {
+    for (const event of events) {
+      const [subscriptions] = await conn.query(
+        `SELECT id, email
+           FROM horario_notificacoes
+          WHERE instituicao_id = ?
+            AND turma = ?
+            AND ativo = TRUE
+            AND status = 'ATIVA'
+            AND expires_at > NOW()`,
+        [institutionId, event.turma]
+      );
+      for (const subscription of subscriptions) {
+        await conn.query(
+          `INSERT INTO horario_notificacao_eventos
+           (instituicao_id, horario_notificacao_id, tipo, chave, turma, payload_json)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT (horario_notificacao_id, tipo, chave) DO NOTHING`,
+          [institutionId, subscription.id, event.tipo || "ALTERACAO", event.chave, event.turma, JSON.stringify(event.payload || {})]
+        );
+      }
+    }
+  };
+
+  const enqueueComparisonEvents = async (conn, { institutionId, importId, comparison }) => {
+    if (!comparison?.aulas_mudaram) return;
+    const details = comparison.detalhes_por_turma || {};
+    await enqueueNotificationEvents(conn, {
+      institutionId,
+      events: comparison.turmas_afetadas.map((turma) => ({
+        chave: `importacao:${importId}:${turma}`,
+        turma,
+        payload: {
+          adicionadas: details.adicionadas?.[turma] || [],
+          removidas: details.removidas?.[turma] || [],
+          alteradas: details.alteradas?.[turma] || [],
+        },
+      })),
+    });
   };
 
   const createImport = async ({ files, institutionId, observations, parsed, userId }) => {
@@ -392,9 +427,7 @@ export const createScheduleModel = ({ db, dayOrderSql, httpError, normalizeLooku
       if (rows[0].status !== "PENDENTE") throw httpError(409, "Somente importações pendentes podem ser aprovadas.");
       await preserveRoomsFromActiveImport(conn, rows[0].id, rows[0].escopo_chave, institutionId);
       const comparison = await loadScheduleComparison(conn, rows[0].id, rows[0].escopo_chave, institutionId);
-      const notificationSubscribers = comparison?.aulas_mudaram
-        ? await loadScheduleNotificationSubscribers(conn, comparison.turmas_afetadas, institutionId)
-        : [];
+      await enqueueComparisonEvents(conn, { institutionId, importId, comparison });
       await conn.query(
         `UPDATE importacoes_horarios
             SET ativa = FALSE
@@ -410,7 +443,7 @@ export const createScheduleModel = ({ db, dayOrderSql, httpError, normalizeLooku
       );
       await conn.commit();
       committed = true;
-      return { comparison, notificationSubscribers };
+      return { comparison };
     } catch (error) {
       if (!committed) await conn.rollback();
       throw error;
@@ -430,42 +463,287 @@ export const createScheduleModel = ({ db, dayOrderSql, httpError, normalizeLooku
     return result;
   };
 
-  const createNotificationSubscription = async ({ email, institutionId, tokenHash, turma }) => {
-    const [classes] = await db.query(
-      `SELECT 1
-         FROM horarios_importados h
-         JOIN importacoes_horarios i ON i.id = h.importacao_id
-        WHERE i.status = 'APROVADA'
-          AND i.ativa = TRUE
-          AND i.instituicao_id = ?
-          AND h.categoria = 'TURMA'
-          AND h.turma = ?
-        LIMIT 1`,
-      [institutionId, turma]
-    );
-    if (!classes.length) throw httpError(400, "Turma não encontrada nos horários publicados.");
+  const createNotificationSubscription = async ({ email, institutionId, tokenHash, codeHash, turma }) => {
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [classes] = await conn.query(
+        `SELECT 1
+           FROM horarios_importados h
+           JOIN importacoes_horarios i ON i.id = h.importacao_id
+          WHERE i.status = 'APROVADA'
+            AND i.ativa = TRUE
+            AND i.instituicao_id = ?
+            AND h.categoria = 'TURMA'
+            AND h.turma = ?
+          LIMIT 1`,
+        [institutionId, turma]
+      );
+      if (!classes.length) throw httpError(400, "Turma não encontrada nos horários publicados.");
+
+      await conn.query(
+        `INSERT INTO horario_notificacao_limites (instituicao_id, email)
+         VALUES (?, ?)
+         ON CONFLICT (instituicao_id, email) DO NOTHING`,
+        [institutionId, email]
+      );
+      const [limits] = await conn.query(
+        `SELECT request_count, cooldown_until
+           FROM horario_notificacao_limites
+          WHERE instituicao_id = ? AND email = ?
+          FOR UPDATE`,
+        [institutionId, email]
+      );
+      const limit = limits[0] || { request_count: 0, cooldown_until: null };
+      const cooldown = limit.cooldown_until ? new Date(limit.cooldown_until) : null;
+      if (cooldown && cooldown.getTime() > Date.now()) throw notificationLimitError(cooldown);
+      const requestCount = cooldown ? 0 : Number(limit.request_count || 0);
+      if (!cooldown && requestCount >= 3) {
+        const availableAt = new Date(Date.now() + 5 * 60 * 60 * 1000);
+        await conn.query(
+          `UPDATE horario_notificacao_limites SET cooldown_until = ? WHERE instituicao_id = ? AND email = ?`,
+          [availableAt, institutionId, email]
+        );
+        throw notificationLimitError(availableAt);
+      }
+      const nextCount = requestCount + 1;
+      const cooldownUntil = nextCount >= 3 ? new Date(Date.now() + 5 * 60 * 60 * 1000) : null;
+      await conn.query(
+        `UPDATE horario_notificacao_limites
+            SET request_count = ?, last_request_at = CURRENT_TIMESTAMP, cooldown_until = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE instituicao_id = ? AND email = ?`,
+        [nextCount, cooldownUntil, institutionId, email]
+      );
+      await conn.query(
+        `INSERT INTO horario_notificacoes
+         (instituicao_id, email, turma, ativo, status, confirmacao_token_hash, confirmacao_codigo_hash,
+          confirmacao_expira_em, confirmacao_tentativas, confirmacao_bloqueada_ate, verified_at, activated_at, expires_at)
+         VALUES (?, ?, ?, FALSE, 'PENDENTE', ?, ?, NOW() + INTERVAL '2 days', 0, NULL, NULL, NULL, NULL)
+         ON CONFLICT (instituicao_id, email, turma) DO UPDATE
+           SET ativo = FALSE,
+               status = 'PENDENTE',
+               confirmacao_token_hash = EXCLUDED.confirmacao_token_hash,
+               confirmacao_codigo_hash = EXCLUDED.confirmacao_codigo_hash,
+               confirmacao_expira_em = EXCLUDED.confirmacao_expira_em,
+               confirmacao_tentativas = 0,
+               confirmacao_bloqueada_ate = NULL,
+               verified_at = NULL,
+               activated_at = NULL,
+               expires_at = NULL,
+               expiration_email_sent_at = NULL,
+               updated_at = CURRENT_TIMESTAMP`,
+        [institutionId, email, turma, tokenHash, codeHash]
+      );
+      await conn.commit();
+      return { cooldownUntil };
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
+  };
+
+  const activateNotificationSubscription = async ({ institutionId, where, params }) => {
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [rows] = await conn.query(
+        `SELECT id, email, turma, confirmacao_expira_em, confirmacao_bloqueada_ate, confirmacao_codigo_hash
+           FROM horario_notificacoes
+          WHERE instituicao_id = ? AND status = 'PENDENTE' AND ${where}
+          FOR UPDATE`,
+        [institutionId, ...params]
+      );
+      if (!rows.length) throw httpError(400, "Código de confirmação inválido ou expirado.");
+      const subscription = rows[0];
+      if (subscription.confirmacao_bloqueada_ate && new Date(subscription.confirmacao_bloqueada_ate).getTime() > Date.now()) {
+        throw httpError(429, "Muitas tentativas de confirmação. Tente novamente mais tarde.");
+      }
+      if (!subscription.confirmacao_expira_em || new Date(subscription.confirmacao_expira_em).getTime() <= Date.now()) {
+        throw httpError(400, "Código de confirmação inválido ou expirado.");
+      }
+      await conn.query(
+        `UPDATE horario_notificacoes
+            SET ativo = TRUE, status = 'ATIVA', verified_at = CURRENT_TIMESTAMP, activated_at = CURRENT_TIMESTAMP,
+                expires_at = CURRENT_TIMESTAMP + INTERVAL '1 year', confirmacao_token_hash = NULL,
+                confirmacao_codigo_hash = NULL, confirmacao_expira_em = NULL, confirmacao_tentativas = 0,
+                confirmacao_bloqueada_ate = NULL, expiration_email_sent_at = NULL
+          WHERE id = ? AND instituicao_id = ?`,
+        [subscription.id, institutionId]
+      );
+      await conn.commit();
+      return { email: subscription.email, turma: subscription.turma, status: "ATIVA" };
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
+  };
+
+  const confirmNotificationByCode = async ({ institutionId, email, turma, codeHash }) => {
+    const conn = await db.getConnection();
+    let committed = false;
+    try {
+      await conn.beginTransaction();
+      const [rows] = await conn.query(
+        `SELECT id, email, turma, confirmacao_expira_em, confirmacao_bloqueada_ate, confirmacao_codigo_hash, confirmacao_tentativas
+           FROM horario_notificacoes
+          WHERE instituicao_id = ? AND email = ? AND turma = ? AND status = 'PENDENTE'
+          FOR UPDATE`,
+        [institutionId, email, turma]
+      );
+      if (!rows.length) throw httpError(400, "Código de confirmação inválido ou expirado.");
+      const subscription = rows[0];
+      if (subscription.confirmacao_bloqueada_ate && new Date(subscription.confirmacao_bloqueada_ate).getTime() > Date.now()) {
+        throw httpError(429, "Muitas tentativas de confirmação. Tente novamente mais tarde.");
+      }
+      if (!subscription.confirmacao_expira_em || new Date(subscription.confirmacao_expira_em).getTime() <= Date.now()) {
+        throw httpError(400, "Código de confirmação inválido ou expirado.");
+      }
+      if (subscription.confirmacao_codigo_hash !== codeHash) {
+        const attempts = Number(subscription.confirmacao_tentativas || 0) + 1;
+        await conn.query(
+          `UPDATE horario_notificacoes
+              SET confirmacao_tentativas = ?, confirmacao_bloqueada_ate = ${attempts >= 5 ? "CURRENT_TIMESTAMP + INTERVAL '1 hour'" : "NULL"}
+            WHERE id = ? AND instituicao_id = ?`,
+          [attempts, subscription.id, institutionId]
+        );
+        await conn.commit();
+        committed = true;
+        throw httpError(400, "Código de confirmação inválido.");
+      }
+      await conn.query(
+        `UPDATE horario_notificacoes
+            SET ativo = TRUE, status = 'ATIVA', verified_at = CURRENT_TIMESTAMP, activated_at = CURRENT_TIMESTAMP,
+                expires_at = CURRENT_TIMESTAMP + INTERVAL '1 year', confirmacao_token_hash = NULL,
+                confirmacao_codigo_hash = NULL, confirmacao_expira_em = NULL, confirmacao_tentativas = 0,
+                confirmacao_bloqueada_ate = NULL, expiration_email_sent_at = NULL
+          WHERE id = ? AND instituicao_id = ?`,
+        [subscription.id, institutionId]
+      );
+      await conn.commit();
+      committed = true;
+      return { email: subscription.email, turma: subscription.turma, status: "ATIVA", expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString() };
+    } catch (error) {
+      if (!committed) {
+        try { await conn.rollback(); } catch {}
+      }
+      throw error;
+    } finally {
+      conn.release();
+    }
+  };
+
+  const confirmNotificationSubscription = ({ institutionId, tokenHash }) =>
+    activateNotificationSubscription({ institutionId, where: "confirmacao_token_hash = ?", params: [tokenHash] })
+      .then(() => ({ affectedRows: 1 }));
+
+  const claimNotificationEvents = async ({ institutionId = null, limit = 100 }) => {
+    const conn = await db.getConnection();
+    const institutionCondition = institutionId === null ? "" : "AND instituicao_id = ?";
+    const eventInstitutionCondition = institutionId === null ? "" : "AND e.instituicao_id = ?";
+    const institutionParams = institutionId === null ? [] : [institutionId];
+    try {
+      await conn.beginTransaction();
+      await conn.query(
+        `UPDATE horario_notificacao_eventos
+            SET status = 'FALHA', processando_em = NULL, ultimo_erro = 'Processamento interrompido; tentando novamente.'
+          WHERE status = 'ENVIANDO'
+            AND processando_em < CURRENT_TIMESTAMP - INTERVAL '15 minutes'
+            ${institutionCondition}`,
+        institutionParams
+      );
+      const [events] = await conn.query(
+        `SELECT e.id, e.tipo, e.turma, e.payload_json, n.email
+           FROM horario_notificacao_eventos e
+           JOIN horario_notificacoes n ON n.id = e.horario_notificacao_id AND n.instituicao_id = e.instituicao_id
+          WHERE e.status IN ('PENDENTE', 'FALHA')
+            AND e.proxima_tentativa_em <= CURRENT_TIMESTAMP
+            AND (e.tipo = 'EXPIRACAO' OR (n.status = 'ATIVA' AND n.ativo = TRUE AND n.expires_at > CURRENT_TIMESTAMP))
+            ${eventInstitutionCondition}
+          ORDER BY e.id
+          LIMIT ?
+          FOR UPDATE SKIP LOCKED`,
+        [...institutionParams, limit]
+      );
+      if (events.length) {
+        await conn.query(
+          `UPDATE horario_notificacao_eventos
+              SET status = 'ENVIANDO', tentativas = tentativas + 1, processando_em = CURRENT_TIMESTAMP
+            WHERE id IN (${events.map(() => "?").join(",")})`,
+          events.map((event) => event.id)
+        );
+      }
+      await conn.commit();
+      return events;
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
+  };
+
+  const completeNotificationEvent = async (eventId) => {
     await db.query(
-      `INSERT INTO horario_notificacoes (instituicao_id, email, turma, ativo, confirmacao_token_hash, confirmacao_expira_em)
-       VALUES (?, ?, ?, FALSE, ?, NOW() + INTERVAL '2 days')
-       ON CONFLICT (instituicao_id, email, turma) DO UPDATE
-         SET ativo = FALSE,
-             confirmacao_token_hash = EXCLUDED.confirmacao_token_hash,
-             confirmacao_expira_em = EXCLUDED.confirmacao_expira_em,
-             updated_at = CURRENT_TIMESTAMP`,
-      [institutionId, email, turma, tokenHash]
+      `UPDATE horario_notificacao_eventos
+          SET status = 'ENVIADO', enviado_em = CURRENT_TIMESTAMP, processando_em = NULL, ultimo_erro = NULL
+        WHERE id = ? AND status = 'ENVIANDO'`,
+      [eventId]
+    );
+    return db.query(
+      `UPDATE horario_notificacoes n
+          SET expiration_email_sent_at = CURRENT_TIMESTAMP
+         FROM horario_notificacao_eventos e
+        WHERE e.id = ? AND e.tipo = 'EXPIRACAO' AND n.id = e.horario_notificacao_id
+          AND n.instituicao_id = e.instituicao_id`,
+      [eventId]
     );
   };
 
-  const confirmNotificationSubscription = async ({ institutionId, tokenHash }) => {
-    const [result] = await db.query(
-      `UPDATE horario_notificacoes
-          SET ativo = TRUE, confirmacao_token_hash = NULL, confirmacao_expira_em = NULL
-        WHERE confirmacao_token_hash = ?
-          AND instituicao_id = ?
-          AND confirmacao_expira_em > NOW()`,
-      [tokenHash, institutionId]
-    );
-    return result;
+  const failNotificationEvent = async ({ eventId, error }) => db.query(
+    `UPDATE horario_notificacao_eventos
+        SET status = 'FALHA', processando_em = NULL, ultimo_erro = ?, proxima_tentativa_em = CURRENT_TIMESTAMP + INTERVAL '15 minutes'
+      WHERE id = ? AND status = 'ENVIANDO'`,
+    [String(error || "Falha desconhecida").slice(0, 1000), eventId]
+  );
+
+  const expireNotificationSubscriptions = async ({ limit = 100 } = {}) => {
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [subscriptions] = await conn.query(
+        `SELECT id, instituicao_id, email, turma, expires_at
+           FROM horario_notificacoes
+          WHERE status = 'ATIVA' AND ativo = TRUE AND expires_at <= CURRENT_TIMESTAMP
+          ORDER BY expires_at, id
+          LIMIT ?
+          FOR UPDATE SKIP LOCKED`,
+        [limit]
+      );
+      for (const subscription of subscriptions) {
+        await conn.query(
+          `UPDATE horario_notificacoes SET status = 'EXPIRADA', ativo = FALSE WHERE id = ? AND instituicao_id = ?`,
+          [subscription.id, subscription.instituicao_id]
+        );
+        await conn.query(
+          `INSERT INTO horario_notificacao_eventos
+           (instituicao_id, horario_notificacao_id, tipo, chave, turma, payload_json)
+           VALUES (?, ?, 'EXPIRACAO', ?, ?, ?)
+           ON CONFLICT (horario_notificacao_id, tipo, chave) DO NOTHING`,
+          [subscription.instituicao_id, subscription.id, `expiracao:${subscription.id}:${new Date(subscription.expires_at).toISOString()}`, subscription.turma, JSON.stringify({})]
+        );
+      }
+      await conn.commit();
+      return subscriptions.length;
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
   };
 
   const listPublishedSchedules = async ({ institutionId, onlyOptions, query }) => {
@@ -635,10 +913,16 @@ export const createScheduleModel = ({ db, dayOrderSql, httpError, normalizeLooku
   return {
     approveImport,
     assignPendingRoom,
+    claimNotificationEvents,
+    completeNotificationEvent,
     confirmNotificationSubscription,
+    confirmNotificationByCode,
     createImport,
     createNotificationSubscription,
     deactivateInterval,
+    enqueueNotificationEvents,
+    expireNotificationSubscriptions,
+    failNotificationEvent,
     getImportDetail,
     listImports,
     listAcademicGroups,

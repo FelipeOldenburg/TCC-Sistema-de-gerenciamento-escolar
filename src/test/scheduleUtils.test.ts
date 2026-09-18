@@ -28,4 +28,19 @@ describe("scheduleUtils", () => {
     expect(comparison.professores_alterados).toBe(1);
     expect(comparison.turmas_afetadas).toEqual(["62-1"]);
   });
+
+  it("trata mudança de horário no mesmo período como alteração, não como inclusão duplicada", () => {
+    const schedule = { categoria: "TURMA", turma: "3A", dia: "TER", periodo: 2, hora_inicio: "10:00", disciplina: "Física", sala_nome: "Lab 2" };
+    const comparison = buildScheduleComparison(
+      [{ ...schedule, hora_inicio: "11:00" }],
+      [schedule],
+      { id: 4, titulo: "Atual", publicado_em: null }
+    );
+
+    expect(comparison.aulas_mudaram).toBe(1);
+    expect(comparison.horarios_alterados).toBe(1);
+    expect(comparison.aulas_adicionadas).toBe(0);
+    expect(comparison.aulas_removidas).toBe(0);
+    expect(comparison.detalhes_por_turma.alteradas["3A"]).toHaveLength(1);
+  });
 });
