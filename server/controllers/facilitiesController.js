@@ -30,21 +30,31 @@ const normalizeRoomPayload = (body = {}, asBoolean) => {
   };
 };
 
+const nullableNumber = (value) => value === null || value === undefined || value === "" ? null : Number(value);
+
 const normalizeMapPayload = (body = {}, asBoolean) => ({
   nome: String(body.nome || "").trim(),
   piso: String(body.piso || "").trim() || null,
-  largura: Number(body.largura || 1000),
-  altura: Number(body.altura || 700),
+  bloco_id: nullableNumber(body.bloco_id),
+  visao_geral: asBoolean(body.visao_geral),
+  descricao: String(body.descricao || "").trim() || null,
+  largura: Number(body.largura ?? 1000),
+  altura: Number(body.altura ?? 700),
   ativo: body.ativo === undefined ? true : asBoolean(body.ativo),
   areas: Array.isArray(body.areas)
     ? body.areas.map((area) => ({
-        id: area.id === null || area.id === undefined || area.id === "" ? null : Number(area.id),
+        id: nullableNumber(area.id),
         tipo: String(area.tipo || "").toUpperCase(),
         nome: String(area.nome || "").trim(),
         caminho_svg: String(area.caminho_svg || "").trim(),
-        bloco_id: area.bloco_id ? Number(area.bloco_id) : null,
-        sala_id: area.sala_id ? Number(area.sala_id) : null,
-        setor_id: area.setor_id ? Number(area.setor_id) : null,
+        bloco_id: nullableNumber(area.bloco_id),
+        sala_id: nullableNumber(area.sala_id),
+        setor_id: nullableNumber(area.setor_id),
+        rotulo_x: nullableNumber(area.rotulo_x),
+        rotulo_y: nullableNumber(area.rotulo_y),
+        categoria: String(area.categoria || "AMBIENTE").toUpperCase(),
+        destino_mapa_id: nullableNumber(area.destino_mapa_id),
+        descricao: String(area.descricao || "").trim() || null,
       }))
     : [],
 });
@@ -272,16 +282,21 @@ export const createFacilitiesController = ({
   };
 
   const saveMap = async (req, res, next) => {
-    const map = normalizeMapPayload(req.body, asBoolean);
     try {
+      if (!Array.isArray(req.body?.areas) || req.body.areas.some((area) => !area || typeof area !== "object" || Array.isArray(area))) {
+        throw httpError(400, "Informe as áreas do mapa.");
+      }
+      const map = normalizeMapPayload(req.body, asBoolean);
       if (req.params.id && (!Number.isInteger(Number(req.params.id)) || Number(req.params.id) < 1)) {
         throw httpError(400, "Mapa inválido.");
       }
-      if (!map.nome || !Number.isInteger(map.largura) || !Number.isInteger(map.altura) ||
+      if (!map.nome || map.nome.length > 120 || (map.piso?.length || 0) > 80 ||
+          (map.descricao?.length || 0) > 2000 ||
+          (map.bloco_id !== null && (!Number.isInteger(map.bloco_id) || map.bloco_id < 1)) ||
+          !Number.isInteger(map.largura) || !Number.isInteger(map.altura) ||
           map.largura < 1 || map.altura < 1 || map.largura > 10000 || map.altura > 10000) {
         throw httpError(400, "Informe nome e dimensões válidas para o mapa.");
       }
-      if (!Array.isArray(req.body?.areas)) throw httpError(400, "Informe as áreas do mapa.");
       if (map.areas.length > 500) throw httpError(400, "O mapa excede o limite de 500 áreas.");
       const areaIds = map.areas.map((area) => area.id).filter((id) => id !== null);
       if ((!req.params.id && areaIds.length) || areaIds.some((id) => !Number.isInteger(id) || id < 1) ||
@@ -289,12 +304,18 @@ export const createFacilitiesController = ({
         throw httpError(400, "Há um identificador de área inválido no mapa.");
       }
       for (const area of map.areas) {
-        const references = [area.bloco_id, area.sala_id, area.setor_id].filter(Boolean);
-        const expectedReference = area.tipo === "BLOCO" ? area.bloco_id
-          : area.tipo === "SALA" ? area.sala_id
-            : area.tipo === "SETOR" ? area.setor_id
+        const references = [area.bloco_id, area.sala_id, area.setor_id].filter((id) => id !== null);
+        const expectedReference = area.tipo === "BLOCO" ? area.bloco_id !== null && references.length === 1
+          : area.tipo === "SALA" ? area.sala_id !== null && area.bloco_id === null
+            : area.tipo === "SETOR" ? area.setor_id !== null && references.length === 1
               : area.tipo === "OUTRO" ? references.length === 0 : false;
-        if (!area.nome || !expectedReference || references.length > 1 || area.caminho_svg.length > 8000 ||
+        const invalidCoordinates = (area.rotulo_x === null) !== (area.rotulo_y === null) ||
+          (area.rotulo_x !== null && (!Number.isFinite(area.rotulo_x) || !Number.isFinite(area.rotulo_y) ||
+            area.rotulo_x < 0 || area.rotulo_y < 0 || area.rotulo_x > map.largura || area.rotulo_y > map.altura));
+        if (!area.nome || area.nome.length > 120 || !expectedReference ||
+            [...references, area.destino_mapa_id].some((id) => id !== null && (!Number.isInteger(id) || id < 1)) ||
+            !["AMBIENTE", "CIRCULACAO", "ESCADA", "ACESSO", "PATIO"].includes(area.categoria) ||
+            (area.descricao?.length || 0) > 2000 || invalidCoordinates || area.caminho_svg.length > 8000 ||
             !/^[MmLlHhVvCcSsQqTtAaZz0-9eE+.,\-\s]+$/.test(area.caminho_svg)) {
           throw httpError(400, "Há uma área inválida no mapa.");
         }
@@ -304,7 +325,7 @@ export const createFacilitiesController = ({
         mapId: req.params.id,
         map,
       });
-      if (result.invalidReference) throw httpError(400, "Bloco, sala ou setor não encontrado nesta instituição.");
+      if (result.invalidReference) throw httpError(400, "Bloco, sala, setor ou mapa de destino não encontrado nesta instituição.");
       if (result.invalidArea) throw httpError(400, "Área não encontrada neste mapa e instituição.");
       if (result.notFound) throw httpError(404, "Mapa não encontrado.");
       return res.status(req.params.id ? 200 : 201).json({ id: result.id });

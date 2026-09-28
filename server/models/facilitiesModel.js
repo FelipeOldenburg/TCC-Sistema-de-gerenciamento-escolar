@@ -333,15 +333,19 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
 
   const listMaps = async ({ institutionId, authenticated }) => {
     const [maps] = await db.query(
-      `SELECT id, nome, piso, largura, altura, ativo
-         FROM mapas
-        WHERE instituicao_id = ? ${authenticated ? "" : "AND ativo = TRUE"}
-        ORDER BY nome`,
+      `SELECT m.id, m.nome, m.piso, m.largura, m.altura, m.ativo,
+              m.bloco_id, b.nome AS bloco_nome, m.visao_geral, m.descricao
+         FROM mapas m
+         LEFT JOIN blocos b ON b.id = m.bloco_id AND b.instituicao_id = m.instituicao_id
+        WHERE m.instituicao_id = ? ${authenticated ? "" : "AND m.ativo = TRUE"}
+        ORDER BY m.visao_geral DESC, m.nome`,
       [institutionId]
     );
     if (!maps.length) return [];
     const [areas] = await db.query(
       `SELECT a.id, a.mapa_id, a.tipo, a.nome, a.caminho_svg, a.bloco_id, a.sala_id, a.setor_id,
+              a.rotulo_x::float8 AS rotulo_x, a.rotulo_y::float8 AS rotulo_y,
+              a.categoria, a.destino_mapa_id, a.descricao,
               b.nome AS bloco_nome, s.nome AS sala_nome, st.nome AS setor_nome
          FROM mapa_areas a
          JOIN mapas m ON m.id = a.mapa_id AND m.instituicao_id = a.instituicao_id
@@ -355,6 +359,7 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
     return maps.map((map) => ({
       ...map,
       ativo: Boolean(map.ativo),
+      visao_geral: Boolean(map.visao_geral),
       areas: areas.filter((area) => Number(area.mapa_id) === Number(map.id)),
     }));
   };
@@ -363,18 +368,18 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
     const conn = await db.getConnection();
     try {
       await conn.beginTransaction();
-      for (const area of map.areas) {
-        const reference = area.bloco_id
-          ? ["blocos", area.bloco_id]
-          : area.sala_id
-            ? ["salas", area.sala_id]
-            : area.setor_id
-              ? ["setores", area.setor_id]
-              : null;
-        if (reference) {
+      const references = [
+        ["blocos", map.bloco_id],
+        ...map.areas.flatMap((area) => [
+          ["blocos", area.bloco_id], ["salas", area.sala_id],
+          ["setores", area.setor_id], ["mapas", area.destino_mapa_id],
+        ]),
+      ];
+      for (const [table, referenceId] of references) {
+        if (referenceId != null) {
           const [rows] = await conn.query(
-            `SELECT id FROM ${reference[0]} WHERE id = ? AND instituicao_id = ? LIMIT 1`,
-            [reference[1], institutionId]
+            `SELECT id FROM ${table} WHERE id = ? AND instituicao_id = ? LIMIT 1`,
+            [referenceId, institutionId]
           );
           if (!rows.length) {
             await conn.rollback();
@@ -386,9 +391,11 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
       let id = Number(mapId) || null;
       if (id) {
         const [result] = await conn.query(
-          `UPDATE mapas SET nome = ?, piso = ?, largura = ?, altura = ?, ativo = ?
+          `UPDATE mapas SET nome = ?, piso = ?, largura = ?, altura = ?, ativo = ?,
+             bloco_id = ?, visao_geral = ?, descricao = ?
             WHERE id = ? AND instituicao_id = ?`,
-          [map.nome, map.piso, map.largura, map.altura, map.ativo, id, institutionId]
+          [map.nome, map.piso, map.largura, map.altura, map.ativo,
+            map.bloco_id ?? null, map.visao_geral ?? false, map.descricao ?? null, id, institutionId]
         );
         if (!result.affectedRows) {
           await conn.rollback();
@@ -399,7 +406,7 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
           [id, institutionId]
         );
         const existingAreaIds = new Set(existingAreas.map((area) => Number(area.id)));
-        const retainedAreaIds = new Set(map.areas.flatMap((area) => area.id === null ? [] : [area.id]));
+        const retainedAreaIds = new Set(map.areas.flatMap((area) => area.id == null ? [] : [area.id]));
         if ([...retainedAreaIds].some((areaId) => !existingAreaIds.has(areaId))) {
           await conn.rollback();
           return { invalidArea: true };
@@ -414,27 +421,34 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
         }
       } else {
         const [result] = await conn.query(
-          `INSERT INTO mapas (instituicao_id, nome, piso, largura, altura, ativo)
-           VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
-          [institutionId, map.nome, map.piso, map.largura, map.altura, map.ativo]
+          `INSERT INTO mapas (instituicao_id, nome, piso, largura, altura, ativo, bloco_id, visao_geral, descricao)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+          [institutionId, map.nome, map.piso, map.largura, map.altura, map.ativo,
+            map.bloco_id ?? null, map.visao_geral ?? false, map.descricao ?? null]
         );
         id = result.insertId;
       }
       for (const area of map.areas) {
-        if (area.id !== null) {
+        if (area.id != null) {
           await conn.query(
             `UPDATE mapa_areas
-                SET tipo = ?, nome = ?, caminho_svg = ?, bloco_id = ?, sala_id = ?, setor_id = ?
+                SET tipo = ?, nome = ?, caminho_svg = ?, bloco_id = ?, sala_id = ?, setor_id = ?,
+                    rotulo_x = ?, rotulo_y = ?, categoria = ?, destino_mapa_id = ?, descricao = ?
               WHERE id = ? AND mapa_id = ? AND instituicao_id = ?`,
             [area.tipo, area.nome, area.caminho_svg, area.bloco_id, area.sala_id, area.setor_id,
+              area.rotulo_x ?? null, area.rotulo_y ?? null, area.categoria || "AMBIENTE",
+              area.destino_mapa_id ?? null, area.descricao ?? null,
               area.id, id, institutionId]
           );
         } else {
           await conn.query(
             `INSERT INTO mapa_areas
-             (instituicao_id, mapa_id, tipo, nome, caminho_svg, bloco_id, sala_id, setor_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [institutionId, id, area.tipo, area.nome, area.caminho_svg, area.bloco_id, area.sala_id, area.setor_id]
+             (instituicao_id, mapa_id, tipo, nome, caminho_svg, bloco_id, sala_id, setor_id,
+              rotulo_x, rotulo_y, categoria, destino_mapa_id, descricao)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, id, area.tipo, area.nome, area.caminho_svg, area.bloco_id, area.sala_id, area.setor_id,
+              area.rotulo_x ?? null, area.rotulo_y ?? null, area.categoria || "AMBIENTE",
+              area.destino_mapa_id ?? null, area.descricao ?? null]
           );
         }
       }

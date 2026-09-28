@@ -18,11 +18,11 @@ const Index = () => {
   const section = activeTab === "horarios"
     ? <HorariosSection onReportContext={setReportContext} />
     : activeTab === "mapa"
-      ? <MapaSection selectedAreaId={selectedAreaId} onReportContext={setReportContext} onSelectSector={(id) => { setSelectedSectorId(id); handleTabChange("setores"); }} />
+      ? <MapaSection selectedAreaId={selectedAreaId} onReportContext={setReportContext} onSelectSector={(id, areaId) => { setSelectedSectorId(id); setSelectedAreaId(areaId ?? null); handleTabChange("setores"); }} />
       : activeTab === "eventos"
         ? <EventosSection />
         : activeTab === "setores"
-          ? <SetoresSection selectedSectorId={selectedSectorId} onReportContext={setReportContext} onViewMap={(id) => { setSelectedAreaId(id); handleTabChange("mapa"); }} />
+          ? <SetoresSection selectedSectorId={selectedSectorId} selectedMapAreaId={selectedAreaId} onReportContext={setReportContext} onViewMap={(id) => { setSelectedAreaId(id); handleTabChange("mapa"); }} />
           : <ReclamacoesSection />;
 
   return (

@@ -15,6 +15,7 @@ import {
 import { apiFetch } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import type { ReportContext } from "@/components/sections/ReclamacoesSection";
+import { mapTitle, type MapView } from "@/controllers/useSchoolMap";
 
 type Setor = {
   id: number;
@@ -55,14 +56,16 @@ const colorMap: Record<string, string> = {
   rose: "from-rose-500 to-pink-400",
 };
 
-const SetoresSection = ({ selectedSectorId, onViewMap, onReportContext }: {
+const SetoresSection = ({ selectedSectorId, selectedMapAreaId, onViewMap, onReportContext }: {
   selectedSectorId?: number | null;
+  selectedMapAreaId?: number | null;
   onViewMap?: (areaId: number) => void;
   onReportContext?: (context: ReportContext) => void;
 }) => {
   const [setores, setSetores] = useState<Setor[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [maps, setMaps] = useState<MapView[]>([]);
 
   useEffect(() => {
     apiFetch<Setor[]>("/api/setores")
@@ -75,7 +78,17 @@ const SetoresSection = ({ selectedSectorId, onViewMap, onReportContext }: {
   }, []);
 
   useEffect(() => {
-    if (selectedSectorId && setores.length) document.getElementById(`setor-${selectedSectorId}`)?.scrollIntoView({ block: "center" });
+    let active = true;
+    apiFetch<MapView[]>("/api/mapas").then((data) => { if (active) setMaps(data); }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (selectedSectorId && setores.length) {
+      const card = document.getElementById(`setor-${selectedSectorId}`);
+      card?.focus({ preventScroll: true });
+      card?.scrollIntoView({ block: "center" });
+    }
   }, [selectedSectorId, setores]);
 
   return (
@@ -100,10 +113,14 @@ const SetoresSection = ({ selectedSectorId, onViewMap, onReportContext }: {
         {setores.map((setor, index) => {
           const Icon = iconMap[setor.icone as keyof typeof iconMap] || Building2;
           const color = colorMap[setor.cor] || colorMap.blue;
+          const locations = maps.flatMap((map) => (map.areas || []).filter((area) => area.setor_id === setor.id).map((area) => ({ map, area })));
+          const preferred = setor.id === selectedSectorId ? locations.find(({ area }) => area.id === selectedMapAreaId) : undefined;
+          const returnAreaId = preferred?.area.id ?? (!maps.length && setor.id === selectedSectorId ? selectedMapAreaId : null);
           return (
             <article
               key={setor.id}
               id={`setor-${setor.id}`}
+              tabIndex={-1}
               className={`glass-card glass-card-hover rounded-xl p-6 space-y-4 ${selectedSectorId === setor.id ? "ring-2 ring-primary" : ""}`}
               style={{ animationDelay: `${index * 60}ms` }}
             >
@@ -129,11 +146,19 @@ const SetoresSection = ({ selectedSectorId, onViewMap, onReportContext }: {
                 {setor.contato && <p><span className="font-medium">Contato:</span> {setor.contato}</p>}
               </div>
               <div className="flex flex-wrap gap-2 border-t pt-3">
-                {setor.mapa_area_id && (
-                  <Button size="sm" variant="outline" onClick={() => onViewMap?.(setor.mapa_area_id!)}>
-                    <MapPin className="mr-1 h-4 w-4" /> Ver no mapa
+                {(returnAreaId || locations.length === 1 || (!maps.length && setor.mapa_area_id)) && (
+                  <Button size="sm" variant="outline" onClick={() => onViewMap?.(returnAreaId ?? locations[0]?.area.id ?? setor.mapa_area_id!)}>
+                    <MapPin className="mr-1 h-4 w-4" /> {returnAreaId ? "Voltar ao mapa" : "Ver no mapa"}
                   </Button>
                 )}
+                {locations.length > 1 && <details className="w-full text-sm">
+                  <summary className="cursor-pointer py-2 font-medium">Ver locais no mapa ({locations.length})</summary>
+                  <div className="mt-2 space-y-2">{locations.map(({ map, area }) => (
+                    <Button key={area.id} size="sm" variant="outline" className="h-auto min-h-9 w-full justify-start whitespace-normal text-left" onClick={() => onViewMap?.(area.id)}>
+                      {area.nome.replace(/\n/g, " ")} · {mapTitle(map)}
+                    </Button>
+                  ))}</div>
+                </details>}
                 <Button size="sm" variant="ghost" onClick={() => onReportContext?.({ origem: "SETOR", label: setor.nome, setor_id: setor.id })}>
                   <MessageSquareWarning className="mr-1 h-4 w-4" /> Relatar problema
                 </Button>

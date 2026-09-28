@@ -84,6 +84,17 @@ Para um ambiente vazio, execute `npm run db:bootstrap` no lugar de `db:migrate`:
 
 Para criar um banco local do zero, defina `DB_CREATE_DATABASE=true` apenas durante `db:bootstrap` e volte-o para `false` em seguida. Em Supabase, mantenha-o sempre como `false`.
 
+## Publicação do mapa CIMOL
+
+O mapa em `server/data/cimolMap.js` é um esquema de orientação elaborado a partir das dez plantas e das conexões confirmadas pela escola; não representa distâncias em escala nem certifica percursos acessíveis. A publicação exige o schema atualizado e só aceita a instituição de slug exato `cimol`.
+
+```bash
+npm run db:publish-cimol-map -- --dry-run
+npm run db:publish-cimol-map -- --apply
+```
+
+Sem `--apply`, o comando apenas consulta e apresenta o relatório. A aplicação grava todas as vistas e conexões em uma transação, atualiza somente os mapas com nomes reservados `CIMOL · ...` correspondentes ao esquema e preserva seus IDs e os IDs das áreas de mesmo nome. Mapas personalizados ficam preservados. Salas e setores são associados aos cadastros existentes da instituição por nome; referências ausentes ou ambíguas aparecem no relatório e ficam como áreas sem vínculo, sem criar salas ou setores. Renomear uma área do esquema muda sua identidade na publicação seguinte.
+
 ## Execução
 
 ```bash

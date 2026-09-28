@@ -12,12 +12,13 @@
     "db:bootstrap": "node scripts/bootstrap-database.mjs",
     "db:preflight": "node scripts/check-database.mjs --preflight",
     "db:check": "node scripts/check-database.mjs",
+    "db:publish-cimol-map": "node scripts/publish-cimol-map.mjs",
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "npm run test:server && vitest run",
-    "test:server": "node --test server/contentMvc.test.js server/db.test.js server/facilitiesMvc.test.js server/platformInstitutionMvc.test.js server/reorganizationMvc.test.js server/requestSecurity.test.js server/roomAssignmentService.test.js server/scheduleMvc.test.js server/scheduleTenant.test.js server/scheduleNotification.test.js",
+    "test:server": "node --test server/cimolMap.test.js server/contentMvc.test.js server/db.test.js server/facilitiesMvc.test.js server/platformInstitutionMvc.test.js server/reorganizationMvc.test.js server/requestSecurity.test.js server/roomAssignmentService.test.js server/scheduleMvc.test.js server/scheduleTenant.test.js server/scheduleNotification.test.js",
     "test:watch": "vitest"
   },
   "dependencies": {

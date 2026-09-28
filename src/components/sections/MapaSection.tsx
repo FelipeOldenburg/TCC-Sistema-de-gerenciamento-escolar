@@ -4,7 +4,7 @@ import type { ReportContext } from "@/components/sections/ReclamacoesSection";
 
 const MapaSection = ({ selectedAreaId, onSelectSector, onReportContext }: {
   selectedAreaId?: number | null;
-  onSelectSector?: (sectorId: number) => void;
+  onSelectSector?: (sectorId: number, areaId?: number) => void;
   onReportContext?: (context: ReportContext) => void;
 }) => {
   return (
@@ -15,7 +15,7 @@ const MapaSection = ({ selectedAreaId, onSelectSector, onReportContext }: {
         </div>
         <div>
           <h2 className="text-2xl font-heading font-bold text-card-foreground">Mapa da escola</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Encontre blocos, pavimentos e salas com facilidade.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Localize salas, setores e os acessos entre os blocos.</p>
         </div>
       </div>
 

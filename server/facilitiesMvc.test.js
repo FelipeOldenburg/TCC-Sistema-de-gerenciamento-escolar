@@ -258,3 +258,111 @@ assert.deepEqual(
   mapQueries.find(({ sql }) => sql.includes("UPDATE mapa_areas")).params.slice(-3),
   [31, 12, 2]
 );
+
+const detailedMapPayload = {
+  nome: "Bloco D · 2º andar", piso: "2º andar", largura: 800, altura: 600,
+  bloco_id: "4", visao_geral: true, descricao: "Acesso pela escada do bloco D.",
+  areas: [{
+    tipo: "SALA", nome: "D202", caminho_svg: "M0 0 L50 0 L50 50 Z",
+    sala_id: "9", setor_id: "7", rotulo_x: "0", rotulo_y: "25",
+    categoria: "ambiente", destino_mapa_id: "13", descricao: "Laboratório de informática.",
+  }],
+};
+receivedError = undefined;
+await mapController.saveMap(
+  { body: detailedMapPayload, params: {}, institution: { id: 2 } }, mapResponse,
+  (error) => { receivedError = error; }
+);
+assert.equal(receivedError, undefined);
+const detailedMap = savedMap;
+assert.equal(detailedMap.map.bloco_id, 4);
+assert.equal(detailedMap.map.visao_geral, true);
+assert.equal(detailedMap.map.descricao, detailedMapPayload.descricao);
+assert.deepEqual(detailedMap.map.areas[0], {
+  id: null, tipo: "SALA", nome: "D202", caminho_svg: "M0 0 L50 0 L50 50 Z",
+  bloco_id: null, sala_id: 9, setor_id: 7, rotulo_x: 0, rotulo_y: 25,
+  categoria: "AMBIENTE", destino_mapa_id: 13, descricao: "Laboratório de informática.",
+});
+
+for (const invalidPayload of [
+  { largura: 0 },
+  { bloco_id: -1 },
+  { descricao: "x".repeat(2001) },
+  { areas: [null] },
+  ...[
+    { rotulo_y: null }, { rotulo_x: "Infinity" }, { rotulo_x: 801 },
+    { categoria: "INVENTADA" }, { destino_mapa_id: "NaN" },
+    { bloco_id: 4 }, { tipo: "SETOR" },
+  ].map((area) => ({ areas: [{ ...detailedMapPayload.areas[0], ...area }] })),
+]) {
+  receivedError = undefined;
+  await mapController.saveMap(
+    { body: { ...detailedMapPayload, ...invalidPayload }, params: {}, institution: { id: 2 } },
+    mapResponse, (error) => { receivedError = error; }
+  );
+  assert.equal(receivedError?.statusCode, 400);
+}
+
+for (const missingTable of ["blocos", "salas", "setores", "mapas"]) {
+  const calls = [];
+  const steps = [];
+  const isolatedModel = createFacilitiesModel({
+    db: {
+      getConnection: async () => ({
+        query: async (sql, params) => {
+          calls.push({ sql, params });
+          assert.match(sql, /SELECT id FROM \w+ WHERE id = \? AND instituicao_id = \? LIMIT 1/);
+          assert.equal(params[1], 2);
+          return [sql.includes(`FROM ${missingTable} `) ? [] : [{ id: params[0] }]];
+        },
+        beginTransaction: async () => steps.push("begin"),
+        commit: async () => steps.push("commit"),
+        rollback: async () => steps.push("rollback"),
+        release: () => steps.push("release"),
+      }),
+    },
+    dayOrderSql: "h.dia",
+  });
+  assert.deepEqual(await isolatedModel.saveMap(detailedMap), { invalidReference: true });
+  assert.deepEqual(steps, ["begin", "rollback", "release"]);
+  assert.equal(calls.at(-1).sql.includes(`FROM ${missingTable} `), true);
+}
+
+const createdMapQueries = [];
+const metadataModel = createFacilitiesModel({
+  db: {
+    getConnection: async () => ({
+      query: async (sql, params) => {
+        createdMapQueries.push({ sql, params });
+        if (sql.includes("SELECT id FROM")) return [[{ id: params[0] }]];
+        if (sql.includes("INSERT INTO mapas")) return [{ insertId: 12 }];
+        return [{ affectedRows: 1 }];
+      },
+      beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release: () => {},
+    }),
+    query: async (sql, params) => {
+      assert.deepEqual(params, [2]);
+      if (sql.includes("FROM mapas m")) {
+        assert.match(sql, /b.instituicao_id = m.instituicao_id/);
+        assert.match(sql, /m.instituicao_id = \? AND m.ativo = TRUE/);
+        return [[{ ...detailedMap.map, id: 12, bloco_nome: "Bloco D" }]];
+      }
+      assert.match(sql, /a.rotulo_x::float8 AS rotulo_x/);
+      return [[{ ...detailedMap.map.areas[0], id: 32, mapa_id: 12 }]];
+    },
+  },
+  dayOrderSql: "h.dia",
+});
+assert.deepEqual(await metadataModel.saveMap(detailedMap), { id: 12 });
+assert.deepEqual(createdMapQueries.find(({ sql }) => sql.includes("INSERT INTO mapas")).params, [
+  2, "Bloco D · 2º andar", "2º andar", 800, 600, true, 4, true, "Acesso pela escada do bloco D.",
+]);
+assert.deepEqual(createdMapQueries.find(({ sql }) => sql.includes("INSERT INTO mapa_areas")).params, [
+  2, 12, "SALA", "D202", "M0 0 L50 0 L50 50 Z", null, 9, 7,
+  0, 25, "AMBIENTE", 13, "Laboratório de informática.",
+]);
+const [listedMap] = await metadataModel.listMaps({ institutionId: 2, authenticated: false });
+assert.equal(listedMap.bloco_nome, "Bloco D");
+assert.equal(listedMap.visao_geral, true);
+assert.equal(listedMap.areas[0].rotulo_x, 0);
+assert.equal(listedMap.areas[0].destino_mapa_id, 13);
