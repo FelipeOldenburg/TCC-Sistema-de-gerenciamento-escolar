@@ -1,5 +1,5 @@
 // As plantas definem os ambientes; o usuário confirmou os acessos entre os prédios.
-// A implantação e o hall C–D são esquemáticos, sem escala ou orientação cardinal.
+// A implantação segue a montagem dos térreos; as dimensões continuam esquemáticas.
 const rect = (key, nome, x, y, largura, altura, extra = {}) => ({
   key, nome, caminho_svg: `M ${x} ${y} h ${largura} v ${altura} h ${-largura} Z`,
   rotulo_x: x + largura / 2, rotulo_y: y + altura / 2,
@@ -11,32 +11,49 @@ const poly = (key, nome, pontos, rotulo_x, rotulo_y, extra = {}) => ({
   rotulo_x, rotulo_y, categoria: 'AMBIENTE', descricao: nome, ...extra,
 });
 
+// C2 e D2 são uma planta contínua. A coordenada local de D começa na mesma escada de C.
+const c2Rect = (...args) => {
+  const area = rect(...args);
+  return area.sala_nome ? { ...area, bloco_nome: 'Bloco C' } : area;
+};
+const d2Rect = (key, nome, x, y, largura, altura, extra = {}) => {
+  const area = rect(key, nome, x + 1420, y, largura, altura, extra);
+  return area.sala_nome ? { ...area, bloco_nome: 'Bloco D' } : area;
+};
+const d2Poly = (key, nome, pontos, rotulo_x, rotulo_y, extra = {}) => {
+  const area = poly(key, nome, pontos.map(([x, y]) => [x + 1420, y]), rotulo_x + 1420, rotulo_y, extra);
+  return area.sala_nome ? { ...area, bloco_nome: 'Bloco D' } : area;
+};
+
 export const cimolMapViews = [
-  // Campus: acessos entre prédios relatados pelo usuário; implantação sem escala.
+  // Campus: posição relativa dos térreos conforme a montagem fornecida pelo usuário.
   {
     key: 'campus', nome: 'Visão geral', bloco_nome: null, visao_geral: true,
-    piso: null, largura: 1400, altura: 1040,
-    descricao: 'Esquema do CIMOL sem escala ou orientação cardinal. Selecione um prédio para ver seus ambientes e pavimentos.',
+    piso: null, largura: 1400, altura: 930,
+    descricao: 'Implantação esquemática baseada na montagem dos térreos, sem escala ou orientação cardinal. O B separa os dois pátios; o Museu tem acesso pelo pátio de C.',
     areas: [
-      poly('patio-a-b', 'Pátio entre A e B', [[140, 470], [300, 470], [300, 400], [850, 400], [850, 760], [140, 760]], 540, 600, { categoria: 'PATIO', descricao: 'Ao sair da circulação do térreo de A, siga pelo pátio para chegar a B ou continuar em direção ao ginásio.' }),
-      rect('patio-b-c', 'Pátio entre B e C', 850, 260, 180, 340, { categoria: 'PATIO', descricao: 'A saída de B perto da Coordenação de Química dá acesso ao pátio que leva ao térreo de C.' }),
-      rect('a', 'Bloco A', 130, 780, 810, 140, { bloco_nome: 'Bloco A', destino_key: 'a-terreo', descricao: 'Administração e biblioteca no térreo; salas de aula no 2º e no 3º pavimento. A escada fica junto ao servidor, antes do acesso a B.' }),
-      rect('b', 'Bloco B', 340, 280, 510, 120, { bloco_nome: 'Bloco B', destino_key: 'b-terreo', descricao: 'Salas e laboratório de Química. A saída próxima à coordenação leva ao pátio de acesso a C.' }),
-      poly('c', 'Bloco C', [[160, 70], [1000, 70], [1000, 230], [300, 230], [300, 470], [160, 470]], 550, 150, { bloco_nome: 'Bloco C', destino_key: 'c-terreo', descricao: 'Prédio em L. A ala principal tem térreo, 2º e 3º pavimentos. As duas salas da ala lateral no 2º pavimento têm acesso exclusivo pela escada própria.' }),
-      rect('d', 'Bloco D', 1080, 70, 280, 370, { bloco_nome: 'Bloco D', destino_key: 'd-terreo', descricao: 'Oficinas no térreo e laboratórios no 2º pavimento. O térreo tem entrada antes da escada junto aos banheiros de C; o 2º pavimento é acessado pelo espaço comum C–D.' }),
-      rect('ginasio', 'Ginásio', 1060, 550, 210, 350, { destino_key: 'ginasio-e', descricao: 'Depois dos banheiros do térreo de C, continue em direção ao ginásio e aos serviços anexos.' }),
-      rect('servicos', 'Refeitório e anexos', 1060, 470, 300, 80, { destino_key: 'ginasio-e', descricao: 'Conjunto das churrasqueiras, refeitório e demais anexos, acessível seguindo pelo ginásio.' }),
-      rect('e', 'Bloco E', 1270, 610, 90, 290, { bloco_nome: 'Bloco E', destino_key: 'ginasio-e', descricao: 'Salas de aula junto ao conjunto do ginásio e serviços anexos.' }),
-      rect('entrada', 'Entrada de A', 480, 920, 160, 85, { categoria: 'ACESSO', destino_key: 'a-terreo', descricao: 'Acesso do passeio à circulação central do térreo de A.' }),
-      rect('carros', 'Entrada de carros', 35, 780, 95, 140, { categoria: 'ACESSO', descricao: 'Entrada de carros ao lado do térreo de A. Acesso de veículos.' }),
-      rect('a-patio', 'Saída para o pátio', 515, 735, 170, 45, { categoria: 'ACESSO', destino_key: 'a-terreo', descricao: 'A circulação central de A se abre para o pátio.' }),
-      rect('b-patio', 'Acesso a B', 515, 400, 170, 45, { categoria: 'ACESSO', destino_key: 'b-terreo', descricao: 'Acesso pelo pátio entre A e B.' }),
-      rect('b-c', 'Saída de B', 720, 235, 130, 45, { categoria: 'ACESSO', destino_key: 'b-terreo', descricao: 'Saída próxima à Coordenação de Química, para o pátio de acesso a C.' }),
-      rect('c-lateral', 'Escada da ala lateral', 300, 425, 145, 70, { categoria: 'ESCADA', destino_key: 'c-2-lateral', descricao: 'Acesso exclusivo às duas salas isoladas de C no 2º pavimento. Não há corredor para a ala principal.' }),
-      rect('c-acesso', 'Acesso a C térreo', 870, 230, 130, 50, { categoria: 'ACESSO', destino_key: 'c-terreo', descricao: 'Acesso ao térreo de C pelo pátio após sair de B.' }),
-      rect('cd-escada', 'Escada C–D', 1000, 230, 80, 95, { categoria: 'ESCADA', destino_key: 'acesso-cd-2', descricao: 'Escada junto aos banheiros do térreo de C. Leva ao espaço comum com entradas distintas para C2 e D2.' }),
-      rect('d-acesso', 'Entrada D térreo', 1030, 345, 50, 90, { categoria: 'ACESSO', destino_key: 'd-terreo', descricao: 'Entrada de D térreo antes de subir a escada junto aos banheiros de C.' }),
-      rect('c-ginasio', 'Caminho ao ginásio', 980, 490, 80, 175, { categoria: 'CIRCULACAO', destino_key: 'ginasio-e', descricao: 'Do térreo de C, siga reto depois dos banheiros até o ginásio; depois ficam churrasqueiras, refeitório e E.' }),
+      rect('patio-b-c', 'Pátio de C', 90, 180, 820, 160, { categoria: 'PATIO', descricao: 'Pátio central entre a ala superior de C e a faixa de salas do B.' }),
+      rect('patio-a-b', 'Pátio entre A e B', 20, 460, 630, 200, { categoria: 'PATIO', descricao: 'Ao sair de A, atravesse o pátio para o acesso a B ou siga à direita para o ginásio.' }),
+      poly('c', 'Bloco C', [[20, 50], [900, 50], [900, 180], [90, 180], [90, 460], [20, 460]], 470, 115, { bloco_nome: 'Bloco C', destino_key: 'c-terreo', descricao: 'Ala superior e lateral do térreo de C ao redor do pátio. C2 principal e D2 compartilham uma escada; as duas salas isoladas de C2 usam outra.' }),
+      rect('b', 'Bloco B', 90, 340, 560, 120, { bloco_nome: 'Bloco B', destino_key: 'b-terreo', descricao: 'Faixa de salas e Laboratório de Química entre os dois pátios. A entrada principal fica na face inferior; o corredor superior leva à saída dos fundos.' }),
+      rect('a', 'Bloco A', 70, 660, 580, 190, { bloco_nome: 'Bloco A', destino_key: 'a-terreo', descricao: 'Administração e biblioteca no térreo; salas de aula no 2º e 3º pavimentos. A escada fica junto ao servidor, antes do acesso a B.' }),
+      rect('d', 'Bloco D', 930, 50, 440, 180, { bloco_nome: 'Bloco D', destino_key: 'd-terreo', descricao: 'Oficinas no térreo à direita dos banheiros de C. Sua entrada fica antes de subir a escada compartilhada que leva a C2 e D2.' }),
+      rect('passagem-museu', 'Passagem do pátio de C ao Museu', 910, 230, 90, 110, { categoria: 'CIRCULACAO', descricao: 'Faixa aberta à esquerda do Museu, ligada ao pátio de C. O portão fica nesta lateral.' }),
+      rect('museu', 'Museu', 1000, 230, 370, 230, { descricao: 'Museu junto ao pátio de C. Seu portão fica na lateral esquerda, voltada para o pátio, sem acesso direto pelo ginásio.' }),
+      rect('ginasio', 'Ginásio', 650, 495, 480, 355, { destino_key: 'ginasio-e', descricao: 'À direita do pátio entre A e B. Pelo ginásio chegam-se às churrasqueiras, ao refeitório e ao Bloco E.' }),
+      rect('servicos', 'Churrasqueiras e refeitório', 1130, 500, 140, 350, { destino_key: 'ginasio-e', descricao: 'Anexos à direita do ginásio; a delimitação exata do refeitório ainda não está identificada.' }),
+      rect('e', 'Bloco E', 1270, 500, 100, 350, { bloco_nome: 'Bloco E', destino_key: 'ginasio-e', descricao: 'Salas de aula na extremidade direita do conjunto do ginásio.' }),
+      rect('entrada', 'Entrada de A', 350, 850, 115, 55, { categoria: 'ACESSO', destino_key: 'a-terreo', descricao: 'Acesso do passeio à circulação central do térreo de A.' }),
+      rect('carros', 'Entrada de carros', 20, 660, 50, 190, { categoria: 'ACESSO', descricao: 'Acesso de veículos ao lado da biblioteca de A.' }),
+      rect('a-patio', 'Saída para o pátio', 350, 625, 115, 35, { categoria: 'ACESSO', destino_key: 'a-terreo', descricao: 'A circulação central de A se abre para o pátio.' }),
+      rect('b-patio', 'Entrada principal de B', 355, 440, 100, 40, { categoria: 'ACESSO', destino_key: 'b-terreo', descricao: 'Entrada de B pela face inferior da montagem, voltada ao pátio central.' }),
+      rect('b-c', 'Saída dos fundos de B', 355, 320, 100, 20, { categoria: 'ACESSO', destino_key: 'b-terreo', descricao: 'Corredor superior de B: saída dos fundos em direção ao pátio de C, não entrada principal.' }),
+      rect('c-lateral', 'Escada da ala lateral', 75, 190, 55, 95, { categoria: 'ESCADA', destino_key: 'c-2-lateral', descricao: 'Acesso exclusivo às salas isoladas C210 e C211; não chega ao corredor principal de C2.' }),
+      rect('c-acesso', 'Acesso a C térreo', 440, 160, 90, 20, { categoria: 'ACESSO', destino_key: 'c-terreo', descricao: 'Entrada na ala superior do térreo de C pelo pátio central.' }),
+      rect('cd-escada', 'Escada C–D', 895, 125, 35, 120, { categoria: 'ESCADA', destino_key: 'acesso-cd-2', descricao: 'Escada imediatamente após os banheiros de C térreo; é a única escada compartilhada para C2 e D2.' }),
+      rect('d-acesso', 'Entrada D térreo', 930, 205, 70, 55, { categoria: 'ACESSO', destino_key: 'd-terreo', descricao: 'A entrada do térreo de D fica no acesso ao lado dos banheiros de C, antes de subir a escada C–D.' }),
+      rect('c-ginasio', 'Caminho ao ginásio', 850, 340, 60, 155, { categoria: 'CIRCULACAO', destino_key: 'ginasio-e', descricao: 'Após os banheiros de C térreo, siga reto pela passagem a oeste de D até o ginásio.' }),
+      rect('museu-portao', 'Portão do Museu', 980, 255, 90, 85, { categoria: 'ACESSO', descricao: 'Portão largo na lateral esquerda do Museu, voltado ao pátio de C. Ocupa apenas parte da parede, não a fachada inteira.' }),
     ],
   },
   {
@@ -114,21 +131,21 @@ export const cimolMapViews = [
     ],
   },
   {
-    // Planta 5.pdf: rótulo B no corredor; saída perto da coordenação relatada pelo usuário.
+    // Planta 5.pdf: entrada principal na face inferior; corredor superior sai pelos fundos.
     key: 'b-terreo', nome: 'Bloco B · Térreo', bloco_nome: 'Bloco B', visao_geral: false,
     piso: 'Térreo', largura: 1400, altura: 450,
-    descricao: 'Salas e laboratório de Química. A saída próxima à Coordenação de Química leva ao pátio e ao térreo de C. Numeração das salas e identificação dos dois ambientes da extremidade direita ainda não informadas.',
+    descricao: 'Salas e laboratório de Química. Entre pela porta da face inferior da planta; o corredor da parte superior leva à saída dos fundos em direção ao pátio de C. Numeração das salas e identificação dos dois ambientes da extremidade direita ainda não informadas.',
     areas: [
-      rect('corredor-horizontal', 'Corredor de B', 310, 80, 450, 70, { categoria: 'CIRCULACAO' }),
+      rect('corredor-horizontal', 'Corredor superior de B', 310, 80, 450, 70, { categoria: 'CIRCULACAO', descricao: 'Corredor que leva à saída dos fundos, não à entrada principal.' }),
       rect('corredor-transversal', 'Passagem transversal', 760, 80, 90, 310, { categoria: 'CIRCULACAO', descricao: 'Passagem junto à Coordenação de Química, com portas nas duas extremidades.' }),
       rect('sala-esquerda', 'Sala à esquerda', 60, 80, 250, 310, { descricao: 'Sala de aula da extremidade esquerda de B. Sem número indicado.' }),
       rect('lab-quimica', 'Lab. Química', 310, 150, 450, 240, { setor_nome: 'Laboratórios', descricao: 'Laboratório de Química.' }),
-      rect('coord-quimica', 'Coord. Química', 850, 80, 235, 70, { descricao: 'Coordenação de Química, referência para a saída em direção a C.' }),
+      rect('coord-quimica', 'Coord. Química', 850, 80, 235, 70, { descricao: 'Coordenação de Química junto à passagem transversal de B.' }),
       rect('sala-direita', 'Sala junto à coordenação', 850, 150, 235, 240, { descricao: 'Sala de aula à direita da passagem transversal e abaixo da Coordenação de Química. Sem número indicado.' }),
       rect('ambiente-direita-superior', 'Ambiente superior direito', 1085, 80, 255, 135, { descricao: 'Ambiente da extremidade superior direita ainda sem identificação.' }),
       rect('ambiente-direita-inferior', 'Ambiente inferior direito', 1085, 215, 255, 175, { descricao: 'Ambiente da extremidade inferior direita ainda sem identificação.' }),
-      rect('saida-c', 'Saída para C', 760, 25, 90, 55, { categoria: 'ACESSO', destino_key: 'c-terreo', descricao: 'Saída de B perto da Coordenação de Química; atravesse o pátio para chegar a C térreo.' }),
-      rect('entrada-patio', 'Acesso pelo pátio', 760, 390, 90, 40, { categoria: 'ACESSO', destino_key: 'campus', descricao: 'Porta da outra extremidade da passagem transversal de B.' }),
+      rect('saida-c', 'Saída', 760, 25, 90, 55, { categoria: 'ACESSO', destino_key: 'campus', descricao: 'A porta na parte superior da planta é a saída dos fundos para o pátio de C; não é a entrada principal de B.' }),
+      rect('entrada-patio', 'Entrada', 760, 390, 90, 40, { categoria: 'ACESSO', destino_key: 'campus', descricao: 'Entrada principal de B pela face inferior da planta, voltada ao pátio central.' }),
       rect('acesso-direita', 'Acesso lateral de B', 1340, 95, 40, 85, { categoria: 'ACESSO', descricao: 'Porta lateral da extremidade direita; destino externo ainda não identificado.' }),
       rect('acesso-ambiente-inferior', 'Porta do ambiente inferior', 1100, 390, 80, 40, { categoria: 'ACESSO', descricao: 'Acesso externo do ambiente inferior direito, sem destino identificado.' }),
     ],
@@ -136,10 +153,10 @@ export const cimolMapViews = [
   {
     // Desenho 3.pdf; escada junto aos WC ausente no desenho, suplementada pelo usuário.
     key: 'c-terreo', nome: 'Bloco C · Térreo', bloco_nome: 'Bloco C', visao_geral: false,
-    piso: 'Térreo', largura: 1560, altura: 730,
+    piso: 'Térreo', largura: 1900, altura: 730,
     descricao: 'Pelo pátio, acesse os ambientes do térreo. A entrada de D térreo fica antes da escada junto aos banheiros. Esta escada leva ao espaço comum de C2 e D2. A escada da ala lateral serve apenas as duas salas isoladas do 2º pavimento.',
     areas: [
-      rect('patio', 'Pátio de C', 350, 355, 1090, 300, { categoria: 'PATIO' }),
+      rect('patio', 'Pátio de C', 350, 355, 1230, 300, { categoria: 'PATIO' }),
       rect('oficina-marcenaria', 'Marcenaria', 40, 90, 125, 375, { setor_nome: 'Oficinas', descricao: 'Oficina de Marcenaria da ala lateral de C.' }),
       rect('ambiente-lateral', 'Ambiente lateral', 40, 465, 125, 90, { descricao: 'Ambiente intermediário da ala lateral ainda sem identificação.' }),
       rect('sala-pintura', 'Sala de Pintura', 40, 555, 125, 130, { setor_nome: 'Oficinas' }),
@@ -159,9 +176,11 @@ export const cimolMapViews = [
       rect('silo', 'Silo', 225, 370, 125, 135, { setor_nome: 'Oficinas' }),
       rect('escada-lateral', 'Escada da ala lateral', 165, 395, 60, 170, { categoria: 'ESCADA', destino_key: 'c-2-lateral', descricao: 'Escada própria das duas salas isoladas da ala lateral, no 2º pavimento. Para a ala principal, volte ao térreo e use a escada junto aos banheiros.' }),
       rect('circulacao-patio', 'Circulação pelo pátio', 350, 330, 1150, 25, { categoria: 'CIRCULACAO', descricao: 'Circulação ao longo dos ambientes do térreo e dos banheiros.' }),
-      rect('entrada-b', 'Acesso pelo pátio de B', 670, 330, 90, 50, { categoria: 'ACESSO', destino_key: 'b-terreo', descricao: 'Chegada ao térreo de C após sair de B perto da Coordenação de Química.' }),
-      rect('escada-banheiros', 'Escada junto aos WC', 1490, 360, 55, 160, { categoria: 'ESCADA', destino_key: 'acesso-cd-2', descricao: 'Escada junto aos banheiros. Chega ao espaço comum: à esquerda C2; à direita, o percurso para D2.' }),
+      rect('entrada-b', 'Acesso aos fundos de B', 670, 330, 90, 50, { categoria: 'ACESSO', destino_key: 'b-terreo', descricao: 'Do pátio de C, chegue ao corredor superior de B pela saída dos fundos. A entrada principal de B fica na face inferior da planta.' }),
+      rect('escada-banheiros', 'Escada junto aos WC', 1500, 170, 55, 160, { categoria: 'ESCADA', destino_key: 'acesso-cd-2', descricao: 'Escada imediatamente ao lado dos banheiros do térreo de C. Chega ao patamar comum: C2 à esquerda e D2 pelo caminho à direita.' }),
       rect('d-terreo', 'Entrada para D térreo', 1380, 385, 110, 70, { categoria: 'ACESSO', destino_key: 'd-terreo', descricao: 'Acesso a D térreo antes de subir a escada junto aos banheiros.' }),
+      rect('museu', 'Museu', 1580, 355, 290, 300, { descricao: 'Museu junto ao pátio de C. Seu portão fica na lateral voltada para o pátio; não há acesso direto pelo ginásio.' }),
+      rect('museu-portao', 'Portão lateral do Museu', 1550, 450, 60, 110, { categoria: 'ACESSO', descricao: 'Portão na lateral esquerda do Museu, alcançado pelo pátio de C. Ocupa apenas parte da parede.' }),
       rect('ginasio', 'Seguir ao ginásio', 1380, 535, 110, 75, { categoria: 'ACESSO', destino_key: 'ginasio-e', descricao: 'Siga reto depois dos banheiros de C térreo para chegar ao ginásio, depois churrasqueiras, refeitório e E.' }),
       rect('acesso-marcenaria', 'Entrada da marcenaria', 60, 35, 85, 55, { categoria: 'ACESSO', descricao: 'Entrada superior da ala de Marcenaria.' }),
     ],
@@ -180,27 +199,47 @@ export const cimolMapViews = [
     ],
   },
   {
-    // Desenho 4.pdf: corredor principal; ligação da escada interna a C3 confirmada.
-    key: 'c-2', nome: 'Bloco C · Ala principal · 2º pavimento', bloco_nome: 'Bloco C', visao_geral: false,
-    piso: '2º pavimento', largura: 1560, altura: 470,
-    descricao: 'Corredor principal com salas e laboratórios. A escada interna junto aos banheiros sobe para C3. As duas salas laterais isoladas só são alcançadas pela escada própria a partir do térreo.',
+    // Desenhos 4 e 1: a escada na direita de C2 e na esquerda de D2 é a mesma.
+    key: 'acesso-cd-2', nome: 'Blocos C e D · 2º pavimento', bloco_nome: null, visao_geral: false,
+    piso: '2º pavimento', largura: 2920, altura: 1000,
+    descricao: 'Uma única escada junto aos banheiros de C térreo chega ao patamar comum. À esquerda entra-se em C2; à direita, atravesse a área maior, vire novamente à direita, encontre a Coordenação de Eletrotécnica à frente e entre à esquerda em D2. A escada interna de C2 leva a C3. C210 e C211 usam outra escada isolada.',
     areas: [
-      rect('corredor', 'Corredor principal de C2', 40, 85, 1435, 75, { categoria: 'CIRCULACAO' }),
-      rect('deposito', 'Depósito de C2', 40, 25, 95, 60),
-      rect('coord-eletronica', 'Coord. Eletrônica', 135, 25, 100, 60, { descricao: 'Coordenação de Eletrônica no lado esquerdo da ala principal de C2. É distinta da Coordenação de Eletrotécnica de D2.' }),
-      rect('laboratorio-sem-numero', 'Laboratório sem número', 40, 160, 195, 240, { setor_nome: 'Laboratórios', descricao: 'Laboratório da extremidade esquerda da ala principal. Numeração e acesso ainda não identificados.' }),
-      rect('c206', 'C206 · Lab.', 235, 160, 100, 240, { sala_nome: 'C206', setor_nome: 'Laboratórios', descricao: 'Laboratório C206.' }),
-      rect('c205', 'C205 · Lab.', 335, 160, 105, 240, { sala_nome: 'C205', setor_nome: 'Laboratórios', descricao: 'Laboratório C205.' }),
-      rect('c204', 'C204 · Sala de aula', 440, 160, 200, 240, { sala_nome: 'C204', descricao: 'Sala de aula C204.' }),
-      rect('c203', 'C203 · Sala de aula', 640, 160, 245, 240, { sala_nome: 'C203', descricao: 'Sala de aula C203.' }),
-      rect('lab-pesquisa', 'Pesquisa', 885, 160, 65, 240, { setor_nome: 'Laboratórios', descricao: 'Laboratório de Pesquisa junto à escada interna; numeração não informada.' }),
-      rect('escada-c3', 'Escada C3', 950, 160, 100, 240, { categoria: 'ESCADA', destino_key: 'c-3', descricao: 'Escada interna junto aos banheiros. Sobe ao 3º pavimento de C.' }),
-      rect('wc-esquerdo', 'WC 1', 1050, 160, 45, 240, { descricao: 'WC à esquerda do par de banheiros de C2; identificação de gênero não informada.' }),
-      rect('wc-direito', 'WC 2', 1095, 160, 45, 240, { descricao: 'WC à direita do par de banheiros de C2; identificação de gênero não informada.' }),
-      rect('c202', 'C202 · Aula', 1140, 160, 90, 240, { sala_nome: 'C202', descricao: 'Sala de aula C202.' }),
-      rect('c201', 'C201 · Eletrônica', 1230, 160, 245, 240, { sala_nome: 'C201', setor_nome: 'Laboratórios', descricao: 'Laboratório de Eletrônica C201.' }),
-      rect('escada-extremidade', 'Escada', 1475, 160, 60, 275, { categoria: 'ESCADA', destino_key: 'acesso-cd-2', descricao: 'Acesso da extremidade da ala principal ao espaço comum C–D. Para C3, use a escada interna junto aos banheiros.' }),
-      rect('acesso-hall', 'C–D', 1475, 85, 60, 75, { categoria: 'ACESSO', destino_key: 'acesso-cd-2', descricao: 'Entrada de C2 à esquerda ao chegar ao espaço comum pela escada do térreo.' }),
+      c2Rect('corredor-c2', 'Corredor principal de C2', 40, 85, 1435, 75, { categoria: 'CIRCULACAO' }),
+      c2Rect('deposito', 'Depósito de C2', 40, 25, 95, 60),
+      c2Rect('coord-eletronica', 'Coord. Eletrônica', 135, 25, 100, 60, { descricao: 'Coordenação de Eletrônica na ala principal de C2; distinta da Coordenação de Eletrotécnica de D2.' }),
+      c2Rect('laboratorio-sem-numero', 'Laboratório sem número', 40, 160, 195, 240, { setor_nome: 'Laboratórios', descricao: 'Laboratório da extremidade esquerda da ala principal de C2. Numeração não identificada.' }),
+      c2Rect('c206', 'C206 · Lab.', 235, 160, 100, 240, { sala_nome: 'C206', setor_nome: 'Laboratórios', descricao: 'Laboratório C206.' }),
+      c2Rect('c205', 'C205 · Lab.', 335, 160, 105, 240, { sala_nome: 'C205', setor_nome: 'Laboratórios', descricao: 'Laboratório C205.' }),
+      c2Rect('c204', 'C204 · Sala de aula', 440, 160, 200, 240, { sala_nome: 'C204', descricao: 'Sala de aula C204.' }),
+      c2Rect('c203', 'C203 · Sala de aula', 640, 160, 245, 240, { sala_nome: 'C203', descricao: 'Sala de aula C203.' }),
+      c2Rect('lab-pesquisa', 'Pesquisa', 885, 160, 65, 240, { setor_nome: 'Laboratórios', descricao: 'Laboratório de Pesquisa junto à escada interna; numeração não informada.' }),
+      c2Rect('escada-c3', 'Escada interna para C3', 950, 160, 100, 240, { categoria: 'ESCADA', destino_key: 'c-3', descricao: 'Escada interna junto aos banheiros de C2, distinta da escada compartilhada com D2.' }),
+      c2Rect('wc-esquerdo', 'WC 1 de C2', 1050, 160, 45, 240, { descricao: 'WC à esquerda do par de banheiros de C2; gênero não identificado.' }),
+      c2Rect('wc-direito', 'WC 2 de C2', 1095, 160, 45, 240, { descricao: 'WC à direita do par de banheiros de C2; gênero não identificado.' }),
+      c2Rect('c202', 'C202 · Aula', 1140, 160, 90, 240, { sala_nome: 'C202', descricao: 'Sala de aula C202.' }),
+      c2Rect('c201', 'C201 · Eletrônica', 1230, 160, 245, 240, { sala_nome: 'C201', setor_nome: 'Laboratórios', descricao: 'Laboratório de Eletrônica C201.' }),
+      c2Rect('patamar-comum', 'Patamar comum C–D', 1475, 65, 95, 95, { categoria: 'CIRCULACAO', descricao: 'Ao subir, à esquerda entra-se no corredor de C2; à direita começa o caminho para D2.' }),
+      c2Rect('escada-cd', 'Escada única C–D', 1475, 160, 95, 295, { categoria: 'ESCADA', destino_key: 'c-terreo', descricao: 'Mesma escada desenhada nas plantas de C2 e D2. Desce ao térreo de C, junto aos banheiros.' }),
+      c2Rect('entrada-c2', 'Entrada da ala principal de C2', 1425, 85, 50, 75, { categoria: 'ACESSO', bloco_nome: 'Bloco C', descricao: 'Do patamar comum, vire à esquerda para entrar em C2.' }),
+      d2Rect('patamar-d', 'Área maior de acesso a D2', 150, 65, 110, 505, { categoria: 'CIRCULACAO', descricao: 'Siga à direita do patamar comum e vire novamente à direita. A Coordenação de Eletrotécnica fica à frente; D2 entra à esquerda.' }),
+      d2Rect('coord-eletrotecnica', 'Coord. Eletrotécnica', 150, 570, 110, 195, { descricao: 'Coordenação de Eletrotécnica em D2, à frente após a segunda virada à direita.' }),
+      d2Rect('corredor-principal-d', 'Corredor principal de D2', 260, 405, 1070, 95, { categoria: 'CIRCULACAO' }),
+      d2Rect('d201', 'D201 · Aula', 260, 65, 110, 340, { sala_nome: 'D201', descricao: 'Sala de aula D201.' }),
+      d2Rect('d202', 'D202 · Informática', 370, 65, 140, 340, { sala_nome: 'D202', setor_nome: 'Laboratórios', descricao: 'Laboratório de Informática D202.' }),
+      d2Rect('d203', 'D203 · Informática', 510, 65, 140, 340, { sala_nome: 'D203', setor_nome: 'Laboratórios', descricao: 'Laboratório de Informática D203.' }),
+      d2Rect('d204', 'D204 · Higiene', 650, 65, 140, 340, { sala_nome: 'D204', setor_nome: 'Laboratórios', descricao: 'Laboratório de Higiene e Segurança D204.' }),
+      d2Rect('d205', 'D205 · Projetos I / II', 790, 65, 140, 340, { sala_nome: 'D205', setor_nome: 'Laboratórios', descricao: 'Laboratórios de Projetos I e II no mesmo recinto, porta D205.' }),
+      d2Rect('d206', 'D206 · CAD', 930, 65, 140, 340, { sala_nome: 'D206', setor_nome: 'Laboratórios', descricao: 'Laboratório CAD D206.' }),
+      d2Poly('d207', 'D207 · Automação II', [[1070, 65], [1440, 65], [1440, 500], [1330, 500], [1330, 405], [1070, 405]], 1225, 235, { sala_nome: 'D207', setor_nome: 'Laboratórios', descricao: 'Laboratório de Automação II, porta D207 no trecho final do corredor.' }),
+      d2Rect('d208', 'D208 · Máquinas', 260, 500, 285, 230, { sala_nome: 'D208', setor_nome: 'Laboratórios', descricao: 'Laboratório de Máquinas D208.' }),
+      d2Poly('d209', 'D209 · Eletricidade III', [[620, 500], [1440, 500], [1440, 730], [545, 730], [545, 660], [620, 660]], 1030, 610, { sala_nome: 'D209', setor_nome: 'Laboratórios', descricao: 'Laboratório de Eletricidade III D209.' }),
+      d2Rect('circulacao-maquinas', 'Circulação junto a Máquinas', 545, 500, 75, 160, { categoria: 'CIRCULACAO' }),
+      d2Rect('corredor-inferior', 'Corredor inferior de D2', 545, 730, 580, 70, { categoria: 'CIRCULACAO' }),
+      d2Rect('d213', 'D213 · Pesquisa', 435, 730, 110, 70, { sala_nome: 'D213', setor_nome: 'Laboratórios', descricao: 'Laboratório de Pesquisa D213.' }),
+      d2Poly('d212', 'D212 · Eletricidade I', [[260, 765], [435, 765], [435, 800], [760, 800], [760, 950], [260, 950]], 475, 875, { sala_nome: 'D212', setor_nome: 'Laboratórios', descricao: 'Laboratório de Eletricidade I D212.' }),
+      d2Rect('d211', 'D211 · Automação I', 760, 800, 230, 150, { sala_nome: 'D211', setor_nome: 'Laboratórios', descricao: 'Laboratório de Automação I D211.' }),
+      d2Poly('d210', 'D210 · Eletricidade II', [[1125, 730], [1440, 730], [1440, 950], [990, 950], [990, 800], [1125, 800]], 1240, 850, { sala_nome: 'D210', setor_nome: 'Laboratórios', descricao: 'Laboratório de Eletricidade II D210.' }),
+      d2Rect('entrada-d2', 'Entrada dos laboratórios de D2', 260, 405, 45, 95, { categoria: 'ACESSO', bloco_nome: 'Bloco D', descricao: 'Depois de virar à direita pela segunda vez, Coordenação de Eletrotécnica à frente: entre à esquerda para D2.' }),
     ],
   },
   {
@@ -218,28 +257,12 @@ export const cimolMapViews = [
       rect('c308', 'C308 · Sala de aula', 855, 150, 90, 250, { sala_nome: 'C308' }),
       rect('c309', 'C309 · Sala de aula', 945, 150, 105, 250, { sala_nome: 'C309' }),
       rect('c310', 'C310', 1050, 150, 60, 250, { sala_nome: 'C310', descricao: 'Coordenação de Design de Móveis, porta 310.' }),
-      rect('escada', 'Descer para C2', 1110, 150, 80, 250, { categoria: 'ESCADA', destino_key: 'c-2', descricao: 'Escada interna junto aos banheiros, ligada à ala principal de C2.' }),
+      rect('escada', 'Descer para C2', 1110, 150, 80, 250, { categoria: 'ESCADA', destino_key: 'acesso-cd-2', descricao: 'Escada interna junto aos banheiros, ligada à ala principal de C2 na vista conjunta com D2.' }),
       rect('wc-esquerdo', 'WC 1', 1190, 150, 45, 250, { descricao: 'Banheiro à esquerda do conjunto de C3; identificação de gênero não informada.' }),
       rect('wc-direito', 'WC 2', 1235, 150, 45, 250, { descricao: 'Banheiro à direita do conjunto de C3; identificação de gênero não informada.' }),
       rect('c311', 'C311 · Aula', 1280, 150, 85, 250, { sala_nome: 'C311', descricao: 'Sala de aula C311.' }),
       rect('c312', 'C312 · Aula', 1365, 150, 85, 250, { sala_nome: 'C312', descricao: 'Sala de aula C312.' }),
       rect('c313', 'C313', 1450, 150, 70, 250, { sala_nome: 'C313', setor_nome: 'Laboratórios', descricao: 'Laboratório de Informática da extremidade direita, porta 313.' }),
-    ],
-  },
-  {
-    // Percurso do usuário: esquerda C2; direita espaço maior; direita coordenação; esquerda D2.
-    key: 'acesso-cd-2', nome: 'Acessos de C2 e D2', bloco_nome: null, visao_geral: false,
-    piso: '2º pavimento', largura: 1280, altura: 850,
-    descricao: 'Percurso esquemático sem escala: ao subir a escada junto aos banheiros de C térreo, à esquerda entra-se em C2; à direita chega-se a um espaço maior; vire novamente à direita, com a Coordenação de Eletrotécnica à frente, e à esquerda entra-se em D2. São entradas pelo espaço comum, não uma passagem interna direta C2–D2.',
-    areas: [
-      rect('escada-c-terreo', 'Escada para C térreo', 275, 550, 120, 220, { categoria: 'ESCADA', destino_key: 'c-terreo', descricao: 'Escada junto aos banheiros de C térreo.' }),
-      rect('patamar', 'Chegada da escada', 275, 365, 180, 185, { categoria: 'CIRCULACAO', descricao: 'Ao chegar, C2 fica à esquerda; para D2, siga à direita.' }),
-      rect('entrada-c2', 'À esquerda: C2', 80, 390, 195, 110, { categoria: 'ACESSO', bloco_nome: 'Bloco C', destino_key: 'c-2', descricao: 'Entrada da ala principal de C no 2º pavimento, à esquerda do patamar.' }),
-      rect('passagem-direita', 'Seguir à direita', 455, 400, 300, 100, { categoria: 'CIRCULACAO', descricao: 'Do patamar, siga à direita até o espaço maior.' }),
-      rect('espaco-maior', 'Espaço maior', 755, 340, 300, 220, { categoria: 'CIRCULACAO', descricao: 'Espaço maior após a primeira virada. Vire novamente à direita em direção à Coordenação de Eletrotécnica.' }),
-      rect('segunda-direita', 'Virar à direita', 900, 560, 120, 140, { categoria: 'CIRCULACAO', descricao: 'Segunda virada à direita: Coordenação de Eletrotécnica à frente; entrada de D2 à esquerda.' }),
-      rect('coord-referencia', 'Coord. Eletrotécnica', 880, 700, 160, 95, { descricao: 'Coordenação à frente após a segunda virada à direita. A entrada de D2 fica à esquerda.' }),
-      rect('entrada-d2', 'À esquerda: D2', 1020, 585, 190, 115, { categoria: 'ACESSO', bloco_nome: 'Bloco D', destino_key: 'd-2', descricao: 'Após as duas viradas à direita e com a Coordenação de Eletrotécnica à frente, entre à esquerda em D2.' }),
     ],
   },
   {
@@ -259,34 +282,6 @@ export const cimolMapViews = [
       rect('passagem', 'Passagem de D térreo', 50, 305, 220, 320, { categoria: 'CIRCULACAO', descricao: 'Circulação de entrada ao grande ambiente de Mecânica.' }),
       rect('entrada-c', 'Entrada pelo térreo de C', 10, 350, 40, 110, { categoria: 'ACESSO', destino_key: 'c-terreo', descricao: 'Entrada de D térreo antes de subir a escada junto aos banheiros de C.' }),
       rect('acesso-almoxarifado', 'Acesso do almoxarifado', 1320, 120, 40, 90, { categoria: 'ACESSO', descricao: 'Porta externa do almoxarifado; destino ainda não identificado.' }),
-    ],
-  },
-  {
-    // Desenho 1.pdf; Coordenação Eletrotécnica e percurso de chegada confirmados.
-    key: 'd-2', nome: 'Bloco D · 2º pavimento', bloco_nome: 'Bloco D', visao_geral: false,
-    piso: '2º pavimento', largura: 1500, altura: 1000,
-    descricao: 'Entrada pelo espaço comum C–D, após duas viradas à direita e com a Coordenação de Eletrotécnica à frente. A ligação com C2 passa pelo espaço comum.',
-    areas: [
-      rect('escada-planta', 'Escada indicada em D', 55, 115, 95, 340, { categoria: 'ESCADA', descricao: 'Escada na borda esquerda de D2, com destino ainda não identificado. Para C térreo, retorne pelo espaço comum C–D.' }),
-      rect('patamar', 'Circulação de entrada', 150, 65, 110, 505, { categoria: 'CIRCULACAO' }),
-      rect('coord-eletrotecnica', 'Coord. Eletrotécnica', 150, 570, 110, 195, { descricao: 'Coordenação de Eletrotécnica, referência no percurso de chegada a D2. Distinta da Coordenação de Eletrônica de C2.' }),
-      rect('corredor-principal', 'Corredor principal de D2', 260, 405, 1070, 95, { categoria: 'CIRCULACAO' }),
-      rect('d201', 'D201 · Aula', 260, 65, 110, 340, { sala_nome: 'D201', descricao: 'Sala de aula D201.' }),
-      rect('d202', 'D202 · Informática', 370, 65, 140, 340, { sala_nome: 'D202', setor_nome: 'Laboratórios', descricao: 'Laboratório de Informática, porta D202.' }),
-      rect('d203', 'D203 · Informática', 510, 65, 140, 340, { sala_nome: 'D203', setor_nome: 'Laboratórios', descricao: 'Laboratório de Informática, porta D203.' }),
-      rect('d204', 'D204 · Higiene', 650, 65, 140, 340, { sala_nome: 'D204', setor_nome: 'Laboratórios', descricao: 'Laboratório de Higiene e Segurança, porta D204.' }),
-      rect('d205', 'D205 · Projetos I / II', 790, 65, 140, 340, { sala_nome: 'D205', setor_nome: 'Laboratórios', descricao: 'Laboratórios de Projetos I e Projetos II no mesmo recinto, com porta D205.' }),
-      rect('d206', 'D206 · CAD', 930, 65, 140, 340, { sala_nome: 'D206', setor_nome: 'Laboratórios', descricao: 'Laboratório CAD, porta D206.' }),
-      poly('d207', 'D207 · Automação II', [[1070, 65], [1440, 65], [1440, 500], [1330, 500], [1330, 405], [1070, 405]], 1225, 235, { sala_nome: 'D207', setor_nome: 'Laboratórios', descricao: 'Laboratório de Automação II, porta D207 no trecho final do corredor principal.' }),
-      rect('d208', 'D208 · Máquinas', 260, 500, 285, 230, { sala_nome: 'D208', setor_nome: 'Laboratórios', descricao: 'Laboratório de Máquinas, porta D208.' }),
-      poly('d209', 'D209 · Eletricidade III', [[620, 500], [1440, 500], [1440, 730], [545, 730], [545, 660], [620, 660]], 1030, 610, { sala_nome: 'D209', setor_nome: 'Laboratórios', descricao: 'Laboratório de Eletricidade III, com porta D209 junto à circulação inferior.' }),
-      rect('circulacao-maquinas', 'Circulação junto a Máquinas', 545, 500, 75, 160, { categoria: 'CIRCULACAO' }),
-      rect('corredor-inferior', 'Corredor inferior de D2', 545, 730, 580, 70, { categoria: 'CIRCULACAO' }),
-      rect('d213', 'D213 · Pesquisa', 435, 730, 110, 70, { sala_nome: 'D213', setor_nome: 'Laboratórios', descricao: 'Laboratório de Pesquisa, porta D213.' }),
-      poly('d212', 'D212 · Eletricidade I', [[260, 765], [435, 765], [435, 800], [760, 800], [760, 950], [260, 950]], 475, 875, { sala_nome: 'D212', setor_nome: 'Laboratórios', descricao: 'Laboratório de Eletricidade I, porta D212.' }),
-      rect('d211', 'D211 · Automação I', 760, 800, 230, 150, { sala_nome: 'D211', setor_nome: 'Laboratórios', descricao: 'Laboratório de Automação I, porta D211.' }),
-      poly('d210', 'D210 · Eletricidade II', [[1125, 730], [1440, 730], [1440, 950], [990, 950], [990, 800], [1125, 800]], 1240, 850, { sala_nome: 'D210', setor_nome: 'Laboratórios', descricao: 'Laboratório de Eletricidade II, porta D210.' }),
-      rect('entrada-hall', 'Acesso ao espaço C–D', 65, 485, 85, 85, { categoria: 'ACESSO', destino_key: 'acesso-cd-2', descricao: 'Retorno pelo espaço comum, com a Coordenação de Eletrotécnica como referência. Não representa uma porta direta para o corredor de C2.' }),
     ],
   },
   {
@@ -324,7 +319,7 @@ export const cimolMapViews = [
       rect('banheiro-feminino', 'WC fem.', 645, 735, 85, 65, { descricao: 'Banheiro feminino do ginásio.' }),
       rect('vestiario-feminino', 'Vest. fem.', 730, 700, 95, 100, { descricao: 'Vestiário feminino do ginásio.' }),
       rect('circulacao-vestiarios', 'Passagem dos vestiários', 445, 665, 115, 135, { categoria: 'CIRCULACAO', descricao: 'Passagem entre os conjuntos de banheiros e vestiários, para a saída do ginásio.' }),
-      rect('entrada-c', 'Acesso pelo térreo de C', 20, 190, 70, 90, { categoria: 'ACESSO', destino_key: 'c-terreo', descricao: 'Chegada seguindo reto depois dos banheiros do térreo de C.' }),
+      rect('entrada-c', 'Voltar ao pátio de C', 20, 190, 70, 90, { categoria: 'ACESSO', destino_key: 'c-terreo', descricao: 'Saia do ginásio pelo caminho dos banheiros de C para retornar ao pátio de C.' }),
       rect('entrada-patio-a', 'Acesso pelo pátio de A', 455, 800, 100, 60, { categoria: 'ACESSO', destino_key: 'campus', descricao: 'Retorno ao pátio que leva ao térreo de A.' }),
       rect('refeitorio-acesso', 'Área do refeitório', 940, 415, 190, 25, { categoria: 'ACESSO', descricao: 'Área do conjunto do refeitório, depois do ginásio. A delimitação exata do refeitório ainda não está informada.' }),
       rect('entrada-e', 'Entrada de E', 1420, 510, 50, 70, { categoria: 'ACESSO', descricao: 'Porta lateral do hall do prédio E.' }),

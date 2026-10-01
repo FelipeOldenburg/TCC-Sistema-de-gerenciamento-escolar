@@ -10,7 +10,7 @@ export type MapArea = {
 };
 export type MapView = {
   id: number; nome: string; piso: string | null; largura: number; altura: number; areas: MapArea[];
-  bloco_id?: number | null; bloco_nome?: string | null; visao_geral?: boolean; descricao?: string | null;
+  bloco_id?: number | null; bloco_nome?: string | null; visao_geral?: boolean; descricao?: string | null; ativo?: boolean;
 };
 export type Room = {
   id: number; nome: string; bloco_id: number; bloco_nome: string; andar: string; capacidade: number | null;
@@ -29,11 +29,19 @@ export const areaContainsRoom = (area: MapArea, room: Room) => area.sala_id === 
   area.nome.toUpperCase().replace(/\s/g, "").split("/").includes(room.nome.toUpperCase().replace(/\s/g, ""))
 );
 
+const blockForArea = (area: MapArea | undefined, rooms: Room[], maps: MapView[]) => {
+  if (!area) return null;
+  const blockLetter = area.nome.match(/^([A-E])\d{3}/i)?.[1]?.toUpperCase();
+  return area.bloco_id ?? rooms.find((room) => room.id === area.sala_id)?.bloco_id ??
+    (blockLetter ? maps.find((map) => map.bloco_nome === `Bloco ${blockLetter}`)?.bloco_id : null) ?? null;
+};
+
 export const useSchoolMap = (selectedAreaId?: number | null) => {
   const [maps, setMaps] = useState<MapView[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [sectors, setSectors] = useState<Sector[]>([]);
   const [activeMapId, setActiveMapId] = useState<number | null>(null);
+  const [navigationBlockId, setNavigationBlockId] = useState<number | null>(null);
   const [activeAreaId, setActiveAreaId] = useState<number | null>(null);
   const [selectedRoomId, setSelectedRoomId] = useState<number | null>(null);
   const [selectedSectorId, setSelectedSectorId] = useState<number | null>(null);
@@ -48,10 +56,12 @@ export const useSchoolMap = (selectedAreaId?: number | null) => {
     Promise.all([apiFetch<MapView[]>("/api/mapas"), apiFetch<Room[]>("/api/salas"), apiFetch<Sector[]>("/api/setores")])
       .then(([mapData, roomData, sectorData]) => {
         if (!active) return;
-        setMaps(mapData); setRooms(roomData); setSectors(sectorData);
-        const map = mapData.find((item) => item.areas.some((area) => area.id === selectedAreaId));
+        const visibleMaps = mapData.filter((item) => item.ativo !== false);
+        setMaps(visibleMaps); setRooms(roomData); setSectors(sectorData);
+        const map = visibleMaps.find((item) => item.areas.some((area) => area.id === selectedAreaId));
         const area = map?.areas.find((item) => item.id === selectedAreaId);
-        setActiveMapId(map?.id ?? mapData.find((item) => item.visao_geral)?.id ?? mapData[0]?.id ?? null);
+        setActiveMapId(map?.id ?? visibleMaps.find((item) => item.visao_geral)?.id ?? visibleMaps[0]?.id ?? null);
+        setNavigationBlockId(blockForArea(area, roomData, visibleMaps) ?? map?.bloco_id ?? null);
         setActiveAreaId(area?.id ?? null);
         setSelectedRoomId(area?.sala_id ?? null);
         setSelectedSectorId(area?.setor_id ?? null);
@@ -79,19 +89,22 @@ export const useSchoolMap = (selectedAreaId?: number | null) => {
   const sectorLocations = locations.filter(({ area }) => area.setor_id === selectedSectorId);
   const roomLocation = selectedRoom ? locations.find(({ area }) => areaContainsRoom(area, selectedRoom)) : undefined;
   const campus = maps.find((map) => map.visao_geral);
-  const blockViews = activeMap?.bloco_id ? maps.filter((map) => map.bloco_id === activeMap.bloco_id)
+  const blockViews = navigationBlockId ? maps.filter((map) => !map.visao_geral && (map.bloco_id === navigationBlockId || map.areas.some((area) => area.bloco_id === navigationBlockId)))
     .sort((a, b) => Number(a.piso?.match(/\d+/)?.[0] ?? 0) - Number(b.piso?.match(/\d+/)?.[0] ?? 0)) : [];
 
-  const openMap = (id: number) => {
+  const openMap = (id: number, blockId?: number | null) => {
+    const view = maps.find((map) => map.id === id);
     setActiveMapId(id); setActiveAreaId(null); setSelectedRoomId(null); setSelectedSectorId(null); setQuery("");
+    setNavigationBlockId(blockId ?? view?.bloco_id ?? (view?.areas.some((area) => area.bloco_id === navigationBlockId) ? navigationBlockId : null));
   };
   const selectLocation = ({ map, area }: MapLocation) => {
     setActiveMapId(map.id); setActiveAreaId(area.id); setSelectedRoomId(area.sala_id); setSelectedSectorId(area.setor_id); setQuery("");
+    setNavigationBlockId(blockForArea(area, rooms, maps) ?? map.bloco_id ?? (map.id === activeMap?.id ? navigationBlockId : null));
   };
   const selectArea = (area: MapArea) => {
-    const destination = area.destino_mapa_id ?? (area.tipo === "BLOCO"
+    const destination = area.destino_mapa_id ?? (activeMap?.visao_geral && area.tipo === "BLOCO" && (area.categoria ?? "AMBIENTE") === "AMBIENTE"
       ? maps.find((map) => map.bloco_id === area.bloco_id && /t[eé]rreo/i.test(map.piso ?? ""))?.id : null);
-    if (destination) openMap(destination);
+    if (destination) openMap(destination, area.bloco_id);
     else if (activeMap) selectLocation({ map: activeMap, area });
   };
   const selectRoom = (room: Room) => {
@@ -101,6 +114,7 @@ export const useSchoolMap = (selectedAreaId?: number | null) => {
     const floors = views.filter((map) => floor && map.piso?.match(/\d+/)?.[0] === floor);
     const fallback = views.length === 1 ? views[0] : floors.length === 1 ? floors[0] : undefined;
     setActiveMapId(location?.map.id ?? fallback?.id ?? campus?.id ?? null);
+    setNavigationBlockId(room.bloco_id);
     setActiveAreaId(location?.area.id ?? (!fallback ? campus?.areas.find((area) => area.bloco_id === room.bloco_id)?.id ?? null : null));
     setSelectedRoomId(room.id); setSelectedSectorId(location?.area.setor_id ?? null); setQuery("");
   };
@@ -109,19 +123,23 @@ export const useSchoolMap = (selectedAreaId?: number | null) => {
     if (matches.length === 1) selectLocation(matches[0]);
     else {
       setActiveAreaId(null); setSelectedRoomId(null); setSelectedSectorId(sector.id); setQuery("");
+      setNavigationBlockId(null);
       if (campus) setActiveMapId(campus.id);
     }
   };
   const goCampus = () => {
     if (!campus) return;
-    const blockId = selectedRoom?.bloco_id ?? activeMap?.bloco_id;
+    const blockId = selectedRoom?.bloco_id ?? navigationBlockId ?? activeMap?.bloco_id;
     setActiveMapId(campus.id);
+    setNavigationBlockId(null);
     setActiveAreaId(campus.areas.find((area) => area.bloco_id === blockId)?.id ?? null);
   };
 
   const results = (() => {
     const term = normalizeMapText(query.trim());
     if (!term) return [];
+    const detailedNames = new Set(locations.filter(({ map, area }) => !map.visao_geral && (area.categoria ?? "AMBIENTE") === "AMBIENTE")
+      .map(({ area }) => normalizeMapText(area.nome)));
     return [
       ...sectors.filter((sector) => normalizeMapText(sector.nome).includes(term)).map((sector) => ({
         key: `sector-${sector.id}`, nome: sector.nome, detalhe: "Setor", select: () => selectSector(sector),
@@ -131,12 +149,15 @@ export const useSchoolMap = (selectedAreaId?: number | null) => {
         detalhe: `${room.bloco_nome} · ${locations.find(({ area }) => areaContainsRoom(area, room))?.map.piso || "posição a confirmar"}`,
         select: () => selectRoom(room),
       })),
-      ...locations.filter(({ area }) => !area.sala_id && !area.setor_id && (area.categoria ?? "AMBIENTE") === "AMBIENTE" &&
-        !rooms.some((room) => areaContainsRoom(area, room)) && normalizeMapText(area.nome).includes(term))
+      ...locations.filter(({ map, area }) => (area.categoria ?? "AMBIENTE") === "AMBIENTE" &&
+        (!map.visao_geral || !detailedNames.has(normalizeMapText(area.nome))) &&
+        !rooms.some((room) => areaContainsRoom(area, room)) &&
+        !sectors.some((sector) => sector.id === area.setor_id && normalizeMapText(sector.nome) === normalizeMapText(area.nome)) &&
+        normalizeMapText(area.nome).includes(term))
         .map((location) => ({ key: `area-${location.area.id}`, nome: location.area.nome, detalhe: mapTitle(location.map), select: () => selectLocation(location) })),
     ].slice(0, 12);
   })();
 
   return { maps, rooms, activeMap, activeArea, selectedRoom, selectedSector, roomLocation, sectorLocations, occupation,
-    query, setQuery, results, loading, error, campus, blockViews, openMap, selectArea, selectLocation, goCampus };
+    query, setQuery, results, loading, error, campus, blockViews, navigationBlockId, openMap, selectArea, selectLocation, goCampus };
 };

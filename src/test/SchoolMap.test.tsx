@@ -204,4 +204,89 @@ describe("SchoolMap", () => {
     expect(within(activeMap).queryByRole("button", { name: "Laboratório C201" })).not.toBeInTheDocument();
     await waitForSchedule();
   });
+
+  it("mostra a vista conjunta C2/D2 nos dois blocos e ignora vistas antigas inativas", async () => {
+    const campus = view(1, "Visão geral", [], { visao_geral: true, piso: null, bloco_id: null, bloco_nome: null });
+    const cGround = view(2, "Bloco C · Térreo", [], { piso: "Térreo" });
+    const dGround = view(3, "Bloco D · Térreo", [], { piso: "Térreo", bloco_id: 4, bloco_nome: "Bloco D" });
+    const shared = view(4, "Blocos C e D · 2º pavimento", [
+      area(401, 4, "C201", { tipo: "SALA", sala_id: 21 }),
+      area(402, 4, "D201", { tipo: "SALA", sala_id: 14 }),
+      area(403, 4, "Acesso ao C2", { tipo: "BLOCO", categoria: "ACESSO", bloco_id: 3, bloco_nome: "Bloco C" }),
+      area(404, 4, "Acesso ao D2", { tipo: "BLOCO", categoria: "ACESSO", bloco_id: 4, bloco_nome: "Bloco D" }),
+      area(405, 4, "C206", { tipo: "SETOR", setor_id: 9, setor_nome: "Laboratórios" }),
+      area(406, 4, "D207", { tipo: "SETOR", setor_id: 9, setor_nome: "Laboratórios" }),
+    ], { bloco_id: null, bloco_nome: null });
+    const oldC2 = view(5, "Bloco C · 2º pavimento", [area(501, 5, "C201 antigo", { tipo: "SALA", sala_id: 21 })], { ativo: false });
+    mockApi({ maps: [campus, oldC2, cGround, dGround, shared], roomData: navigationRooms, sectorData: laboratories });
+    const { rerender } = render(<SchoolMap />);
+    await screen.findByRole("group", { name: "CIMOL · Visão geral" });
+
+    chooseResult("C201", /^C201/);
+    expect(screen.getByRole("group", { name: "CIMOL · Blocos C e D · 2º pavimento" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bloco C · Térreo" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Bloco C · 2º pavimento" })).not.toBeInTheDocument();
+    await waitForSchedule();
+    fireEvent.click(within(screen.getByRole("group", { name: "CIMOL · Blocos C e D · 2º pavimento" })).getByRole("button", { name: "D201" }));
+    expect(screen.getByRole("button", { name: "Bloco D · Térreo" })).toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("group", { name: "CIMOL · Blocos C e D · 2º pavimento" })).getByRole("button", { name: "Acesso ao C2" }));
+    expect(screen.getByRole("group", { name: "CIMOL · Blocos C e D · 2º pavimento" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Detalhes da área selecionada" })).toHaveTextContent("Acesso ao C2");
+
+    chooseResult("D201", /^D201/);
+    expect(screen.getByRole("group", { name: "CIMOL · Blocos C e D · 2º pavimento" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bloco D · Térreo" })).toBeInTheDocument();
+    await waitForSchedule();
+
+    chooseResult("C206", /^C206/);
+    expect(within(screen.getByRole("region", { name: "Detalhes do setor selecionado" })).getByRole("heading", { name: "C206" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bloco C · Térreo" })).toBeInTheDocument();
+    chooseResult("D207", /^D207/);
+    expect(within(screen.getByRole("region", { name: "Detalhes do setor selecionado" })).getByRole("heading", { name: "D207" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bloco D · Térreo" })).toBeInTheDocument();
+
+    rerender(<SchoolMap selectedAreaId={401} />);
+    await waitFor(() => expect(within(screen.getByRole("group", { name: "CIMOL · Blocos C e D · 2º pavimento" })).getByRole("button", { name: "C201" })).toHaveAttribute("aria-pressed", "true"));
+    expect(screen.getByRole("button", { name: "Bloco C · Térreo" })).toBeInTheDocument();
+  });
+
+  it("busca o Museu uma vez na vista detalhada sem ocultar um bloco exclusivo da visão geral", async () => {
+    const campus = view(1, "Visão geral", [
+      area(101, 1, "Museu"),
+      area(102, 1, "Bloco B", { tipo: "BLOCO", bloco_id: 2, bloco_nome: "Bloco B" }),
+    ], { visao_geral: true, piso: null, bloco_id: null, bloco_nome: null });
+    const cGround = view(2, "Bloco C · Térreo", [area(201, 2, "Museu")], { piso: "Térreo" });
+    mockApi({ maps: [campus, cGround], roomData: [] });
+    render(<SchoolMap />);
+    await screen.findByRole("group", { name: "CIMOL · Visão geral" });
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Buscar uma sala ou ambiente" }), { target: { value: "Museu" } });
+    const results = screen.getByRole("listbox", { name: "Resultados da busca" });
+    expect(within(results).getAllByRole("option")).toHaveLength(1);
+    expect(within(results).getByRole("option", { name: /Museu/ })).toHaveTextContent("Bloco C · Térreo");
+    fireEvent.click(within(results).getByRole("option", { name: /Museu/ }));
+    expect(screen.getByRole("group", { name: "CIMOL · Bloco C · Térreo" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Buscar uma sala ou ambiente" }), { target: { value: "Bloco B" } });
+    expect(within(screen.getByRole("listbox", { name: "Resultados da busca" })).getByRole("option", { name: /Bloco B/ })).toBeInTheDocument();
+  });
+
+  it("mostra o bloco de destino ao voltar do ginásio a C e preserva C na vista C/D", async () => {
+    const campus = view(1, "Visão geral", [], { visao_geral: true, piso: null, bloco_id: null, bloco_nome: null });
+    const cGround = view(2, "Bloco C · Térreo", [area(201, 2, "Escada C–D", { categoria: "ESCADA", destino_mapa_id: 4 })], { piso: "Térreo" });
+    const gym = view(3, "Ginásio, anexos e Bloco E", [area(301, 3, "Voltar ao pátio de C", { categoria: "ACESSO", destino_mapa_id: 2 })], { piso: "Térreo", bloco_id: 5, bloco_nome: "Bloco E" });
+    const shared = view(4, "Blocos C e D · 2º pavimento", [area(401, 4, "Entrada de C2", { tipo: "BLOCO", categoria: "ACESSO", bloco_id: 3, bloco_nome: "Bloco C" })], { bloco_id: null, bloco_nome: null });
+    mockApi({ maps: [campus, cGround, gym, shared], roomData: [] });
+    render(<SchoolMap />);
+    await screen.findByRole("group", { name: "CIMOL · Visão geral" });
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Escolher bloco" }), { target: { value: "5" } });
+    fireEvent.click(within(screen.getByRole("group", { name: "CIMOL · Ginásio, anexos e Bloco E" })).getByRole("button", { name: "Voltar ao pátio de C" }));
+    expect(screen.getByRole("group", { name: "CIMOL · Bloco C · Térreo" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Escolher bloco" })).toHaveValue("3");
+
+    fireEvent.click(within(screen.getByRole("group", { name: "CIMOL · Bloco C · Térreo" })).getByRole("button", { name: "Escada C–D" }));
+    expect(screen.getByRole("group", { name: "CIMOL · Blocos C e D · 2º pavimento" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Escolher bloco" })).toHaveValue("3");
+  });
 });

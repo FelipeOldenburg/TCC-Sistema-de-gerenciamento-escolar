@@ -79,7 +79,7 @@ const SetoresSection = ({ selectedSectorId, selectedMapAreaId, onViewMap, onRepo
 
   useEffect(() => {
     let active = true;
-    apiFetch<MapView[]>("/api/mapas").then((data) => { if (active) setMaps(data); }).catch(() => {});
+    apiFetch<MapView[]>("/api/mapas").then((data) => { if (active) setMaps(data.filter((map) => map.ativo !== false)); }).catch(() => {});
     return () => { active = false; };
   }, []);
 

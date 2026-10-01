@@ -5,6 +5,11 @@ import { createDbPool } from "../server/db.js";
 
 const prefix = "CIMOL · ";
 const categories = new Set(["AMBIENTE", "CIRCULACAO", "ESCADA", "ACESSO", "PATIO"]);
+const obsoleteFloorNames = [
+  "Bloco C · Ala principal · 2º pavimento",
+  "Bloco D · 2º pavimento",
+  "Acessos de C2 e D2",
+].map((name) => `${prefix}${name}`);
 const normalized = (value) => String(value).normalize("NFD").replace(/\p{Diacritic}/gu, "").trim().toLowerCase().replace(/\s+/g, " ");
 const uniqueMatch = (rows, name) => {
   const matches = rows.filter((row) => normalized(row.nome) === normalized(name));
@@ -158,6 +163,12 @@ export const publishCimolMap = async (db, { views, slug = "cimol", apply = false
           await conn.query("DELETE FROM mapa_areas WHERE id = ? AND mapa_id = ? AND instituicao_id = ?", [area.id, view.id, institutionId]);
         }
       }
+      const retiredNames = obsoleteFloorNames.filter((name) => !mapNames.includes(name));
+      if (retiredNames.length) await conn.query(
+        `UPDATE mapas SET ativo = FALSE, updated_at = CURRENT_TIMESTAMP
+         WHERE instituicao_id = ? AND nome IN (${retiredNames.map(() => "?").join(", ")}) AND ativo = TRUE`,
+        [institutionId, ...retiredNames]
+      );
     }
     await conn.commit();
     return report;

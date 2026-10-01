@@ -1,0 +1,211 @@
+.school-map {
+  --map-ink: #243958;
+  --map-canvas: #f5f8fb;
+  --map-grid: rgb(65 91 128 / 7%);
+  --map-outline: #7b8da6;
+  --map-building: #dbe6f7;
+  --map-room: #ffffff;
+  --map-sector: #d3e0ff;
+  --map-route: #e9f0f2;
+  --map-yard: #e4f2e7;
+  --map-stairs: #ffe2a3;
+  --map-hover: #bbd0f5;
+  --map-selected: #a9c3ff;
+  --map-selection-stroke: #2547a0;
+}
+
+.dark .school-map {
+  --map-ink: #e7edfa;
+  --map-canvas: #121b2d;
+  --map-grid: rgb(155 176 211 / 8%);
+  --map-outline: #8496b6;
+  --map-building: #304463;
+  --map-room: #1d2a42;
+  --map-sector: #344f83;
+  --map-route: #293b4a;
+  --map-yard: #25463f;
+  --map-stairs: #785e30;
+  --map-hover: #43669f;
+  --map-selected: #355ba7;
+  --map-selection-stroke: #a9c1ff;
+}
+
+.school-map__search {
+  background: linear-gradient(115deg, hsl(var(--primary) / 0.1), hsl(var(--card)) 72%);
+  border: 1px solid hsl(var(--primary) / 0.17);
+}
+
+.school-map__search-input {
+  background: hsl(var(--card));
+  border-color: hsl(var(--primary) / 0.28);
+  box-shadow: 0 2px 8px rgb(25 49 100 / 6%);
+}
+
+.school-map__search-input::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.school-map__results {
+  box-shadow: 0 16px 32px rgb(23 40 78 / 15%);
+}
+
+.school-map__mobile-selection {
+  background: hsl(var(--primary) / 0.09);
+  color: hsl(var(--foreground));
+}
+
+.school-map__block-select:focus-visible,
+.school-map__floor-list button:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.school-map__floor-list {
+  scrollbar-color: hsl(var(--border)) transparent;
+  scrollbar-width: thin;
+}
+
+.school-map__floor-list button {
+  flex: none;
+}
+
+.school-map__frame {
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+}
+
+.school-map__frame-heading {
+  color: hsl(var(--foreground));
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.school-map__frame-heading span,
+.school-map__frame-footer {
+  color: hsl(var(--muted-foreground));
+}
+
+.school-map__viewport {
+  background: var(--map-canvas);
+}
+
+.school-map__svg {
+  background-color: var(--map-canvas);
+  background-image: linear-gradient(var(--map-grid) 1px, transparent 1px), linear-gradient(90deg, var(--map-grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.school-map__svg:focus-visible {
+  outline: 3px solid hsl(var(--ring));
+  outline-offset: -3px;
+}
+
+.school-map__pan-hint {
+  background: hsl(var(--card) / 0.94);
+  border: 1px solid hsl(var(--border));
+  color: hsl(var(--foreground));
+  pointer-events: none;
+}
+
+.school-map__area {
+  fill: var(--map-room);
+  stroke: var(--map-outline);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  transition: fill 150ms ease-out, stroke 150ms ease-out;
+}
+
+.school-map__area[data-kind="BLOCO"] {
+  fill: var(--map-building);
+  stroke: var(--map-ink);
+  stroke-width: 2;
+}
+
+.school-map__area[data-sector="true"] {
+  fill: var(--map-sector);
+}
+
+.school-map__area[data-category="CIRCULACAO"] {
+  fill: var(--map-route);
+  stroke: var(--map-outline);
+  stroke-opacity: 0.45;
+}
+
+.school-map__area[data-category="PATIO"] {
+  fill: var(--map-yard);
+  stroke: var(--map-outline);
+  stroke-opacity: 0.5;
+}
+
+.school-map__area[data-category="ESCADA"],
+.school-map__area[data-category="ACESSO"] {
+  fill: var(--map-stairs);
+  stroke: var(--map-ink);
+  stroke-width: 2;
+}
+
+.school-map__area--interactive {
+  cursor: pointer;
+}
+
+.school-map__area--interactive:hover {
+  fill: var(--map-hover);
+  stroke: var(--map-selection-stroke);
+}
+
+.school-map__area--interactive:focus-visible,
+.school-map__area.is-selected {
+  outline: none;
+  fill: var(--map-selected);
+  stroke: var(--map-selection-stroke);
+  stroke-width: 3;
+}
+
+.school-map__label {
+  fill: var(--map-ink);
+  paint-order: stroke;
+  stroke: var(--map-canvas);
+  stroke-width: 2px;
+  stroke-opacity: 0.72;
+}
+
+.school-map__tools {
+  background: hsl(var(--card) / 0.96);
+  border: 1px solid hsl(var(--border));
+}
+
+.school-map__tools button {
+  height: 36px;
+  width: 36px;
+  padding: 0;
+}
+
+.school-map__frame-footer {
+  border-top: 1px solid hsl(var(--border));
+}
+
+.school-map__swatch {
+  display: inline-block;
+  height: 11px;
+  width: 11px;
+  border: 1px solid var(--map-outline);
+  border-radius: 2px;
+}
+
+.school-map__swatch--building { background: var(--map-building); }
+.school-map__swatch--yard { background: var(--map-yard); }
+.school-map__swatch--route { background: var(--map-route); }
+.school-map__swatch--stairs { background: var(--map-stairs); }
+
+.school-map__detail {
+  border-color: hsl(var(--border));
+  box-shadow: 0 8px 24px rgb(28 46 83 / 5%);
+}
+
+@media (max-width: 639px) {
+  .school-map__frame-heading span { display: none; }
+  .school-map__frame-footer { line-height: 1.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .school-map__area { transition: none; }
+}

@@ -28,7 +28,14 @@ assert.throws(() => validateMapViews(repeatedArea), /nomes únicos/);
 
 // In-memory SQL spy: checks transaction/scoping and retained IDs without a live database.
 const state = {
-  maps: [{ id: 700, instituicao_id: 2, nome: "CIMOL · C · 2º pavimento" }, { id: 710, instituicao_id: 1, nome: "Mapa personalizado" }],
+  maps: [
+    { id: 700, instituicao_id: 2, nome: "CIMOL · C · 2º pavimento" },
+    { id: 710, instituicao_id: 1, nome: "Mapa personalizado" },
+    { id: 720, instituicao_id: 1, nome: "CIMOL · Bloco C · Ala principal · 2º pavimento", ativo: true },
+    { id: 721, instituicao_id: 1, nome: "CIMOL · Bloco D · 2º pavimento", ativo: true },
+    { id: 722, instituicao_id: 1, nome: "CIMOL · Acessos de C2 e D2", ativo: true },
+    { id: 723, instituicao_id: 2, nome: "CIMOL · Bloco D · 2º pavimento", ativo: true },
+  ],
   areas: [{ id: 800, instituicao_id: 2, mapa_id: 700, nome: "C201" }, { id: 810, instituicao_id: 1, mapa_id: 710, nome: "Área personalizada" }],
 };
 const protectedRows = structuredClone(state);
@@ -78,6 +85,12 @@ const db = { getConnection: async () => {
           map.id === area.mapa_id && map.instituicao_id === area.instituicao_id && params.slice(1).includes(map.nome)))];
       }
       assert.equal(readOnly, false, "dry-run must not write");
+      if (sql.startsWith("UPDATE mapas SET ativo = FALSE")) {
+        assert.match(sql, /WHERE instituicao_id = \? AND nome IN/);
+        const retired = state.maps.filter((map) => map.instituicao_id === params[0] && params.slice(1).includes(map.nome) && map.ativo);
+        retired.forEach((map) => { map.ativo = false; });
+        return [{ affectedRows: retired.length }];
+      }
       if (sql.startsWith("INSERT INTO mapas")) {
         assert.match(sql, /ON CONFLICT \(instituicao_id, nome\)/);
         assert.equal(params[0], 1);
@@ -122,6 +135,8 @@ assert.deepEqual(events.slice(-3), ["begin", "commit", "release"]);
 const first = await publishCimolMap(db, { views: sampleViews, apply: true });
 assert.equal(first.createdMaps, 2);
 assert.equal(first.createdAreas, 5);
+assert.ok(state.maps.filter((map) => [720, 721, 722].includes(map.id)).every((map) => map.ativo === false));
+assert.equal(state.maps.find((map) => map.id === 723).ativo, true);
 assert.deepEqual(first.unmatched.salas, [{ vista: "main", area: "missing", nome: "C299" }]);
 const roomArea = state.areas.find((area) => area.mapa_id !== 700 && area.nome === "C201");
 assert.equal(roomArea.tipo, "SALA");
@@ -136,7 +151,8 @@ const second = await publishCimolMap(db, { views: sampleViews, apply: true });
 assert.equal(second.createdMaps, 0);
 assert.equal(second.createdAreas, 0);
 assert.deepEqual({ maps: state.maps.map((map) => map.id), areas: state.areas.map((area) => area.id) }, firstIds);
-assert.deepEqual(state.maps.filter((map) => map.id === 700 || map.id === 710), protectedRows.maps);
+assert.deepEqual(state.maps.filter((map) => [700, 710, 723].includes(map.id)),
+  protectedRows.maps.filter((map) => [700, 710, 723].includes(map.id)));
 assert.deepEqual(state.areas.filter((area) => area.id === 800 || area.id === 810), protectedRows.areas);
 
 const beforeFailure = structuredClone(state);
@@ -148,10 +164,30 @@ assert.deepEqual(events.slice(-3), ["begin", "rollback", "release"]);
 
 const { cimolMapViews } = await import("./data/cimolMap.js");
 validateMapViews(cimolMapViews);
+const sharedFloor = cimolMapViews.find((view) => view.key === "acesso-cd-2");
+assert.ok(sharedFloor, "C2 e D2 devem aparecer na mesma vista.");
+assert.ok(sharedFloor.areas.some((area) => /^C2\d{2}$/.test(area.sala_nome || "")));
+assert.ok(sharedFloor.areas.some((area) => /^D2\d{2}$/.test(area.sala_nome || "")));
+assert.equal(sharedFloor.areas.filter((area) => area.categoria === "ESCADA" && area.destino_key === "c-terreo").length, 1,
+  "C2 e D2 compartilham uma única escada vinda do térreo.");
+assert.ok(!cimolMapViews.some((view) => view.key === "c-2" || view.key === "d-2"), "Não devem sobrar vistas duplicadas de C2 e D2.");
 const lateral = cimolMapViews.find((view) => view.key === "c-2-lateral");
 assert.ok(lateral, "As duas salas isoladas de C2 têm vista própria.");
 assert.ok(!lateral.areas.some((area) => area.destino_key === "c-2"), "A ala isolada não tem ligação direta à ala principal.");
 assert.ok(cimolMapViews.some((view) => view.areas.some((area) => /eletrotécnica/i.test(area.nome))), "A coordenação deve usar o nome confirmado.");
+const bGround = cimolMapViews.find((view) => view.key === "b-terreo");
+assert.ok(bGround.areas.find((area) => area.key === "entrada-patio").rotulo_y >
+  bGround.areas.find((area) => area.key === "saida-c").rotulo_y, "A entrada de B fica abaixo da saída dos fundos.");
+const cGround = cimolMapViews.find((view) => view.key === "c-terreo");
+const gym = cimolMapViews.find((view) => view.key === "ginasio-e");
+assert.ok(cGround.areas.some((area) => area.key === "museu" && area.categoria === "AMBIENTE"), "O Museu deve aparecer como lugar no pátio de C.");
+assert.ok(cGround.areas.some((area) => area.key === "museu-portao" && area.categoria === "ACESSO"), "O Museu deve ser indicado pelo pátio de C.");
+assert.ok(!gym.areas.some((area) => /museu/i.test(area.nome)), "O ginásio não deve sugerir entrada direta no Museu.");
+assert.equal(gym.areas.find((area) => area.key === "entrada-c").destino_key, "c-terreo", "A saída do ginásio deve retornar ao pátio de C.");
+const wcC = cGround.areas.find((area) => area.key === "wc-masculino");
+const stairC = cGround.areas.find((area) => area.key === "escada-banheiros");
+assert.ok(stairC.rotulo_x > wcC.rotulo_x && stairC.rotulo_x - wcC.rotulo_x < 100 &&
+  Math.abs(stairC.rotulo_y - wcC.rotulo_y) < 100, "A escada C–D deve ficar ao lado dos WC de C.");
 const reachable = (start) => {
   const visited = new Set([start]);
   for (const key of visited) {
