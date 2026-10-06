@@ -9,6 +9,7 @@
   --map-route: #e9f0f2;
   --map-yard: #e4f2e7;
   --map-stairs: #ffe2a3;
+  --map-access: #b8e9e2;
   --map-hover: #bbd0f5;
   --map-selected: #a9c3ff;
   --map-selection-stroke: #2547a0;
@@ -25,6 +26,7 @@
   --map-route: #293b4a;
   --map-yard: #25463f;
   --map-stairs: #785e30;
+  --map-access: #27625d;
   --map-hover: #43669f;
   --map-selected: #355ba7;
   --map-selection-stroke: #a9c1ff;
@@ -136,9 +138,14 @@
   stroke-opacity: 0.5;
 }
 
-.school-map__area[data-category="ESCADA"],
-.school-map__area[data-category="ACESSO"] {
+.school-map__area[data-category="ESCADA"] {
   fill: var(--map-stairs);
+  stroke: var(--map-ink);
+  stroke-width: 2;
+}
+
+.school-map__area[data-category="ACESSO"] {
+  fill: var(--map-access);
   stroke: var(--map-ink);
   stroke-width: 2;
 }
@@ -195,6 +202,7 @@
 .school-map__swatch--yard { background: var(--map-yard); }
 .school-map__swatch--route { background: var(--map-route); }
 .school-map__swatch--stairs { background: var(--map-stairs); }
+.school-map__swatch--access { background: var(--map-access); }
 
 .school-map__detail {
   border-color: hsl(var(--border));

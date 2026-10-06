@@ -250,6 +250,32 @@ describe("SchoolMap", () => {
     expect(screen.getByRole("button", { name: "Bloco C · Térreo" })).toBeInTheDocument();
   });
 
+  it("oferece entradas de C2 e D2 sem confundi-las com a escada ao térreo", async () => {
+    const campus = view(1, "Visão geral", [], { visao_geral: true, piso: null, bloco_id: null, bloco_nome: null });
+    const cGround = view(2, "Bloco C · Térreo", [], { piso: "Térreo" });
+    const dGround = view(3, "Bloco D · Térreo", [], { piso: "Térreo", bloco_id: 4, bloco_nome: "Bloco D" });
+    const shared = view(4, "Blocos C e D · 2º pavimento", [
+      area(401, 4, "Escada única C–D", { categoria: "ESCADA", destino_mapa_id: 2 }),
+      area(402, 4, "Acesso ao C2", { tipo: "BLOCO", categoria: "ACESSO", bloco_id: 3, bloco_nome: "Bloco C" }),
+      area(403, 4, "Acesso ao D2", { tipo: "BLOCO", categoria: "ACESSO", bloco_id: 4, bloco_nome: "Bloco D" }),
+    ], { bloco_id: null, bloco_nome: null });
+    mockApi({ maps: [campus, cGround, dGround, shared], roomData: [] });
+    render(<SchoolMap />);
+    await screen.findByRole("group", { name: "CIMOL · Visão geral" });
+    fireEvent.change(screen.getByRole("combobox", { name: "Escolher bloco" }), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Blocos C e D · 2º pavimento" }));
+
+    const entrances = screen.getByRole("group", { name: "Entradas deste pavimento" });
+    fireEvent.click(within(entrances).getByRole("button", { name: "Acesso ao C2" }));
+    expect(screen.getByRole("group", { name: "CIMOL · Blocos C e D · 2º pavimento" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bloco C · Térreo" })).toBeInTheDocument();
+    fireEvent.click(within(entrances).getByRole("button", { name: "Acesso ao D2" }));
+    expect(screen.getByRole("group", { name: "CIMOL · Blocos C e D · 2º pavimento" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bloco D · Térreo" })).toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("group", { name: "CIMOL · Blocos C e D · 2º pavimento" })).getByRole("button", { name: "Escada única C–D" }));
+    expect(screen.getByRole("group", { name: "CIMOL · Bloco C · Térreo" })).toBeInTheDocument();
+  });
+
   it("busca o Museu uma vez na vista detalhada sem ocultar um bloco exclusivo da visão geral", async () => {
     const campus = view(1, "Visão geral", [
       area(101, 1, "Museu"),

@@ -94,6 +94,7 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
     for (const area of view.areas) if (area.bloco_id && area.bloco_nome) blocks.set(area.bloco_id, area.bloco_nome);
   }
   const blockChoices = [...blocks].sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
+  const entrances = activeMap?.areas.filter((area) => area.tipo === "BLOCO" && area.categoria === "ACESSO" && !area.destino_mapa_id) ?? [];
 
   if (map.loading) return <div className="rounded-xl border bg-card p-8 text-center text-muted-foreground">Carregando mapa...</div>;
   if (map.error) return <p role="alert" className="rounded-xl border bg-card p-6 text-destructive">{map.error}</p>;
@@ -167,6 +168,11 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
                   ))}
                 </div>
               )}
+              {entrances.length > 0 && <div role="group" aria-label="Entradas deste pavimento" className="flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2">
+                <span className="mr-1 text-sm text-muted-foreground">Entradas neste pavimento</span>
+                {entrances.map((area) => <Button key={area.id} size="sm" variant={area.id === activeArea?.id ? "default" : "outline"}
+                  aria-pressed={area.id === activeArea?.id} onClick={() => map.selectArea(area)} className="h-auto min-h-11 whitespace-normal text-left">{area.nome}</Button>)}
+              </div>}
               {activeMap && (
                 <div className="school-map__frame overflow-hidden rounded-xl">
                   <div className="school-map__frame-heading flex flex-wrap items-center justify-between gap-2 px-4 py-3 sm:px-5" aria-live="polite">
@@ -248,7 +254,8 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
                       <span className="flex items-center gap-2"><span className="school-map__swatch school-map__swatch--building" /> Prédios</span>
                       <span className="flex items-center gap-2"><span className="school-map__swatch school-map__swatch--yard" /> Pátios</span>
                       <span className="flex items-center gap-2"><span className="school-map__swatch school-map__swatch--route" /> Circulação</span>
-                      <span className="flex items-center gap-2"><span className="school-map__swatch school-map__swatch--stairs" /> Escadas e acessos</span>
+                      <span className="flex items-center gap-2"><span className="school-map__swatch school-map__swatch--stairs" /> Escadas</span>
+                      <span className="flex items-center gap-2"><span className="school-map__swatch school-map__swatch--access" /> Acessos</span>
                     </div>
                     <span className="hidden sm:inline">Selecione um ambiente para ver os detalhes</span>
                   </div>
