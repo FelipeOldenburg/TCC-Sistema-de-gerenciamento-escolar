@@ -92,6 +92,23 @@ describe("SchoolMap", () => {
     vi.unstubAllGlobals();
   });
 
+  it("exibe a geometria e o rótulo ajustados sem perder a seleção", async () => {
+    mockApi({ maps: [view(60, "Ajustes", [area(601, 60, "Sala ajustada", {
+      caminho_svg: "M 10 10 h 20 v 20 h -20 Z", rotulo_x: 20, rotulo_y: 20,
+      ajuste_x: 5, ajuste_y: 7, escala_x: 1.5, escala_y: 2,
+    })])], roomData: [] });
+
+    render(<SchoolMap />);
+
+    const path = within(await screen.findByRole("group", { name: "CIMOL · Ajustes" })).getByRole("button", { name: "Sala ajustada" });
+    expect(path).toHaveAttribute("transform", "matrix(1.5 0 0 2 5 7)");
+    expect(document.querySelector(".school-map__label")).toHaveAttribute("x", "35");
+    expect(document.querySelector(".school-map__label")).toHaveAttribute("y", "47");
+
+    fireEvent.click(path);
+    expect(screen.getByRole("region", { name: "Detalhes da área selecionada" })).toHaveTextContent("Sala ajustada");
+  });
+
   it("localiza uma sala e mostra seus detalhes", async () => {
     mockApi({});
 

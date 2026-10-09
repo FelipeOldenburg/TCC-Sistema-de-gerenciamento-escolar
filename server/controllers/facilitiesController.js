@@ -32,6 +32,13 @@ const normalizeRoomPayload = (body = {}, asBoolean) => {
 
 const nullableNumber = (value) => value === null || value === undefined || value === "" ? null : Number(value);
 
+const svgPathPattern = /^[MmLlHhVvCcSsQqTtAaZz0-9eE+.,\-\s]+$/;
+const validMapAdjustment = (value) => value && typeof value === "object" && !Array.isArray(value) &&
+  Number.isFinite(value.ajuste_x) && Math.abs(value.ajuste_x) <= 200000 &&
+  Number.isFinite(value.ajuste_y) && Math.abs(value.ajuste_y) <= 200000 &&
+  Number.isFinite(value.escala_x) && value.escala_x >= 0.05 && value.escala_x <= 20 &&
+  Number.isFinite(value.escala_y) && value.escala_y >= 0.05 && value.escala_y <= 20;
+
 const normalizeMapPayload = (body = {}, asBoolean) => ({
   nome: String(body.nome || "").trim(),
   piso: String(body.piso || "").trim() || null,
@@ -316,7 +323,7 @@ export const createFacilitiesController = ({
             [...references, area.destino_mapa_id].some((id) => id !== null && (!Number.isInteger(id) || id < 1)) ||
             !["AMBIENTE", "CIRCULACAO", "ESCADA", "ACESSO", "PATIO"].includes(area.categoria) ||
             (area.descricao?.length || 0) > 2000 || invalidCoordinates || area.caminho_svg.length > 8000 ||
-            !/^[MmLlHhVvCcSsQqTtAaZz0-9eE+.,\-\s]+$/.test(area.caminho_svg)) {
+            !svgPathPattern.test(area.caminho_svg)) {
           throw httpError(400, "Há uma área inválida no mapa.");
         }
       }
@@ -329,6 +336,29 @@ export const createFacilitiesController = ({
       if (result.invalidArea) throw httpError(400, "Área não encontrada neste mapa e instituição.");
       if (result.notFound) throw httpError(404, "Mapa não encontrado.");
       return res.status(req.params.id ? 200 : 201).json({ id: result.id });
+    } catch (error) {
+      return next(error);
+    }
+  };
+
+  const updateMapAreaAdjustment = async (req, res, next) => {
+    try {
+      const mapId = Number(req.params.mapId);
+      const areaId = Number(req.params.areaId);
+      const { ajuste_x, ajuste_y, escala_x, escala_y, anterior } = req.body || {};
+      const adjustment = { ajuste_x, ajuste_y, escala_x, escala_y };
+      if (!Number.isSafeInteger(mapId) || mapId < 1 || !Number.isSafeInteger(areaId) || areaId < 1 ||
+          !validMapAdjustment(adjustment) || !validMapAdjustment(anterior) ||
+          typeof anterior.caminho_svg !== "string" || !anterior.caminho_svg.trim() ||
+          anterior.caminho_svg.length > 8000 || !svgPathPattern.test(anterior.caminho_svg)) {
+        throw httpError(400, "Informe um ajuste válido para a área do mapa.");
+      }
+      const result = await facilitiesModel.updateMapAreaAdjustment({
+        institutionId: req.institution.id, mapId, areaId, adjustment, previous: anterior,
+      });
+      if (result.notFound) throw httpError(404, "Área não encontrada neste mapa e instituição.");
+      if (result.conflict) throw httpError(409, "A área mudou. Recarregue o mapa antes de salvar.");
+      return res.json(result.adjustment);
     } catch (error) {
       return next(error);
     }
@@ -347,6 +377,7 @@ export const createFacilitiesController = ({
     listRooms,
     listMaps,
     saveMap,
+    updateMapAreaAdjustment,
     updateBlock,
     updateRoom,
   };

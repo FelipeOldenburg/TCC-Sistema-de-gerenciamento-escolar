@@ -1,0 +1,11 @@
+.mapa-editor__canvas { touch-action: none; }
+.mapa-editor__area { cursor: grab; }
+.mapa-editor__area:active { cursor: grabbing; }
+.mapa-editor__area:focus-visible,
+.mapa-editor__handle:focus-visible {
+  outline: none;
+  stroke: hsl(var(--ring));
+  stroke-width: 4;
+}
+.mapa-editor__label { pointer-events: none; font-weight: 600; }
+.mapa-editor__tools button { height: 36px; width: 36px; padding: 0; }

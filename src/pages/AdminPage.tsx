@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { AlertCircle, ArrowLeft, Building2, CalendarDays, Clock, DoorOpen, Download, FileUp, LogOut, MessageSquareWarning, Palette, Paperclip, Plus, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, Building2, CalendarDays, Clock, DoorOpen, Download, FileUp, LogOut, Map, MessageSquareWarning, Palette, Paperclip, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -9,6 +9,7 @@ import BlocosSection from "@/components/admin/BlocosSection";
 import EventosAdminSection from "@/components/admin/EventosAdminSection";
 import InstitutionIdentitySection from "@/components/admin/InstitutionIdentitySection";
 import IntervalosAdminSection from "@/components/admin/IntervalosAdminSection";
+import MapaEditorSection from "@/components/admin/MapaEditorSection";
 import OuvidoriaAdminSection from "@/components/admin/OuvidoriaAdminSection";
 import SalasSection from "@/components/admin/SalasSection";
 import SetoresAdminSection from "@/components/admin/SetoresAdminSection";
@@ -16,7 +17,7 @@ import UraniaImportacoesSection from "@/components/admin/UraniaImportacoesSectio
 import { apiFetch, apiUrl, type SessionUser, type UserRole } from "@/lib/api";
 import { useInstitutionBrand } from "@/lib/institution";
 
-type AdminTab = "horarios" | "intervalos" | "identidade" | "blocos" | "salas" | "eventos" | "setores" | "ouvidoria" | "reorganizacao";
+type AdminTab = "horarios" | "intervalos" | "identidade" | "blocos" | "salas" | "mapa" | "eventos" | "setores" | "ouvidoria" | "reorganizacao";
 
 type ReorganizacaoRegistro = {
   id: number;
@@ -57,6 +58,7 @@ const sidebarItems: { id: AdminTab; label: string; icon: typeof FileUp; roles: U
   { id: "identidade", label: "Identidade", icon: Palette, roles: ["CPD"] },
   { id: "blocos", label: "Blocos", icon: Building2, roles: ["CPD"] },
   { id: "salas", label: "Controle de Salas", icon: DoorOpen, roles: ["CPD"] },
+  { id: "mapa", label: "Editor do mapa", icon: Map, roles: ["CPD"] },
   { id: "eventos", label: "Eventos", icon: CalendarDays, roles: ["CPD"] },
   { id: "setores", label: "Setores", icon: Building2, roles: ["CPD"] },
   { id: "ouvidoria", label: "Relatos", icon: MessageSquareWarning, roles: ["CPD"] },
@@ -504,6 +506,8 @@ const AdminPageComponent = () => {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [activeTab, setActiveTab] = useState<AdminTab>("horarios");
+  const [mapEditorDirty, setMapEditorDirty] = useState(false);
+  const [mapEditorSaving, setMapEditorSaving] = useState(false);
 
   useEffect(() => {
     apiFetch<{ user: SessionUser }>("/api/auth/me")
@@ -513,6 +517,7 @@ const AdminPageComponent = () => {
   }, [navigate]);
 
   const handleLogout = async () => {
+    if (!confirmLeaveEditor()) return;
     await apiFetch("/api/auth/logout", { method: "POST", body: JSON.stringify({}) }).catch(() => null);
     setUser(null);
     navigate("/", { replace: true });
@@ -523,6 +528,21 @@ const AdminPageComponent = () => {
   }
 
   const visibleItems = sidebarItems.filter((item) => item.roles.includes(user.papel));
+
+  const confirmLeaveEditor = () => {
+    if (activeTab !== "mapa") return true;
+    if (mapEditorSaving) { window.alert("Aguarde a conclusão do salvamento do mapa."); return false; }
+    if (!mapEditorDirty) return true;
+    if (!window.confirm("Há ajustes não salvos no mapa. Deseja descartá-los?")) return false;
+    try { sessionStorage.removeItem(`design-compass.map-editor-draft.${user.instituicao_id}`); } catch { /* Session storage may be unavailable. */ }
+    return true;
+  };
+  const changeTab = (tab: AdminTab) => {
+    if (tab === activeTab || !confirmLeaveEditor()) return;
+    setMapEditorDirty(false);
+    setMapEditorSaving(false);
+    setActiveTab(tab);
+  };
 
   const renderContent = () => {
     switch (activeTab) {
@@ -536,6 +556,8 @@ const AdminPageComponent = () => {
         return <BlocosSection />;
       case "salas":
         return <SalasSection />;
+      case "mapa":
+        return <MapaEditorSection institutionId={user.instituicao_id} onUnsavedChange={setMapEditorDirty} onSavingChange={setMapEditorSaving} />;
       case "eventos":
         return <EventosAdminSection />;
       case "setores":
@@ -572,7 +594,7 @@ const AdminPageComponent = () => {
             return (
               <button
                 key={item.id}
-                onClick={() => setActiveTab(item.id)}
+                onClick={() => changeTab(item.id)}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
                   isActive
                     ? "bg-primary text-primary-foreground shadow-md"
@@ -599,6 +621,7 @@ const AdminPageComponent = () => {
           </button>
           <Link
             to="/"
+            onClick={(event) => { if (!confirmLeaveEditor()) event.preventDefault(); }}
             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -623,7 +646,7 @@ const AdminPageComponent = () => {
             <LogOut className="w-3.5 h-3.5" />
             Sair
           </button>
-          <Link to="/" className="text-xs text-primary font-medium">Voltar</Link>
+          <Link to="/" onClick={(event) => { if (!confirmLeaveEditor()) event.preventDefault(); }} className="text-xs text-primary font-medium">Voltar</Link>
         </div>
       </div>
 
@@ -640,7 +663,7 @@ const AdminPageComponent = () => {
           return (
             <button
               key={item.id}
-              onClick={() => setActiveTab(item.id)}
+              onClick={() => changeTab(item.id)}
               className={`flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-lg text-[10px] shrink-0 ${
                 isActive ? "text-primary" : "text-muted-foreground"
               }`}

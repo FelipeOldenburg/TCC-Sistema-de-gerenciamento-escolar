@@ -5,11 +5,11 @@ import { registerFacilitiesRoutes } from "./routes/facilitiesRoutes.js";
 
 const routes = [];
 const app = Object.fromEntries(
-  ["get", "post", "put", "delete"].map((method) => [method, (...args) => routes.push([method, ...args])])
+  ["get", "post", "put", "patch", "delete"].map((method) => [method, (...args) => routes.push([method, ...args])])
 );
 const controller = Object.fromEntries(
   [
-    "listMaps", "saveMap",
+    "listMaps", "saveMap", "updateMapAreaAdjustment",
     "listBlocks", "createBlock", "updateBlock", "deleteBlock", "listRooms", "listRoomOccupations", "getRoom",
     "getRoomOccupation", "listRoomChanges", "createRoom", "updateRoom", "deleteRoom",
   ].map((name) => [name, () => {}])
@@ -27,6 +27,7 @@ assert.deepEqual(
     "get /api/mapas",
     "post /api/mapas",
     "put /api/mapas/:id",
+    "patch /api/mapas/:mapId/areas/:areaId/ajuste",
     "get /api/blocos",
     "post /api/blocos",
     "put /api/blocos/:id",
@@ -41,7 +42,7 @@ assert.deepEqual(
     "delete /api/salas/:id",
   ]
 );
-assert.equal(routes.filter(([, , middleware]) => middleware === cpdOnly).length, 9);
+assert.equal(routes.filter(([, , middleware]) => middleware === cpdOnly).length, 10);
 
 let savedRoom;
 let savedSoftwareLink;
@@ -152,6 +153,8 @@ assert.equal(await missingBlockModel.createRoom(savedRoom), null);
 assert.deepEqual(missingBlockTransaction, ["begin", "rollback", "release"]);
 
 let savedMap;
+let savedAdjustment;
+let adjustmentOutcome;
 const mapController = createFacilitiesController({
   asBoolean: (value) => value === true,
   cacheableJson: () => {},
@@ -159,6 +162,10 @@ const mapController = createFacilitiesController({
     saveMap: async (value) => {
       savedMap = value;
       return { id: 12 };
+    },
+    updateMapAreaAdjustment: async (value) => {
+      savedAdjustment = value;
+      return adjustmentOutcome;
     },
   },
   httpError: (statusCode, message) => Object.assign(new Error(message), { statusCode }),
@@ -184,6 +191,40 @@ assert.equal(savedMap.institutionId, 2);
 assert.equal(savedMap.map.areas[0].setor_id, 7);
 assert.equal(mapResponse.statusCode, 201);
 assert.equal(savedMap.map.areas[0].id, null);
+
+const adjustment = { ajuste_x: -25, ajuste_y: 16, escala_x: 1.5, escala_y: 0.8 };
+const previous = { ajuste_x: 0, ajuste_y: 0, escala_x: 1, escala_y: 1, caminho_svg: "M 0 0 L 50 0 L 50 50 Z" };
+const adjustmentRequest = {
+  body: { ...adjustment, anterior: previous },
+  params: { mapId: "12", areaId: "31" },
+  institution: { id: 2 },
+};
+const adjustmentResponse = { ...response };
+adjustmentOutcome = { adjustment };
+await mapController.updateMapAreaAdjustment(adjustmentRequest, adjustmentResponse, (error) => { receivedError = error; });
+assert.equal(receivedError, undefined);
+assert.deepEqual(savedAdjustment, { institutionId: 2, mapId: 12, areaId: 31, adjustment, previous });
+assert.deepEqual(adjustmentResponse.payload, adjustment);
+
+for (const request of [
+  { ...adjustmentRequest, params: { ...adjustmentRequest.params, areaId: "0" } },
+  { ...adjustmentRequest, body: { ...adjustmentRequest.body, ajuste_x: 200001 } },
+  { ...adjustmentRequest, body: { ...adjustmentRequest.body, escala_y: 0 } },
+  { ...adjustmentRequest, body: { ...adjustmentRequest.body, anterior: { ...previous, escala_x: "1" } } },
+  { ...adjustmentRequest, body: { ...adjustmentRequest.body, anterior: { ...previous, caminho_svg: "" } } },
+]) {
+  savedAdjustment = null;
+  receivedError = undefined;
+  await mapController.updateMapAreaAdjustment(request, adjustmentResponse, (error) => { receivedError = error; });
+  assert.equal(receivedError?.statusCode, 400);
+  assert.equal(savedAdjustment, null);
+}
+for (const [result, status] of [[{ conflict: true }, 409], [{ notFound: true }, 404]]) {
+  adjustmentOutcome = result;
+  receivedError = undefined;
+  await mapController.updateMapAreaAdjustment(adjustmentRequest, adjustmentResponse, (error) => { receivedError = error; });
+  assert.equal(receivedError?.statusCode, status);
+}
 
 receivedError = undefined;
 await mapController.saveMap(
@@ -348,7 +389,9 @@ const metadataModel = createFacilitiesModel({
         return [[{ ...detailedMap.map, id: 12, bloco_nome: "Bloco D" }]];
       }
       assert.match(sql, /a.rotulo_x::float8 AS rotulo_x/);
-      return [[{ ...detailedMap.map.areas[0], id: 32, mapa_id: 12 }]];
+      assert.match(sql, /a.ajuste_x, a.ajuste_y, a.escala_x, a.escala_y/);
+      return [[{ ...detailedMap.map.areas[0], id: 32, mapa_id: 12,
+        ajuste_x: 0, ajuste_y: 0, escala_x: 1, escala_y: 1 }]];
     },
   },
   dayOrderSql: "h.dia",
@@ -366,3 +409,35 @@ assert.equal(listedMap.bloco_nome, "Bloco D");
 assert.equal(listedMap.visao_geral, true);
 assert.equal(listedMap.areas[0].rotulo_x, 0);
 assert.equal(listedMap.areas[0].destino_mapa_id, 13);
+assert.deepEqual(
+  [listedMap.areas[0].ajuste_x, listedMap.areas[0].ajuste_y, listedMap.areas[0].escala_x, listedMap.areas[0].escala_y],
+  [0, 0, 1, 1]
+);
+
+const adjustmentQueries = [];
+let affectedRows = 1;
+let targetExists = true;
+const adjustmentModel = createFacilitiesModel({
+  db: {
+    query: async (sql, params) => {
+      adjustmentQueries.push({ sql, params });
+      if (sql.startsWith("UPDATE mapa_areas")) return [{ affectedRows }];
+      return [targetExists ? [{ id: 31 }] : []];
+    },
+  },
+  dayOrderSql: "h.dia",
+});
+const adjustmentArgs = { institutionId: 2, mapId: 12, areaId: 31, adjustment, previous };
+assert.deepEqual(await adjustmentModel.updateMapAreaAdjustment(adjustmentArgs), { adjustment });
+assert.equal(adjustmentQueries.length, 1);
+assert.match(adjustmentQueries[0].sql, /SET ajuste_x = \?, ajuste_y = \?, escala_x = \?, escala_y = \?/);
+assert.match(adjustmentQueries[0].sql, /a.id = \? AND a.mapa_id = \? AND a.instituicao_id = \?/);
+assert.match(adjustmentQueries[0].sql, /a.caminho_svg = \?/);
+assert.deepEqual(adjustmentQueries[0].params, [
+  -25, 16, 1.5, 0.8, 31, 12, 2, previous.caminho_svg, 0, 0, 1, 1,
+]);
+affectedRows = 0;
+assert.deepEqual(await adjustmentModel.updateMapAreaAdjustment(adjustmentArgs), { conflict: true });
+assert.deepEqual(adjustmentQueries.at(-1).params, [31, 12, 2]);
+targetExists = false;
+assert.deepEqual(await adjustmentModel.updateMapAreaAdjustment(adjustmentArgs), { notFound: true });

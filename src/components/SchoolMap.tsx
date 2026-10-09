@@ -3,6 +3,7 @@ import { Building2, Home, LocateFixed, MapPin, MessageSquareWarning, Minus, Plus
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { mapTitle, useSchoolMap } from "@/controllers/useSchoolMap";
+import { adjustedBounds, adjustedPoint, areaTransform } from "@/lib/mapGeometry";
 import type { ReportContext } from "@/components/sections/ReclamacoesSection";
 import "@/components/school-map.css";
 
@@ -35,8 +36,10 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
   }, [activeMap]);
   useEffect(() => {
     const measured: Record<number, { width: number; height: number }> = {};
+    const areas = new Map(activeMap?.areas.map((area) => [area.id, area]));
     svgRef.current?.querySelectorAll<SVGPathElement>("[data-area-id]").forEach((path) => {
-      if (path.getBBox) measured[Number(path.dataset.areaId)] = path.getBBox();
+      const area = areas.get(Number(path.dataset.areaId));
+      if (path.getBBox && area) measured[area.id] = adjustedBounds(path.getBBox(), area);
     });
     setBounds(measured);
   }, [activeMap]);
@@ -61,10 +64,11 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
     if (!activeMap || !activeArea) return;
     const path = svgRef.current?.querySelector<SVGPathElement>(`[data-area-id="${activeArea.id}"]`);
     if (!path?.getBBox) return;
-    const box = path.getBBox();
+    const box = adjustedBounds(path.getBBox(), activeArea);
     const commonStair = activeMap.areas.find((area) => area.nome === "Escada única C–D");
-    const stairBox = commonStair && commonStair.id !== activeArea.id
-      ? svgRef.current?.querySelector<SVGPathElement>(`[data-area-id="${commonStair.id}"]`)?.getBBox() : null;
+    const stairPath = commonStair && commonStair.id !== activeArea.id
+      ? svgRef.current?.querySelector<SVGPathElement>(`[data-area-id="${commonStair.id}"]`) : null;
+    const stairBox = commonStair && stairPath?.getBBox ? adjustedBounds(stairPath.getBBox(), commonStair) : null;
     const target = stairBox ? {
       x: Math.min(box.x, stairBox.x), y: Math.min(box.y, stairBox.y),
       width: Math.max(box.x + box.width, stairBox.x + stairBox.width) - Math.min(box.x, stairBox.x),
@@ -209,6 +213,8 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
                       const interactive = area.categoria !== "CIRCULACAO" && area.categoria !== "PATIO";
                       const selected = area.id === activeArea?.id;
                       const box = bounds[area.id];
+                      const labelPosition = area.rotulo_x != null && area.rotulo_y != null
+                        ? adjustedPoint(area.rotulo_x, area.rotulo_y, area) : null;
                       const maxChars = box ? Math.floor(box.width / (fontSize * 0.55)) : 100;
                       const compactName = area.tipo === "BLOCO" ? area.nome.replace(/^Bloco\s+/i, "") : area.nome.split(" · ")[0].replace(/ e anexos$/, "");
                       const label: string[] = [];
@@ -229,14 +235,14 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
                       }
                       if (activeMap.visao_geral && !box && area.tipo !== "BLOCO") showLabel = false;
                       return <g key={area.id}>
-                        <path data-area-id={area.id} d={area.caminho_svg} role={interactive ? "button" : undefined} tabIndex={interactive ? 0 : undefined}
+                        <path data-area-id={area.id} d={area.caminho_svg} transform={areaTransform(area)} role={interactive ? "button" : undefined} tabIndex={interactive ? 0 : undefined}
                           aria-label={area.nome} aria-pressed={interactive ? selected : undefined} onClick={interactive ? () => map.selectArea(area) : undefined}
                           onKeyDown={interactive ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); map.selectArea(area); } } : undefined}
                           data-category={area.categoria ?? "AMBIENTE"} data-kind={area.tipo} data-sector={Boolean(area.setor_id)}
                           vectorEffect="non-scaling-stroke" className={`school-map__area ${interactive ? "school-map__area--interactive" : ""} ${selected ? "is-selected" : ""}`} />
-                        {showLabel && area.rotulo_x != null && area.rotulo_y != null && <text x={area.rotulo_x} y={area.rotulo_y} textAnchor="middle" dominantBaseline="middle" fontSize={fontSize}
+                        {showLabel && labelPosition && <text x={labelPosition.x} y={labelPosition.y} textAnchor="middle" dominantBaseline="middle" fontSize={fontSize}
                           className={`school-map__label pointer-events-none ${area.tipo === "BLOCO" || selected ? "font-semibold" : ""}`} aria-hidden="true">
-                          {label.map((line, index) => <tspan key={index} x={area.rotulo_x!} dy={index === 0 ? -(label.length - 1) * fontSize * 0.6 : fontSize * 1.2}>{line}</tspan>)}
+                          {label.map((line, index) => <tspan key={index} x={labelPosition.x} dy={index === 0 ? -(label.length - 1) * fontSize * 0.6 : fontSize * 1.2}>{line}</tspan>)}
                         </text>}
                       </g>;
                     })}

@@ -345,6 +345,7 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
     const [areas] = await db.query(
       `SELECT a.id, a.mapa_id, a.tipo, a.nome, a.caminho_svg, a.bloco_id, a.sala_id, a.setor_id,
               a.rotulo_x::float8 AS rotulo_x, a.rotulo_y::float8 AS rotulo_y,
+              a.ajuste_x, a.ajuste_y, a.escala_x, a.escala_y,
               a.categoria, a.destino_mapa_id, a.descricao,
               b.nome AS bloco_nome, s.nome AS sala_nome, st.nome AS setor_nome
          FROM mapa_areas a
@@ -462,6 +463,28 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
     }
   };
 
+  const updateMapAreaAdjustment = async ({ institutionId, mapId, areaId, adjustment, previous }) => {
+    const [result] = await db.query(
+      `UPDATE mapa_areas a
+          SET ajuste_x = ?, ajuste_y = ?, escala_x = ?, escala_y = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE a.id = ? AND a.mapa_id = ? AND a.instituicao_id = ?
+          AND a.caminho_svg = ?
+          AND a.ajuste_x = ? AND a.ajuste_y = ? AND a.escala_x = ? AND a.escala_y = ?
+          AND EXISTS (SELECT 1 FROM mapas m WHERE m.id = a.mapa_id AND m.instituicao_id = a.instituicao_id)`,
+      [adjustment.ajuste_x, adjustment.ajuste_y, adjustment.escala_x, adjustment.escala_y,
+        areaId, mapId, institutionId, previous.caminho_svg,
+        previous.ajuste_x, previous.ajuste_y, previous.escala_x, previous.escala_y]
+    );
+    if (result.affectedRows) return { adjustment };
+    const [areas] = await db.query(
+      `SELECT a.id FROM mapa_areas a
+         JOIN mapas m ON m.id = a.mapa_id AND m.instituicao_id = a.instituicao_id
+        WHERE a.id = ? AND a.mapa_id = ? AND a.instituicao_id = ? LIMIT 1`,
+      [areaId, mapId, institutionId]
+    );
+    return areas.length ? { conflict: true } : { notFound: true };
+  };
+
   return {
     createBlock,
     createRoom,
@@ -477,6 +500,7 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
     listMaps,
     countActiveSchedules,
     saveMap,
+    updateMapAreaAdjustment,
     updateBlock,
     updateRoom,
   };

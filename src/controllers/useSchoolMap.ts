@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import type { AreaAdjustment } from "@/lib/mapGeometry";
 
-export type MapArea = {
+export type MapArea = AreaAdjustment & {
   id: number; mapa_id: number; tipo: "BLOCO" | "SALA" | "SETOR" | "OUTRO";
   nome: string; caminho_svg: string; bloco_id: number | null; sala_id: number | null; setor_id: number | null;
   bloco_nome: string | null; sala_nome: string | null; setor_nome: string | null;
@@ -53,7 +54,7 @@ export const useSchoolMap = (selectedAreaId?: number | null) => {
   useEffect(() => {
     let active = true;
     setLoading(true);
-    Promise.all([apiFetch<MapView[]>("/api/mapas"), apiFetch<Room[]>("/api/salas"), apiFetch<Sector[]>("/api/setores")])
+    Promise.all([apiFetch<MapView[]>("/api/mapas", { cache: "no-store" }), apiFetch<Room[]>("/api/salas"), apiFetch<Sector[]>("/api/setores")])
       .then(([mapData, roomData, sectorData]) => {
         if (!active) return;
         const visibleMaps = mapData.filter((item) => item.ativo !== false);
