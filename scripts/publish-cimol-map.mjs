@@ -85,12 +85,12 @@ export const publishCimolMap = async (db, { views, slug = "cimol", apply = false
       `SELECT id, nome FROM mapas WHERE instituicao_id = ? AND nome IN (${placeholders})`, [institutionId, ...mapNames]
     );
     const [existingAreas] = await conn.query(
-      `SELECT a.id, a.mapa_id, a.nome FROM mapa_areas a
+      `SELECT a.id, a.mapa_id, a.nome, a.editado_cpd, a.excluido_cpd FROM mapa_areas a
        JOIN mapas m ON m.id = a.mapa_id AND m.instituicao_id = a.instituicao_id
        WHERE a.instituicao_id = ? AND m.nome IN (${placeholders})`, [institutionId, ...mapNames]
     );
     const report = { slug, mode: apply ? "apply" : "dry-run", maps: views.length, areas: 0,
-      createdMaps: 0, updatedMaps: 0, createdAreas: 0, updatedAreas: 0, removedAreas: 0,
+      createdMaps: 0, updatedMaps: 0, createdAreas: 0, updatedAreas: 0, preservedAreas: 0, removedAreas: 0,
       unmatched: { blocos: [], salas: [], setores: [] } };
     const missing = (kind, view, area, name) => report.unmatched[kind].push({ vista: view.key, area: area?.key || null, nome: name });
     const plans = views.map((view) => {
@@ -102,6 +102,7 @@ export const publishCimolMap = async (db, { views, slug = "cimol", apply = false
       if (new Set(priorAreas.map((area) => area.nome)).size !== priorAreas.length) {
         throw new Error(`O mapa reservado tem áreas com nomes repetidos: ${view.key}.`);
       }
+      report.preservedAreas += priorAreas.filter((area) => area.editado_cpd || area.excluido_cpd).length;
       const areas = view.areas.map((area) => {
         const areaBlock = area.bloco_nome ? uniqueMatch(blocks, area.bloco_nome) : block;
         if (area.bloco_nome && !areaBlock) missing("blocos", view, area, area.bloco_nome);
@@ -115,12 +116,14 @@ export const publishCimolMap = async (db, { views, slug = "cimol", apply = false
         const tipo = area.sala_nome ? (room ? "SALA" : "OUTRO")
           : area.setor_nome ? (sector ? "SETOR" : "OUTRO") : area.bloco_nome && areaBlock ? "BLOCO" : "OUTRO";
         const prior = priorAreas.find((candidate) => candidate.nome === area.nome);
-        report[prior ? "updatedAreas" : "createdAreas"]++;
+        if (!prior) report.createdAreas++;
+        else if (!prior.editado_cpd && !prior.excluido_cpd) report.updatedAreas++;
         report.areas++;
-        return { ...area, id: prior?.id, tipo, bloco_id: tipo === "BLOCO" ? areaBlock.id : null,
+        return { ...area, id: prior?.id, protectedByCpd: prior?.editado_cpd || prior?.excluido_cpd, tipo, bloco_id: tipo === "BLOCO" ? areaBlock.id : null,
           sala_id: tipo === "SALA" ? room.id : null, setor_id: tipo === "SALA" || tipo === "SETOR" ? sector?.id || null : null };
       });
-      const removed = priorAreas.filter((prior) => !areas.some((area) => area.nome === prior.nome));
+      const removed = priorAreas.filter((prior) => !prior.editado_cpd && !prior.excluido_cpd &&
+        !areas.some((area) => area.nome === prior.nome));
       report.removedAreas += removed.length;
       return { ...view, id: existingMap?.id, bloco_id: block?.id || null, areas, removed };
     });
@@ -145,6 +148,7 @@ export const publishCimolMap = async (db, { views, slug = "cimol", apply = false
           const values = [area.tipo, area.nome, area.caminho_svg, area.bloco_id, area.sala_id, area.setor_id,
             area.rotulo_x ?? null, area.rotulo_y ?? null, area.categoria || "AMBIENTE", area.descricao || null,
             area.destino_key ? mapIds.get(area.destino_key) : null];
+          if (area.protectedByCpd) continue;
           if (area.id) {
             await conn.query(
               `UPDATE mapa_areas SET tipo = ?, nome = ?, caminho_svg = ?, bloco_id = ?, sala_id = ?, setor_id = ?,

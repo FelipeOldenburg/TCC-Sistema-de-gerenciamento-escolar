@@ -38,6 +38,18 @@ const validMapAdjustment = (value) => value && typeof value === "object" && !Arr
   Number.isFinite(value.ajuste_y) && Math.abs(value.ajuste_y) <= 200000 &&
   Number.isFinite(value.escala_x) && value.escala_x >= 0.05 && value.escala_x <= 20 &&
   Number.isFinite(value.escala_y) && value.escala_y >= 0.05 && value.escala_y <= 20;
+const validMapAreaSnapshot = (area) => area && typeof area === "object" && !Array.isArray(area) &&
+  typeof area.nome === "string" && area.nome.length > 0 && area.nome.length <= 120 &&
+  typeof area.caminho_svg === "string" && area.caminho_svg.length > 0 &&
+  area.caminho_svg.length <= 8000 && svgPathPattern.test(area.caminho_svg) &&
+  (area.bloco_id === null || (Number.isSafeInteger(area.bloco_id) && area.bloco_id > 0)) &&
+  (area.destino_mapa_id === null || (Number.isSafeInteger(area.destino_mapa_id) && area.destino_mapa_id > 0));
+const mapAreaIds = (req, withArea = false) => {
+  const mapId = Number(req.params.mapId);
+  const areaId = withArea ? Number(req.params.areaId) : null;
+  return Number.isSafeInteger(mapId) && mapId > 0 && (!withArea || Number.isSafeInteger(areaId) && areaId > 0)
+    ? { mapId, areaId } : null;
+};
 
 const normalizeMapPayload = (body = {}, asBoolean) => ({
   nome: String(body.nome || "").trim(),
@@ -305,6 +317,9 @@ export const createFacilitiesController = ({
         throw httpError(400, "Informe nome e dimensões válidas para o mapa.");
       }
       if (map.areas.length > 500) throw httpError(400, "O mapa excede o limite de 500 áreas.");
+      if (new Set(map.areas.map((area) => area.nome.toLocaleLowerCase("pt-BR"))).size !== map.areas.length) {
+        throw httpError(400, "Há áreas com nomes repetidos no mapa.");
+      }
       const areaIds = map.areas.map((area) => area.id).filter((id) => id !== null);
       if ((!req.params.id && areaIds.length) || areaIds.some((id) => !Number.isInteger(id) || id < 1) ||
           new Set(areaIds).size !== areaIds.length) {
@@ -335,6 +350,7 @@ export const createFacilitiesController = ({
       if (result.invalidReference) throw httpError(400, "Bloco, sala, setor ou mapa de destino não encontrado nesta instituição.");
       if (result.invalidArea) throw httpError(400, "Área não encontrada neste mapa e instituição.");
       if (result.notFound) throw httpError(404, "Mapa não encontrado.");
+      if (result.conflict) throw httpError(409, "O mapa mudou. Recarregue antes de salvar.");
       return res.status(req.params.id ? 200 : 201).json({ id: result.id });
     } catch (error) {
       return next(error);
@@ -364,10 +380,85 @@ export const createFacilitiesController = ({
     }
   };
 
+  const createMapBlockArea = async (req, res, next) => {
+    try {
+      const ids = mapAreaIds(req);
+      const body = req.body || {};
+      const area = {
+        nome: String(body.nome || "").trim(),
+        caminho_svg: String(body.caminho_svg || "").trim(),
+        bloco_id: Number(body.bloco_id),
+        destino_mapa_id: Number(body.destino_mapa_id),
+        rotulo_x: Number(body.rotulo_x),
+        rotulo_y: Number(body.rotulo_y),
+        descricao: String(body.descricao || "").trim() || null,
+      };
+      if (!ids || !area.nome || area.nome.length > 120 || !area.caminho_svg ||
+          area.caminho_svg.length > 8000 || !svgPathPattern.test(area.caminho_svg) ||
+          !Number.isSafeInteger(area.bloco_id) || area.bloco_id < 1 ||
+          !Number.isSafeInteger(area.destino_mapa_id) || area.destino_mapa_id < 1 ||
+          area.destino_mapa_id === ids.mapId ||
+          !Number.isFinite(area.rotulo_x) || !Number.isFinite(area.rotulo_y) ||
+          area.rotulo_x < 0 || area.rotulo_y < 0 || area.rotulo_x > 10000 || area.rotulo_y > 10000 ||
+          (area.descricao?.length || 0) > 2000) {
+        throw httpError(400, "Informe nome, bloco, destino e desenho válidos para a área.");
+      }
+      const result = await facilitiesModel.createMapBlockArea({ institutionId: req.institution.id, mapId: ids.mapId, area });
+      if (result.notFound) throw httpError(404, "Mapa não encontrado.");
+      if (result.invalidReference) throw httpError(400, "Bloco ou mapa de destino não encontrado nesta instituição.");
+      if (result.invalidCoordinates) throw httpError(400, "O rótulo está fora da vista do mapa.");
+      if (result.conflict) throw httpError(409, "Já existe uma área com este nome no mapa.");
+      if (result.limit) throw httpError(409, "O mapa excede o limite de 500 áreas.");
+      return res.status(201).json({ id: result.id });
+    } catch (error) {
+      return next(error);
+    }
+  };
+
+  const updateMapBlockArea = async (req, res, next) => {
+    try {
+      const ids = mapAreaIds(req, true);
+      const previous = req.body?.anterior;
+      const destinationId = Number(req.body?.destino_mapa_id);
+      if (!ids || !validMapAreaSnapshot(previous) || !Number.isSafeInteger(destinationId) || destinationId < 1 ||
+          destinationId === ids.mapId) {
+        throw httpError(400, "Informe um destino válido para a área do mapa.");
+      }
+      const result = await facilitiesModel.updateMapBlockArea({
+        institutionId: req.institution.id, ...ids, destinationId, previous,
+      });
+      if (result.invalidReference) throw httpError(400, "Mapa de destino não encontrado nesta instituição.");
+      if (result.notFound) throw httpError(404, "Área não encontrada neste mapa e instituição.");
+      if (result.conflict) throw httpError(409, "A área mudou. Recarregue o mapa antes de salvar.");
+      return res.json({ ok: true });
+    } catch (error) {
+      return next(error);
+    }
+  };
+
+  const deleteMapBlockArea = async (req, res, next) => {
+    try {
+      const ids = mapAreaIds(req, true);
+      const previous = req.body?.anterior;
+      if (!ids || !validMapAreaSnapshot(previous) ||
+          !validMapAdjustment(previous)) {
+        throw httpError(400, "Informe uma área válida para excluir do mapa.");
+      }
+      const result = await facilitiesModel.deleteMapBlockArea({ institutionId: req.institution.id, ...ids, previous });
+      if (result.notFound) throw httpError(404, "Área não encontrada neste mapa e instituição.");
+      if (result.conflict) throw httpError(409, "A área mudou. Recarregue o mapa antes de excluir.");
+      return res.json({ ok: true });
+    } catch (error) {
+      return next(error);
+    }
+  };
+
   return {
     createBlock,
+    createMapBlockArea,
     createRoom,
     deleteBlock,
+    deleteMapBlockArea,
     deleteRoom,
     getRoom,
     getRoomOccupation,
@@ -378,6 +469,7 @@ export const createFacilitiesController = ({
     listMaps,
     saveMap,
     updateMapAreaAdjustment,
+    updateMapBlockArea,
     updateBlock,
     updateRoom,
   };

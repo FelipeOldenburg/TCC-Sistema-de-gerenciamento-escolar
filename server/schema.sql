@@ -436,6 +436,10 @@ ALTER TABLE mapa_areas ADD COLUMN IF NOT EXISTS escala_x DOUBLE PRECISION NOT NU
   CHECK (escala_x BETWEEN 0.05 AND 20);
 ALTER TABLE mapa_areas ADD COLUMN IF NOT EXISTS escala_y DOUBLE PRECISION NOT NULL DEFAULT 1
   CHECK (escala_y BETWEEN 0.05 AND 20);
+ALTER TABLE mapa_areas ADD COLUMN IF NOT EXISTS editado_cpd BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE mapa_areas ADD COLUMN IF NOT EXISTS excluido_cpd BOOLEAN NOT NULL DEFAULT FALSE;
+UPDATE mapa_areas SET editado_cpd = TRUE
+ WHERE editado_cpd = FALSE AND (ajuste_x <> 0 OR ajuste_y <> 0 OR escala_x <> 1 OR escala_y <> 1);
 ALTER TABLE mapa_areas DROP CONSTRAINT IF EXISTS ck_mapa_area_referencia_unica;
 
 CREATE TABLE IF NOT EXISTS grupos_academicos (

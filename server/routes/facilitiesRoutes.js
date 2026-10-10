@@ -2,6 +2,9 @@ export const registerFacilitiesRoutes = (app, controller, { requireRole }) => {
   app.get("/api/mapas", controller.listMaps);
   app.post("/api/mapas", requireRole("CPD"), controller.saveMap);
   app.put("/api/mapas/:id", requireRole("CPD"), controller.saveMap);
+  app.post("/api/mapas/:mapId/areas", requireRole("CPD"), controller.createMapBlockArea);
+  app.patch("/api/mapas/:mapId/areas/:areaId", requireRole("CPD"), controller.updateMapBlockArea);
+  app.delete("/api/mapas/:mapId/areas/:areaId", requireRole("CPD"), controller.deleteMapBlockArea);
   app.patch("/api/mapas/:mapId/areas/:areaId/ajuste", requireRole("CPD"), controller.updateMapAreaAdjustment);
 
   app.get("/api/blocos", controller.listBlocks);

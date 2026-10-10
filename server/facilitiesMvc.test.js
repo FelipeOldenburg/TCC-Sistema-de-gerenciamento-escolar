@@ -9,7 +9,7 @@ const app = Object.fromEntries(
 );
 const controller = Object.fromEntries(
   [
-    "listMaps", "saveMap", "updateMapAreaAdjustment",
+    "listMaps", "saveMap", "createMapBlockArea", "updateMapBlockArea", "deleteMapBlockArea", "updateMapAreaAdjustment",
     "listBlocks", "createBlock", "updateBlock", "deleteBlock", "listRooms", "listRoomOccupations", "getRoom",
     "getRoomOccupation", "listRoomChanges", "createRoom", "updateRoom", "deleteRoom",
   ].map((name) => [name, () => {}])
@@ -27,6 +27,9 @@ assert.deepEqual(
     "get /api/mapas",
     "post /api/mapas",
     "put /api/mapas/:id",
+    "post /api/mapas/:mapId/areas",
+    "patch /api/mapas/:mapId/areas/:areaId",
+    "delete /api/mapas/:mapId/areas/:areaId",
     "patch /api/mapas/:mapId/areas/:areaId/ajuste",
     "get /api/blocos",
     "post /api/blocos",
@@ -42,7 +45,7 @@ assert.deepEqual(
     "delete /api/salas/:id",
   ]
 );
-assert.equal(routes.filter(([, , middleware]) => middleware === cpdOnly).length, 10);
+assert.equal(routes.filter(([, , middleware]) => middleware === cpdOnly).length, 13);
 
 let savedRoom;
 let savedSoftwareLink;
@@ -269,8 +272,11 @@ const stableMapModel = createFacilitiesModel({
     getConnection: async () => ({
       query: async (sql, params) => {
         mapQueries.push({ sql, params });
+        if (sql.includes("SELECT nome FROM mapas")) return [[{ nome: "Térreo" }]];
         if (sql.includes("UPDATE mapas")) return [{ affectedRows: 1 }];
-        if (sql.includes("SELECT id FROM mapa_areas")) return [[{ id: 31 }]];
+        if (sql.includes("FROM mapa_areas WHERE mapa_id")) return [[
+          { id: 31, excluido_cpd: false }, { id: 32, excluido_cpd: true },
+        ]];
         return [{ affectedRows: 1 }];
       },
       beginTransaction: async () => mapTransaction.push("begin"),
@@ -295,6 +301,8 @@ assert.deepEqual(await stableMapModel.saveMap({
 }), { id: 12 });
 assert.deepEqual(mapTransaction, ["begin", "commit", "release"]);
 assert.equal(mapQueries.some(({ sql }) => sql.includes("DELETE FROM mapa_areas")), false);
+assert.equal(mapQueries.some(({ sql }) => sql.includes("excluido_cpd = TRUE")), false,
+  "Um PUT completo não deve apagar um bloco já ocultado pelo CPD.");
 assert.deepEqual(
   mapQueries.find(({ sql }) => sql.includes("UPDATE mapa_areas")).params.slice(-3),
   [31, 12, 2]
@@ -390,6 +398,7 @@ const metadataModel = createFacilitiesModel({
       }
       assert.match(sql, /a.rotulo_x::float8 AS rotulo_x/);
       assert.match(sql, /a.ajuste_x, a.ajuste_y, a.escala_x, a.escala_y/);
+      assert.match(sql, /a.excluido_cpd = FALSE/);
       return [[{ ...detailedMap.map.areas[0], id: 32, mapa_id: 12,
         ajuste_x: 0, ajuste_y: 0, escala_x: 1, escala_y: 1 }]];
     },
@@ -441,3 +450,167 @@ assert.deepEqual(await adjustmentModel.updateMapAreaAdjustment(adjustmentArgs), 
 assert.deepEqual(adjustmentQueries.at(-1).params, [31, 12, 2]);
 targetExists = false;
 assert.deepEqual(await adjustmentModel.updateMapAreaAdjustment(adjustmentArgs), { notFound: true });
+
+const blockArea = {
+  nome: "Bloco D", caminho_svg: "M 10 10 H 60 V 50 H 10 Z", bloco_id: 4,
+  destino_mapa_id: 13, rotulo_x: 35, rotulo_y: 30,
+};
+const areaSnapshot = { ...blockArea, ajuste_x: 0, ajuste_y: 0, escala_x: 1, escala_y: 1 };
+let areaCall;
+let areaOutcome = { id: 41 };
+const areaController = createFacilitiesController({
+  asBoolean: Boolean, cacheableJson: () => {},
+  facilitiesModel: {
+    createMapBlockArea: async (args) => { areaCall = args; return areaOutcome; },
+    updateMapBlockArea: async (args) => { areaCall = args; return areaOutcome; },
+    deleteMapBlockArea: async (args) => { areaCall = args; return areaOutcome; },
+  },
+  httpError: (statusCode, message) => Object.assign(new Error(message), { statusCode }),
+  isForeignKeyError: () => false, positiveInt: () => 1,
+});
+const areaRequest = { params: { mapId: "12", areaId: "41" }, institution: { id: 2 } };
+receivedError = undefined;
+await areaController.createMapBlockArea({ ...areaRequest, body: blockArea }, mapResponse,
+  (error) => { receivedError = error; });
+assert.equal(receivedError, undefined);
+assert.deepEqual(areaCall, { institutionId: 2, mapId: 12, area: { ...blockArea, descricao: null } });
+assert.equal(mapResponse.statusCode, 201);
+assert.deepEqual(mapResponse.payload, { id: 41 });
+for (const changed of [
+  { destino_mapa_id: 12 }, { destino_mapa_id: 0 }, { caminho_svg: "M0 0\" onload=alert(1)" },
+  { bloco_id: "not-an-id" }, { rotulo_x: 10001 },
+]) {
+  areaCall = null; receivedError = undefined;
+  await areaController.createMapBlockArea({ ...areaRequest, body: { ...blockArea, ...changed } }, mapResponse,
+    (error) => { receivedError = error; });
+  assert.equal(receivedError?.statusCode, 400);
+  assert.equal(areaCall, null);
+}
+areaOutcome = { conflict: true }; receivedError = undefined;
+await areaController.createMapBlockArea({ ...areaRequest, body: blockArea }, mapResponse,
+  (error) => { receivedError = error; });
+assert.equal(receivedError?.statusCode, 409);
+areaOutcome = { ok: true }; receivedError = undefined;
+await areaController.updateMapBlockArea({ ...areaRequest,
+  body: { destino_mapa_id: 14, anterior: areaSnapshot } }, mapResponse,
+(error) => { receivedError = error; });
+assert.equal(receivedError, undefined);
+assert.deepEqual(areaCall, { institutionId: 2, mapId: 12, areaId: 41,
+  destinationId: 14, previous: areaSnapshot });
+receivedError = undefined;
+await areaController.deleteMapBlockArea({ ...areaRequest, body: { anterior: areaSnapshot } }, mapResponse,
+  (error) => { receivedError = error; });
+assert.equal(receivedError, undefined);
+assert.deepEqual(areaCall, { institutionId: 2, mapId: 12, areaId: 41, previous: areaSnapshot });
+receivedError = undefined;
+await areaController.deleteMapBlockArea({ ...areaRequest,
+  body: { anterior: { ...areaSnapshot, escala_x: "1" } } }, mapResponse,
+(error) => { receivedError = error; });
+assert.equal(receivedError?.statusCode, 400);
+
+const editorQueries = [];
+const editorSteps = [];
+let duplicateArea = [{ id: 41, tipo: "BLOCO", categoria: "AMBIENTE", excluido_cpd: true }];
+let destinationAvailable = true;
+let editorAffected = 1;
+const editorModel = createFacilitiesModel({
+  db: {
+    getConnection: async () => ({
+      query: async (sql, params) => {
+        editorQueries.push({ sql, params });
+        if (sql.includes("SELECT largura, altura FROM mapas")) return [[{ largura: 800, altura: 600 }]];
+        if (sql.includes("SELECT id FROM blocos")) return [[{ id: 4 }]];
+        if (sql.includes("SELECT id FROM mapas")) return [destinationAvailable ? [{ id: 13 }] : []];
+        if (sql.includes("SELECT id, tipo, categoria, excluido_cpd FROM mapa_areas")) return [duplicateArea];
+        if (sql.includes("SELECT COUNT(*)::int")) return [[{ total: 8 }]];
+        if (sql.includes("INSERT INTO mapa_areas")) return [{ insertId: 42 }];
+        return [{ affectedRows: 1 }];
+      },
+      beginTransaction: async () => editorSteps.push("begin"),
+      commit: async () => editorSteps.push("commit"),
+      rollback: async () => editorSteps.push("rollback"),
+      release: () => editorSteps.push("release"),
+    }),
+    query: async (sql, params) => {
+      editorQueries.push({ sql, params });
+      if (sql.includes("SELECT id FROM mapas")) return [destinationAvailable ? [{ id: 13 }] : []];
+      if (sql.includes("UPDATE mapa_areas")) return [{ affectedRows: editorAffected }];
+      return [[{ id: 41 }]];
+    },
+  }, dayOrderSql: "h.dia",
+});
+assert.deepEqual(await editorModel.createMapBlockArea({ institutionId: 2, mapId: 12, area: blockArea }), { id: 41 });
+assert.deepEqual(editorSteps, ["begin", "commit", "release"]);
+assert.match(editorQueries.find(({ sql }) => sql.includes("UPDATE mapa_areas")).sql,
+  /editado_cpd = TRUE, excluido_cpd = FALSE/);
+assert.ok(editorQueries.every(({ sql }) => !sql.includes("DELETE FROM blocos") && !sql.includes("DELETE FROM salas")));
+duplicateArea = [{ id: 41, tipo: "BLOCO", categoria: "AMBIENTE", excluido_cpd: false }];
+assert.deepEqual(await editorModel.createMapBlockArea({ institutionId: 2, mapId: 12, area: blockArea }), { conflict: true });
+duplicateArea = []; destinationAvailable = false;
+assert.deepEqual(await editorModel.createMapBlockArea({ institutionId: 2, mapId: 12, area: blockArea }), { invalidReference: true });
+destinationAvailable = true;
+assert.deepEqual(await editorModel.createMapBlockArea({ institutionId: 2, mapId: 12, area: blockArea }), { id: 42 });
+assert.deepEqual(await editorModel.updateMapBlockArea({ institutionId: 2, mapId: 12, areaId: 41,
+  destinationId: 14, previous: areaSnapshot }), { ok: true });
+assert.match(editorQueries.at(-1).sql, /a.categoria IN \('ACESSO', 'ESCADA'\) OR a.destino_mapa_id IS NOT NULL/);
+assert.deepEqual(editorQueries.at(-1).params, [14, 41, 12, 2, areaSnapshot.nome,
+  areaSnapshot.caminho_svg, areaSnapshot.bloco_id, areaSnapshot.destino_mapa_id]);
+editorAffected = 0;
+assert.deepEqual(await editorModel.updateMapBlockArea({ institutionId: 2, mapId: 12, areaId: 41,
+  destinationId: 14, previous: areaSnapshot }), { conflict: true });
+editorAffected = 1;
+assert.deepEqual(await editorModel.deleteMapBlockArea({ institutionId: 2, mapId: 12, areaId: 41,
+  previous: areaSnapshot }), { ok: true });
+assert.match(editorQueries.at(-1).sql, /editado_cpd = TRUE, excluido_cpd = TRUE/);
+assert.ok(!editorQueries.at(-1).sql.includes("DELETE FROM"));
+
+const fullMapArea = { id: 31, tipo: "OUTRO", nome: "Bloco D", caminho_svg: blockArea.caminho_svg,
+  bloco_id: null, sala_id: null, setor_id: null, rotulo_x: 35, rotulo_y: 30,
+  categoria: "AMBIENTE", destino_mapa_id: null, descricao: null };
+const fullMap = { nome: "CIMOL · Campus", piso: null, largura: 800, altura: 600,
+  ativo: true, bloco_id: null, visao_geral: true, descricao: null, areas: [fullMapArea] };
+const fullPutQueries = [];
+let storedAreas = [];
+const protectedMap = createFacilitiesModel({
+  db: { getConnection: async () => ({
+    query: async (sql) => {
+      fullPutQueries.push(sql);
+      if (sql.includes("SELECT nome FROM mapas")) return [[{ nome: "CIMOL · Campus" }]];
+      if (sql.includes("SELECT id, nome, excluido_cpd FROM mapa_areas")) return [storedAreas];
+      return [{ affectedRows: 1 }];
+    },
+    beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release: () => {},
+  }) }, dayOrderSql: "h.dia",
+});
+storedAreas = [{ id: 31, nome: "Bloco D", excluido_cpd: true }];
+assert.deepEqual(await protectedMap.saveMap({ institutionId: 2, mapId: 12, map: fullMap }), { conflict: true },
+  "Um PUT antigo não pode ressuscitar um desenho excluído pelo CPD.");
+assert.ok(!fullPutQueries.some((sql) => sql.includes("UPDATE mapa_areas")));
+storedAreas = [{ id: 31, nome: "Bloco D", excluido_cpd: false }];
+assert.deepEqual(await protectedMap.saveMap({ institutionId: 2, mapId: 12,
+  map: { ...fullMap, areas: [{ ...fullMapArea, nome: "Bloco D novo" }] } }), { conflict: true },
+"Renomear uma área publicada faria o seed recriar o nome original.");
+storedAreas = [{ id: 31, nome: "Bloco D", excluido_cpd: true }];
+assert.deepEqual(await protectedMap.saveMap({ institutionId: 2, mapId: 12,
+  map: { ...fullMap, areas: [{ ...fullMapArea, id: null }] } }), { conflict: true },
+"Uma nova área não deve duplicar o nome de um tombstone reservado.");
+assert.deepEqual(await protectedMap.saveMap({ institutionId: 2, mapId: 12,
+  map: { ...fullMap, nome: "Campus renomeado", areas: [] } }), { conflict: true },
+"Renomear a vista publicada faria o seed recriá-la.");
+
+const protectedController = createFacilitiesController({
+  asBoolean: Boolean, cacheableJson: () => {}, facilitiesModel: { saveMap: async () => ({ conflict: true }) },
+  httpError: (statusCode, message) => Object.assign(new Error(message), { statusCode }),
+  isForeignKeyError: () => false, positiveInt: () => 1,
+});
+receivedError = undefined;
+await protectedController.saveMap({ body: { ...fullMap, areas: [{ ...fullMapArea, id: null }] },
+  params: { id: "12" }, institution: { id: 2 } }, mapResponse,
+(error) => { receivedError = error; });
+assert.equal(receivedError?.statusCode, 409);
+receivedError = undefined;
+await protectedController.saveMap({ body: { ...fullMap, areas: [
+  { ...fullMapArea, id: null }, { ...fullMapArea, id: null, nome: "bloco d" },
+] }, params: { id: "12" }, institution: { id: 2 } }, mapResponse,
+(error) => { receivedError = error; });
+assert.equal(receivedError?.statusCode, 400);

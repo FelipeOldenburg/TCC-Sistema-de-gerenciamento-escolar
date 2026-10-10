@@ -79,6 +79,7 @@ const db = { getConnection: async () => {
         return [state.maps.filter((map) => map.instituicao_id === params[0] && params.slice(1).includes(map.nome))];
       }
       if (sql.startsWith("SELECT a.id, a.mapa_id, a.nome")) {
+        assert.match(sql, /a\.editado_cpd, a\.excluido_cpd/);
         assert.match(sql, /m.instituicao_id = a.instituicao_id/);
         assert.match(sql, /WHERE a.instituicao_id = \?/);
         return [state.areas.filter((area) => area.instituicao_id === params[0] && state.maps.some((map) =>
@@ -111,7 +112,8 @@ const db = { getConnection: async () => {
         assert.ok(area);
         if (!update) state.areas.push(area);
         else assert.match(sql, /WHERE id = \? AND mapa_id = \? AND instituicao_id = \?/);
-        Object.assign(area, { tipo: params[0], nome: params[1], bloco_id: params[3], sala_id: params[4], setor_id: params[5], destino_mapa_id: params[10] });
+        Object.assign(area, { tipo: params[0], nome: params[1], bloco_id: params[3], sala_id: params[4], setor_id: params[5],
+          destino_mapa_id: params[10], editado_cpd: false, excluido_cpd: false });
         return [{ insertId: area.id }];
       }
       if (sql.startsWith("DELETE FROM mapa_areas")) {
@@ -154,6 +156,40 @@ assert.deepEqual({ maps: state.maps.map((map) => map.id), areas: state.areas.map
 assert.deepEqual(state.maps.filter((map) => [700, 710, 723].includes(map.id)),
   protectedRows.maps.filter((map) => [700, 710, 723].includes(map.id)));
 assert.deepEqual(state.areas.filter((area) => area.id === 800 || area.id === 810), protectedRows.areas);
+
+const mainMap = state.maps.find((map) => map.instituicao_id === 1 && map.nome === "CIMOL · C · 2º pavimento");
+const editedStair = state.areas.find((area) => area.mapa_id === mainMap.id && area.nome === "Escada própria");
+editedStair.editado_cpd = true;
+editedStair.destino_mapa_id = 710;
+const deletedSeedArea = state.areas.find((area) => area.mapa_id === mainMap.id && area.nome === "C299");
+deletedSeedArea.editado_cpd = false;
+deletedSeedArea.excluido_cpd = true;
+const unmodifiedSeedArea = state.areas.find((area) => area.mapa_id === mainMap.id && area.nome === "Laboratórios");
+unmodifiedSeedArea.destino_mapa_id = 710;
+const addedByCpd = { id: nextId++, instituicao_id: 1, mapa_id: mainMap.id, nome: "Novo bloco",
+  editado_cpd: true, excluido_cpd: false };
+const removedByCpd = { id: nextId++, instituicao_id: 1, mapa_id: mainMap.id, nome: "Bloco removido",
+  editado_cpd: false, excluido_cpd: true };
+const obsoleteSeedArea = { id: nextId++, instituicao_id: 1, mapa_id: mainMap.id, nome: "Área antiga",
+  editado_cpd: false, excluido_cpd: false };
+state.areas.push(addedByCpd, removedByCpd, obsoleteSeedArea);
+const beforeCpdPreview = structuredClone(state);
+const customPreview = await publishCimolMap(db, { views: sampleViews });
+assert.equal(customPreview.preservedAreas, 4);
+assert.equal(customPreview.removedAreas, 1);
+assert.deepEqual(state, beforeCpdPreview, "A prévia não deve alterar ajustes feitos pelo CPD.");
+const afterCpdEdit = await publishCimolMap(db, { views: sampleViews, apply: true });
+assert.equal(afterCpdEdit.createdAreas, 0, "Áreas excluídas pelo CPD não devem ressurgir na publicação.");
+assert.equal(afterCpdEdit.preservedAreas, 4);
+assert.equal(afterCpdEdit.removedAreas, 1);
+assert.equal(state.areas.find((area) => area.id === editedStair.id).destino_mapa_id, 710,
+  "Uma ação editada pelo CPD não pode ser sobrescrita pela publicação.");
+assert.equal(state.areas.find((area) => area.id === unmodifiedSeedArea.id).destino_mapa_id, null,
+  "Uma área não editada pelo CPD deve continuar recebendo atualizações do seed.");
+assert.ok(state.areas.includes(deletedSeedArea), "O tombstone deve impedir recriar uma área publicada.");
+assert.ok(state.areas.includes(addedByCpd), "A área criada pelo CPD deve sobreviver à publicação.");
+assert.ok(state.areas.includes(removedByCpd), "A exclusão feita pelo CPD deve sobreviver à publicação.");
+assert.ok(!state.areas.includes(obsoleteSeedArea), "Uma área antiga do seed ainda pode ser removida.");
 
 const beforeFailure = structuredClone(state);
 failArea = true;

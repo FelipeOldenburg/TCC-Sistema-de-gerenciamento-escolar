@@ -22,13 +22,34 @@ const maps: MapView[] = [{
 }];
 
 const mockApi = (patchStatus = 200, mapData: MapView[] = maps) => {
+  let currentMaps = structuredClone(mapData);
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (url.endsWith("/api/mapas")) return new Response(JSON.stringify(mapData));
+    if (url.endsWith("/api/mapas")) return new Response(JSON.stringify(currentMaps));
+    if (url.endsWith("/api/blocos")) return new Response(JSON.stringify([{ id: 3, nome: "Bloco C" }, { id: 4, nome: "Bloco D" }]));
     if (url.endsWith("/api/mapas/1/areas/1/ajuste")) {
       if (patchStatus === 409) return new Response(JSON.stringify({ message: "A área mudou." }), { status: 409 });
       const { anterior: _anterior, ...updated } = JSON.parse(String(init?.body));
       return new Response(JSON.stringify(updated));
+    }
+    if (url.endsWith("/api/mapas/1/areas") && init?.method === "POST") {
+      const body = JSON.parse(String(init.body));
+      currentMaps = currentMaps.map((map) => map.id !== 1 ? map : { ...map, areas: [...map.areas, {
+        ...body, id: 6, mapa_id: 1, tipo: "BLOCO", categoria: "AMBIENTE", bloco_nome: "Bloco D",
+        sala_id: null, setor_id: null, sala_nome: null, setor_nome: null,
+      }] });
+      return new Response(JSON.stringify({ id: 6 }), { status: 201 });
+    }
+    if (/\/api\/mapas\/1\/areas\/\d+$/.test(url) && init?.method === "PATCH") {
+      const areaId = Number(url.split("/").pop());
+      const body = JSON.parse(String(init.body));
+      currentMaps = currentMaps.map((map) => map.id !== 1 ? map : { ...map, areas: map.areas.map((item) =>
+        item.id === areaId ? { ...item, destino_mapa_id: body.destino_mapa_id } : item) });
+      return new Response(JSON.stringify({ ok: true }));
+    }
+    if (url.endsWith("/api/mapas/1/areas/6") && init?.method === "DELETE") {
+      currentMaps = currentMaps.map((map) => map.id !== 1 ? map : { ...map, areas: map.areas.filter((item) => item.id !== 6) });
+      return new Response(JSON.stringify({ ok: true }));
     }
     throw new Error(`Chamada inesperada: ${url}`);
   });
@@ -82,6 +103,72 @@ describe("MapaEditorSection", () => {
     expect(within(mapSelector).getByRole("option", { name: "Rascunho · inativo" })).toBeInTheDocument();
     fireEvent.change(mapSelector, { target: { value: "2" } });
     expect(within(screen.getByLabelText("Área")).getByRole("option", { name: "Acesso futuro · Acesso" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(/vista está inativa.*só aparecem para alunos e docentes/i);
+  });
+
+  it("cria uma área de bloco, altera seu destino e a remove sem excluir o cadastro", async () => {
+    const mapData = [maps[0], { ...maps[0], id: 2, nome: "CIMOL · Bloco D · Térreo", areas: [] },
+      { ...maps[0], id: 3, nome: "CIMOL · Bloco D · 2º pavimento", areas: [] }];
+    const fetchMock = mockApi(200, mapData);
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    render(<MapaEditorSection institutionId={1} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Adicionar bloco ao mapa" }));
+    fireEvent.change(screen.getByLabelText("Bloco cadastrado"), { target: { value: "4" } });
+    fireEvent.change(screen.getByLabelText("Abrir ao clicar"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Criar área do bloco" }));
+    await screen.findByRole("button", { name: "Selecionar e mover Bloco D" });
+    const post = fetchMock.mock.calls.find(([input, init]) => String(input).endsWith("/api/mapas/1/areas") && init?.method === "POST");
+    expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({ nome: "Bloco D", bloco_id: 4, destino_mapa_id: 2 });
+    expect(screen.getByLabelText("Ao clicar em Bloco D, abrir")).toHaveValue("2");
+
+    fireEvent.change(screen.getByLabelText("Ao clicar em Bloco D, abrir"), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar destino" }));
+    await waitFor(() => expect(screen.getByLabelText("Ao clicar em Bloco D, abrir")).toHaveValue("3"));
+    const change = fetchMock.mock.calls.find(([input, init]) => String(input).endsWith("/api/mapas/1/areas/6") && init?.method === "PATCH");
+    expect(JSON.parse(String(change?.[1]?.body))).toMatchObject({ destino_mapa_id: 3, anterior: { nome: "Bloco D", destino_mapa_id: 2 } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Remover do mapa" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Selecionar e mover Bloco D" })).not.toBeInTheDocument());
+    const removal = fetchMock.mock.calls.find(([input, init]) => String(input).endsWith("/api/mapas/1/areas/6") && init?.method === "DELETE");
+    expect(JSON.parse(String(removal?.[1]?.body))).toMatchObject({ anterior: { nome: "Bloco D", destino_mapa_id: 3 } });
+    expect(fetchMock.mock.calls.some(([input, init]) => String(input).endsWith("/api/blocos/4") && init?.method === "DELETE")).toBe(false);
+  });
+
+  it("não adiciona um bloco com o mesmo nome de uma área existente na vista", async () => {
+    const fetchMock = mockApi(200, [{ ...maps[0], areas: [...areas, area(7, "Bloco D", "AMBIENTE")] },
+      { ...maps[0], id: 2, areas: [] }]);
+    render(<MapaEditorSection institutionId={1} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Adicionar bloco ao mapa" }));
+    fireEvent.change(screen.getByLabelText("Bloco cadastrado"), { target: { value: "4" } });
+    fireEvent.change(screen.getByLabelText("Abrir ao clicar"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Criar área do bloco" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/já possui uma área/i);
+    expect(fetchMock.mock.calls.some(([input, init]) => String(input).endsWith("/api/mapas/1/areas") && init?.method === "POST")).toBe(false);
+  });
+
+  it("mantém o ajuste do mapa disponível quando o cadastro de blocos falha", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/api/mapas")
+      ? new Response(JSON.stringify(maps)) : new Response(JSON.stringify({ message: "Falha ao carregar blocos" }), { status: 503 })));
+    render(<MapaEditorSection institutionId={1} />);
+    await selectArea();
+    expect(screen.getByRole("button", { name: "Selecionar e mover Sala 201" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar bloco ao mapa" }));
+    expect(screen.getAllByRole("alert").some((alert) => /não foi possível carregar os blocos/i.test(alert.textContent ?? ""))).toBe(true);
+    expect(screen.getByRole("button", { name: "Criar área do bloco" })).toBeDisabled();
+  });
+
+  it("permite corrigir o destino de um acesso sem trocar o desenho", async () => {
+    const fetchMock = mockApi(200, [{ ...maps[0], areas: areas.map((item) => item.id === 4 ? { ...item, destino_mapa_id: null } : item) },
+      { ...maps[0], id: 2, nome: "CIMOL · Pátio", areas: [] }]);
+    render(<MapaEditorSection institutionId={1} />);
+    await selectArea(4);
+    fireEvent.change(screen.getByLabelText("Ao clicar em Entrada, abrir"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar destino" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Salvar destino" })).toBeDisabled());
+    const patch = fetchMock.mock.calls.find(([input, init]) => String(input).endsWith("/api/mapas/1/areas/4") && init?.method === "PATCH");
+    expect(JSON.parse(String(patch?.[1]?.body))).toMatchObject({ destino_mapa_id: 2, anterior: { nome: "Entrada", caminho_svg: path, destino_mapa_id: null } });
+    expect(screen.getByRole("button", { name: "Selecionar e mover Entrada" })).toHaveAttribute("d", path);
   });
 
   it("move por teclado e salva só o ajuste com o caminho anterior como snapshot", async () => {
