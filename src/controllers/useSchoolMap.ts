@@ -11,6 +11,7 @@ export type MapArea = AreaAdjustment & {
 };
 export type MapView = {
   id: number; nome: string; piso: string | null; largura: number; altura: number; areas: MapArea[];
+  areas_ocultas?: MapArea[];
   bloco_id?: number | null; bloco_nome?: string | null; visao_geral?: boolean; descricao?: string | null; ativo?: boolean;
 };
 export type Room = {

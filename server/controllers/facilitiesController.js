@@ -44,6 +44,13 @@ const validMapAreaSnapshot = (area) => area && typeof area === "object" && !Arra
   area.caminho_svg.length <= 8000 && svgPathPattern.test(area.caminho_svg) &&
   (area.bloco_id === null || (Number.isSafeInteger(area.bloco_id) && area.bloco_id > 0)) &&
   (area.destino_mapa_id === null || (Number.isSafeInteger(area.destino_mapa_id) && area.destino_mapa_id > 0));
+const validFullMapAreaSnapshot = (area) => validMapAreaSnapshot(area) && validMapAdjustment(area) &&
+  ["BLOCO", "SALA", "SETOR", "OUTRO"].includes(area.tipo) &&
+  ["AMBIENTE", "CIRCULACAO", "ESCADA", "ACESSO", "PATIO"].includes(area.categoria) &&
+  [area.sala_id, area.setor_id].every((id) => id === null || Number.isSafeInteger(id) && id > 0) &&
+  [area.rotulo_x, area.rotulo_y].every((value) => value === null || Number.isFinite(value) && value >= 0 && value <= 10000) &&
+  (area.rotulo_x === null) === (area.rotulo_y === null) &&
+  (area.descricao === null || typeof area.descricao === "string" && area.descricao.length <= 2000);
 const mapAreaIds = (req, withArea = false) => {
   const mapId = Number(req.params.mapId);
   const areaId = withArea ? Number(req.params.areaId) : null;
@@ -440,13 +447,28 @@ export const createFacilitiesController = ({
     try {
       const ids = mapAreaIds(req, true);
       const previous = req.body?.anterior;
-      if (!ids || !validMapAreaSnapshot(previous) ||
-          !validMapAdjustment(previous)) {
+      if (!ids || !validFullMapAreaSnapshot(previous)) {
         throw httpError(400, "Informe uma área válida para excluir do mapa.");
       }
       const result = await facilitiesModel.deleteMapBlockArea({ institutionId: req.institution.id, ...ids, previous });
       if (result.notFound) throw httpError(404, "Área não encontrada neste mapa e instituição.");
       if (result.conflict) throw httpError(409, "A área mudou. Recarregue o mapa antes de excluir.");
+      return res.json({ ok: true });
+    } catch (error) {
+      return next(error);
+    }
+  };
+
+  const restoreMapArea = async (req, res, next) => {
+    try {
+      const ids = mapAreaIds(req, true);
+      const previous = req.body?.anterior;
+      if (!ids || !validFullMapAreaSnapshot(previous)) {
+        throw httpError(400, "Informe uma área válida para restaurar no mapa.");
+      }
+      const result = await facilitiesModel.restoreMapArea({ institutionId: req.institution.id, ...ids, previous });
+      if (result.notFound) throw httpError(404, "Área não encontrada neste mapa e instituição.");
+      if (result.conflict) throw httpError(409, "Não foi possível restaurar a área. Recarregue o mapa e verifique o destino, o nome e o limite de áreas da vista.");
       return res.json({ ok: true });
     } catch (error) {
       return next(error);
@@ -467,6 +489,7 @@ export const createFacilitiesController = ({
     listRoomOccupations,
     listRooms,
     listMaps,
+    restoreMapArea,
     saveMap,
     updateMapAreaAdjustment,
     updateMapBlockArea,

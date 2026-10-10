@@ -63,7 +63,7 @@ export const createContentModel = ({ db }) => ({
            SELECT a.id, a.mapa_id, m.nome AS mapa_nome
              FROM mapa_areas a
              JOIN mapas m ON m.id = a.mapa_id AND m.instituicao_id = a.instituicao_id AND m.ativo = TRUE
-            WHERE a.setor_id = s.id AND a.instituicao_id = s.instituicao_id
+            WHERE a.setor_id = s.id AND a.instituicao_id = s.instituicao_id AND a.excluido_cpd = FALSE
             ORDER BY a.id
             LIMIT 1
          ) area ON TRUE
@@ -151,7 +151,7 @@ export const createContentModel = ({ db }) => ({
                                 m.id AS mapa_id, m.nome AS mapa
                            FROM mapa_areas a
                            JOIN mapas m ON m.id = a.mapa_id AND m.instituicao_id = a.instituicao_id
-                          WHERE a.id = ? AND a.instituicao_id = ? AND m.ativo = TRUE LIMIT 1`],
+                          WHERE a.id = ? AND a.instituicao_id = ? AND m.ativo = TRUE AND a.excluido_cpd = FALSE LIMIT 1`],
     ]) {
       if (manifestation[field] === null) continue;
       const [rows] = await db.query(query, [manifestation[field], institutionId]);

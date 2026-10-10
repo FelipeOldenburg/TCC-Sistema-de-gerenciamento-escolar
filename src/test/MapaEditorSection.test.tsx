@@ -47,8 +47,22 @@ const mockApi = (patchStatus = 200, mapData: MapView[] = maps) => {
         item.id === areaId ? { ...item, destino_mapa_id: body.destino_mapa_id } : item) });
       return new Response(JSON.stringify({ ok: true }));
     }
-    if (url.endsWith("/api/mapas/1/areas/6") && init?.method === "DELETE") {
-      currentMaps = currentMaps.map((map) => map.id !== 1 ? map : { ...map, areas: map.areas.filter((item) => item.id !== 6) });
+    if (/\/api\/mapas\/1\/areas\/\d+$/.test(url) && init?.method === "DELETE") {
+      const areaId = Number(url.split("/").pop());
+      currentMaps = currentMaps.map((map) => map.id !== 1 ? map : {
+        ...map,
+        areas: map.areas.filter((item) => item.id !== areaId),
+        areas_ocultas: [...(map.areas_ocultas ?? []), ...map.areas.filter((item) => item.id === areaId)],
+      });
+      return new Response(JSON.stringify({ ok: true }));
+    }
+    if (/\/api\/mapas\/1\/areas\/\d+\/restaurar$/.test(url) && init?.method === "POST") {
+      const areaId = Number(url.split("/").at(-2));
+      currentMaps = currentMaps.map((map) => map.id !== 1 ? map : {
+        ...map,
+        areas: [...map.areas, ...(map.areas_ocultas ?? []).filter((item) => item.id === areaId)],
+        areas_ocultas: map.areas_ocultas?.filter((item) => item.id !== areaId),
+      });
       return new Response(JSON.stringify({ ok: true }));
     }
     throw new Error(`Chamada inesperada: ${url}`);
@@ -133,6 +147,35 @@ describe("MapaEditorSection", () => {
     const removal = fetchMock.mock.calls.find(([input, init]) => String(input).endsWith("/api/mapas/1/areas/6") && init?.method === "DELETE");
     expect(JSON.parse(String(removal?.[1]?.body))).toMatchObject({ anterior: { nome: "Bloco D", destino_mapa_id: 3 } });
     expect(fetchMock.mock.calls.some(([input, init]) => String(input).endsWith("/api/blocos/4") && init?.method === "DELETE")).toBe(false);
+  });
+
+  it("remove qualquer tipo de área do desenho e permite restaurá-la", async () => {
+    const fetchMock = mockApi();
+    const confirm = vi.fn((message: string) => Boolean(message));
+    vi.stubGlobal("confirm", confirm);
+    render(<MapaEditorSection institutionId={1} />);
+
+    for (const item of areas) {
+      await selectArea(item.id);
+      if (item.id > 1) expect(screen.getByLabelText("Áreas removidas nesta vista")).toHaveValue("");
+      fireEvent.click(screen.getByRole("button", { name: "Remover do mapa" }));
+      await waitFor(() => expect(screen.queryByRole("button", { name: `Selecionar e mover ${item.nome}` })).not.toBeInTheDocument());
+      const deletion = fetchMock.mock.calls.find(([input, init]) =>
+        String(input).endsWith(`/api/mapas/1/areas/${item.id}`) && init?.method === "DELETE");
+      expect(JSON.parse(String(deletion?.[1]?.body))).toMatchObject({ anterior: { id: item.id, nome: item.nome } });
+    }
+
+    expect(confirm).toHaveBeenCalledTimes(areas.length);
+    expect(confirm.mock.calls[2][0]).toContain("ligação por esta área");
+    const removed = screen.getByLabelText("Áreas removidas nesta vista");
+    expect(within(removed).getAllByRole("option")).toHaveLength(areas.length + 1);
+    fireEvent.change(removed, { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Restaurar área" }));
+    expect(await screen.findByRole("button", { name: "Selecionar e mover Corredor" })).toBeInTheDocument();
+    const restoration = fetchMock.mock.calls.find(([input, init]) =>
+      String(input).endsWith("/api/mapas/1/areas/2/restaurar") && init?.method === "POST");
+    expect(JSON.parse(String(restoration?.[1]?.body))).toMatchObject({ anterior: { id: 2, nome: "Corredor" } });
+    expect(fetchMock.mock.calls.some(([input, init]) => String(input).includes("/api/blocos/") && init?.method === "DELETE")).toBe(false);
   });
 
   it("não adiciona um bloco com o mesmo nome de uma área existente na vista", async () => {

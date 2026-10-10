@@ -109,6 +109,7 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
   const [blockLoadError, setBlockLoadError] = useState(false);
   const [mapId, setMapId] = useState<number | null>(null);
   const [areaId, setAreaId] = useState<number | null>(null);
+  const [hiddenAreaId, setHiddenAreaId] = useState<number | null>(null);
   const [draft, setDraft] = useState<Adjustment | null>(null);
   const [destinationDraft, setDestinationDraft] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
@@ -136,6 +137,7 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
   const mapWidth = activeMap?.largura;
   const mapHeight = activeMap?.altura;
   const selectedArea = activeMap?.areas.find((area) => area.id === areaId) ?? null;
+  const hiddenArea = activeMap?.areas_ocultas?.find((area) => area.id === hiddenAreaId) ?? null;
   const saved = selectedArea ? adjustment(selectedArea) : null;
   const adjustmentDirty = Boolean(selectedArea && draft && !sameAdjustment(draft, saved));
   const destinationDirty = Boolean(hasMapDestination(selectedArea) && destinationDraft !== (selectedArea?.destino_mapa_id ?? null));
@@ -240,6 +242,7 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
     if (orphanedDraft) return;
     if (dirty || saving) { setError(creating ? "Conclua ou cancele a inclusão antes de escolher outra área." : "Salve ou cancele as alterações antes de escolher outra área."); return; }
     setAreaId(area?.id ?? null);
+    setHiddenAreaId(null);
     setDraft(area ? adjustment(area) : null);
     setDestinationDraft(area?.destino_mapa_id ?? null);
     setBase(null);
@@ -249,6 +252,7 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
     if (dirty || saving || orphanedDraft) return;
     setMapId(id);
     setAreaId(null);
+    setHiddenAreaId(null);
     setDraft(null);
     setBase(null);
     setError("");
@@ -361,9 +365,11 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
     }
   };
 
-  const removeBlock = async () => {
-    if (!activeMap || !selectedArea || selectedArea.tipo !== "BLOCO" || (selectedArea.categoria ?? "AMBIENTE") !== "AMBIENTE" || dirty || saving || conflict ||
-      !window.confirm(`Remover “${selectedArea.nome.replace(/\n/g, " ")}” somente deste mapa? O cadastro do bloco e suas salas serão preservados.`)) return;
+  const removeArea = async () => {
+    if (!activeMap || !selectedArea || dirty || saving || conflict ||
+      !window.confirm(`Remover “${selectedArea.nome.replace(/\n/g, " ")}” somente desta vista? Cadastros de blocos, salas e setores serão preservados.${
+        selectedArea.destino_mapa_id || selectedArea.categoria === "ACESSO" || selectedArea.categoria === "ESCADA"
+          ? " A ligação por esta área com outra vista ficará indisponível até restaurá-la." : ""}`)) return;
     setSaving(true);
     setError("");
     try {
@@ -376,13 +382,34 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
       setAreaId(null);
       setDraft(null);
       setDestinationDraft(null);
+      setHiddenAreaId(selectedArea.id);
       await loadMaps(activeMap.id, null);
-      toast.success("Área removida do mapa. O bloco e suas salas foram preservados.");
+      toast.success("Área removida desta vista. Você pode restaurá-la em Áreas removidas.");
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 409) {
         setConflict(true);
         setError("Esta área mudou desde que você a abriu. Atualize antes de removê-la.");
       } else setError(cause instanceof Error ? cause.message : "Não foi possível remover a área do mapa.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const restoreArea = async () => {
+    if (!activeMap || !hiddenArea || dirty || saving || conflict) return;
+    setSaving(true);
+    setError("");
+    try {
+      await apiFetch(`/api/mapas/${activeMap.id}/areas/${hiddenArea.id}/restaurar`, {
+        method: "POST", body: JSON.stringify({ anterior: hiddenArea }),
+      });
+      setHiddenAreaId(null);
+      await loadMaps(activeMap.id, hiddenArea.id);
+      toast.success("Área restaurada nesta vista.");
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 409) {
+        setError("Não foi possível restaurar: a área mudou ou há conflito de nome, destino ou limite da vista. Atualize o mapa e tente novamente.");
+      } else setError(cause instanceof Error ? cause.message : "Não foi possível restaurar a área.");
     } finally {
       setSaving(false);
     }
@@ -496,7 +523,7 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
   return <div className="school-map mapa-editor space-y-5 animate-fade-in">
     <div>
       <h2 className="font-heading text-2xl font-bold text-foreground">Editar mapa</h2>
-      <p className="mt-1 text-sm text-muted-foreground">Ajuste todas as áreas, adicione ou remova blocos do desenho e escolha qual vista abre ao clicar em blocos, escadas e acessos.</p>
+      <p className="mt-1 text-sm text-muted-foreground">Ajuste ou remova qualquer área do desenho, adicione blocos e escolha qual vista abre ao clicar em blocos, escadas e acessos.</p>
     </div>
     <div className="glass-card space-y-4 rounded-2xl p-4 sm:p-6">
       <div className="grid gap-4 sm:grid-cols-2">
@@ -546,6 +573,17 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
         {!maps.some((map) => map.id !== activeMap.id && map.ativo !== false) && <p role="alert" className="text-sm text-destructive sm:col-span-2">É necessário ter outra vista ativa para definir o destino deste bloco.</p>}
         <Button type="submit" className="w-fit gap-2 sm:col-span-2" disabled={saving || !newBlockId || !newDestinationId}><Plus className="h-4 w-4" />{saving ? "Adicionando..." : "Criar área do bloco"}</Button>
       </form>}
+      {activeMap && (activeMap.areas_ocultas?.length ?? 0) > 0 && <div className="grid gap-3 border-t pt-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+        <label className="block text-sm font-medium text-foreground">Áreas removidas nesta vista
+          <select className="mt-1 block h-11 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            value={hiddenArea?.id ?? ""} disabled={dirty || saving || loading || conflict || orphanedDraft}
+            onChange={(event) => { chooseArea(null); setHiddenAreaId(Number(event.target.value) || null); }}>
+            <option value="">Escolha uma área para restaurar</option>
+            {activeMap.areas_ocultas?.map((area) => <option key={area.id} value={area.id}>{area.nome.replace(/\n/g, " ")} · {categoryName(area)}</option>)}
+          </select>
+        </label>
+        <Button type="button" variant="outline" disabled={!hiddenArea || dirty || saving || loading || conflict || orphanedDraft} onClick={() => void restoreArea()}>Restaurar área</Button>
+      </div>}
       <p id="mapa-editor-help" className="text-sm text-muted-foreground">Clique ou toque numa área e arraste para mover. Puxe uma das quatro alças para mudar o tamanho. Na lista, selecione áreas pequenas. Pelo teclado, as setas movem a área selecionada; nas alças, redimensionam. Shift acelera o ajuste.</p>
       {activeMap && <div className="school-map__frame overflow-hidden rounded-xl">
         <div className="school-map__frame-heading flex flex-wrap items-center justify-between gap-2 px-4 py-3">
@@ -625,7 +663,7 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
         <p className="text-sm text-muted-foreground">{selectedArea ? <><strong className="text-foreground">{selectedArea.nome.replace(/\n/g, " ")}</strong> · {categoryName(selectedArea)}</> : "Escolha uma área para começar."}</p>
         <div className="flex flex-wrap gap-2">
           {(adjustmentDirty || destinationDirty || conflict) && <Button type="button" variant="outline" onClick={discard} disabled={saving || loading} className="gap-2"><X />{conflict ? "Descartar e atualizar" : destinationDirty ? "Cancelar alteração" : "Cancelar ajuste"}</Button>}
-          {selectedArea?.tipo === "BLOCO" && (selectedArea.categoria ?? "AMBIENTE") === "AMBIENTE" && <Button type="button" variant="outline" className="gap-2 text-destructive" disabled={dirty || saving || loading || conflict} onClick={() => void removeBlock()}><Trash2 className="h-4 w-4" />Remover do mapa</Button>}
+          {selectedArea && <Button type="button" variant="outline" className="gap-2 text-destructive" disabled={dirty || saving || loading || conflict} onClick={() => void removeArea()}><Trash2 className="h-4 w-4" />Remover do mapa</Button>}
           <Button type="button" onClick={() => void save()} disabled={!adjustmentDirty || saving || loading || conflict} className="gap-2"><Save />{saving ? "Salvando..." : "Salvar ajuste"}</Button>
         </div>
       </div>

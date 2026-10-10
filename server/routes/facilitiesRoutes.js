@@ -5,6 +5,7 @@ export const registerFacilitiesRoutes = (app, controller, { requireRole }) => {
   app.post("/api/mapas/:mapId/areas", requireRole("CPD"), controller.createMapBlockArea);
   app.patch("/api/mapas/:mapId/areas/:areaId", requireRole("CPD"), controller.updateMapBlockArea);
   app.delete("/api/mapas/:mapId/areas/:areaId", requireRole("CPD"), controller.deleteMapBlockArea);
+  app.post("/api/mapas/:mapId/areas/:areaId/restaurar", requireRole("CPD"), controller.restoreMapArea);
   app.patch("/api/mapas/:mapId/areas/:areaId/ajuste", requireRole("CPD"), controller.updateMapAreaAdjustment);
 
   app.get("/api/blocos", controller.listBlocks);

@@ -346,14 +346,14 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
       `SELECT a.id, a.mapa_id, a.tipo, a.nome, a.caminho_svg, a.bloco_id, a.sala_id, a.setor_id,
               a.rotulo_x::float8 AS rotulo_x, a.rotulo_y::float8 AS rotulo_y,
               a.ajuste_x, a.ajuste_y, a.escala_x, a.escala_y,
-              a.categoria, a.destino_mapa_id, a.descricao,
+              a.categoria, a.destino_mapa_id, a.descricao, a.excluido_cpd,
               b.nome AS bloco_nome, s.nome AS sala_nome, st.nome AS setor_nome
          FROM mapa_areas a
          JOIN mapas m ON m.id = a.mapa_id AND m.instituicao_id = a.instituicao_id
          LEFT JOIN blocos b ON b.id = a.bloco_id AND b.instituicao_id = a.instituicao_id
          LEFT JOIN salas s ON s.id = a.sala_id AND s.instituicao_id = a.instituicao_id
          LEFT JOIN setores st ON st.id = a.setor_id AND st.instituicao_id = a.instituicao_id
-        WHERE a.instituicao_id = ? AND a.excluido_cpd = FALSE ${authenticated ? "" : "AND m.ativo = TRUE"}
+        WHERE a.instituicao_id = ? ${authenticated ? "" : "AND a.excluido_cpd = FALSE AND m.ativo = TRUE"}
         ORDER BY a.id`,
       [institutionId]
     );
@@ -361,7 +361,10 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
       ...map,
       ativo: Boolean(map.ativo),
       visao_geral: Boolean(map.visao_geral),
-      areas: areas.filter((area) => Number(area.mapa_id) === Number(map.id)),
+      areas: areas.filter((area) => Number(area.mapa_id) === Number(map.id) && !area.excluido_cpd)
+        .map(({ excluido_cpd, ...area }) => area),
+      ...(authenticated ? { areas_ocultas: areas.filter((area) => Number(area.mapa_id) === Number(map.id) && area.excluido_cpd)
+        .map(({ excluido_cpd, ...area }) => area) } : {}),
     }));
   };
 
@@ -544,18 +547,24 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
     }
   };
 
-  const activeMapAreaExists = async ({ institutionId, mapId, areaId, blockOnly = false }) => {
-    const categoryFilter = blockOnly
-      ? "a.tipo = 'BLOCO' AND a.categoria = 'AMBIENTE'"
-      : "(a.tipo = 'BLOCO' OR a.categoria IN ('ACESSO', 'ESCADA') OR a.destino_mapa_id IS NOT NULL)";
+  const mapAreaExists = async ({ institutionId, mapId, areaId }) => {
     const [rows] = await db.query(
       `SELECT a.id FROM mapa_areas a JOIN mapas m ON m.id = a.mapa_id AND m.instituicao_id = a.instituicao_id
-       WHERE a.id = ? AND a.mapa_id = ? AND a.instituicao_id = ? AND ${categoryFilter}
-         AND a.excluido_cpd = FALSE LIMIT 1`,
+       WHERE a.id = ? AND a.mapa_id = ? AND a.instituicao_id = ? LIMIT 1`,
       [areaId, mapId, institutionId]
     );
     return rows.length > 0;
   };
+
+  const mapAreaSnapshotCondition = `a.tipo = ? AND a.categoria = ? AND a.nome = ? AND a.caminho_svg = ?
+    AND a.bloco_id IS NOT DISTINCT FROM ? AND a.sala_id IS NOT DISTINCT FROM ?
+    AND a.setor_id IS NOT DISTINCT FROM ? AND a.destino_mapa_id IS NOT DISTINCT FROM ?
+    AND a.rotulo_x::float8 IS NOT DISTINCT FROM ? AND a.rotulo_y::float8 IS NOT DISTINCT FROM ?
+    AND a.descricao IS NOT DISTINCT FROM ?
+    AND a.ajuste_x = ? AND a.ajuste_y = ? AND a.escala_x = ? AND a.escala_y = ?`;
+  const mapAreaSnapshotValues = (area) => [area.tipo, area.categoria, area.nome, area.caminho_svg,
+    area.bloco_id, area.sala_id, area.setor_id, area.destino_mapa_id, area.rotulo_x,
+    area.rotulo_y, area.descricao, area.ajuste_x, area.ajuste_y, area.escala_x, area.escala_y];
 
   const updateMapBlockArea = async ({ institutionId, mapId, areaId, destinationId, previous }) => {
     const [destinations] = await db.query(
@@ -575,24 +584,44 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
         previous.nome, previous.caminho_svg, previous.bloco_id, previous.destino_mapa_id]
     );
     if (result.affectedRows) return { ok: true };
-    return await activeMapAreaExists({ institutionId, mapId, areaId }) ? { conflict: true } : { notFound: true };
+    return await mapAreaExists({ institutionId, mapId, areaId }) ? { conflict: true } : { notFound: true };
   };
 
   const deleteMapBlockArea = async ({ institutionId, mapId, areaId, previous }) => {
     const [result] = await db.query(
       `UPDATE mapa_areas a SET editado_cpd = TRUE, excluido_cpd = TRUE, updated_at = CURRENT_TIMESTAMP
        WHERE a.id = ? AND a.mapa_id = ? AND a.instituicao_id = ?
-         AND a.tipo = 'BLOCO' AND a.categoria = 'AMBIENTE' AND a.excluido_cpd = FALSE
-         AND a.nome = ? AND a.caminho_svg = ? AND a.bloco_id IS NOT DISTINCT FROM ?
-         AND a.destino_mapa_id IS NOT DISTINCT FROM ?
-         AND a.ajuste_x = ? AND a.ajuste_y = ? AND a.escala_x = ? AND a.escala_y = ?
+         AND a.excluido_cpd = FALSE AND ${mapAreaSnapshotCondition}
          AND EXISTS (SELECT 1 FROM mapas m WHERE m.id = a.mapa_id AND m.instituicao_id = a.instituicao_id)`,
-      [areaId, mapId, institutionId, previous.nome, previous.caminho_svg, previous.bloco_id,
-        previous.destino_mapa_id,
-        previous.ajuste_x, previous.ajuste_y, previous.escala_x, previous.escala_y]
+      [areaId, mapId, institutionId, ...mapAreaSnapshotValues(previous)]
     );
     if (result.affectedRows) return { ok: true };
-    return await activeMapAreaExists({ institutionId, mapId, areaId, blockOnly: true }) ? { conflict: true } : { notFound: true };
+    return await mapAreaExists({ institutionId, mapId, areaId }) ? { conflict: true } : { notFound: true };
+  };
+
+  const restoreMapArea = async ({ institutionId, mapId, areaId, previous }) => {
+    const [result] = await db.query(
+      `UPDATE mapa_areas a SET editado_cpd = TRUE, excluido_cpd = FALSE, updated_at = CURRENT_TIMESTAMP
+       WHERE a.id = ? AND a.mapa_id = ? AND a.instituicao_id = ?
+         AND a.excluido_cpd = TRUE AND ${mapAreaSnapshotCondition}
+         AND EXISTS (SELECT 1 FROM mapas m WHERE m.id = a.mapa_id AND m.instituicao_id = a.instituicao_id)
+         AND (a.destino_mapa_id IS NULL OR EXISTS (
+           SELECT 1 FROM mapas destino WHERE destino.id = a.destino_mapa_id
+             AND destino.instituicao_id = a.instituicao_id AND destino.ativo = TRUE))
+         AND NOT EXISTS (SELECT 1 FROM mapa_areas outra WHERE outra.mapa_id = a.mapa_id
+           AND outra.instituicao_id = a.instituicao_id AND outra.excluido_cpd = FALSE
+           AND LOWER(outra.nome) = LOWER(a.nome))
+         AND (SELECT COUNT(*) FROM mapa_areas visivel WHERE visivel.mapa_id = a.mapa_id
+           AND visivel.instituicao_id = a.instituicao_id AND visivel.excluido_cpd = FALSE) < 500`,
+      [areaId, mapId, institutionId, ...mapAreaSnapshotValues(previous)]
+    );
+    if (result.affectedRows) return { ok: true };
+    const [areas] = await db.query(
+      `SELECT a.id FROM mapa_areas a JOIN mapas m ON m.id = a.mapa_id AND m.instituicao_id = a.instituicao_id
+       WHERE a.id = ? AND a.mapa_id = ? AND a.instituicao_id = ? LIMIT 1`,
+      [areaId, mapId, institutionId]
+    );
+    return areas.length ? { conflict: true } : { notFound: true };
   };
 
   const updateMapAreaAdjustment = async ({ institutionId, mapId, areaId, adjustment, previous }) => {
@@ -634,6 +663,7 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
     listRoomOccupations,
     listRooms,
     listMaps,
+    restoreMapArea,
     countActiveSchedules,
     saveMap,
     updateMapAreaAdjustment,

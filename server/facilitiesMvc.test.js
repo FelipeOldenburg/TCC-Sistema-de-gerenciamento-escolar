@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createFacilitiesController } from "./controllers/facilitiesController.js";
 import { createFacilitiesModel } from "./models/facilitiesModel.js";
+import { createContentModel } from "./models/contentModel.js";
 import { registerFacilitiesRoutes } from "./routes/facilitiesRoutes.js";
 
 const routes = [];
@@ -9,7 +10,7 @@ const app = Object.fromEntries(
 );
 const controller = Object.fromEntries(
   [
-    "listMaps", "saveMap", "createMapBlockArea", "updateMapBlockArea", "deleteMapBlockArea", "updateMapAreaAdjustment",
+    "listMaps", "saveMap", "createMapBlockArea", "updateMapBlockArea", "deleteMapBlockArea", "restoreMapArea", "updateMapAreaAdjustment",
     "listBlocks", "createBlock", "updateBlock", "deleteBlock", "listRooms", "listRoomOccupations", "getRoom",
     "getRoomOccupation", "listRoomChanges", "createRoom", "updateRoom", "deleteRoom",
   ].map((name) => [name, () => {}])
@@ -30,6 +31,7 @@ assert.deepEqual(
     "post /api/mapas/:mapId/areas",
     "patch /api/mapas/:mapId/areas/:areaId",
     "delete /api/mapas/:mapId/areas/:areaId",
+    "post /api/mapas/:mapId/areas/:areaId/restaurar",
     "patch /api/mapas/:mapId/areas/:areaId/ajuste",
     "get /api/blocos",
     "post /api/blocos",
@@ -45,7 +47,7 @@ assert.deepEqual(
     "delete /api/salas/:id",
   ]
 );
-assert.equal(routes.filter(([, , middleware]) => middleware === cpdOnly).length, 13);
+assert.equal(routes.filter(([, , middleware]) => middleware === cpdOnly).length, 14);
 
 let savedRoom;
 let savedSoftwareLink;
@@ -422,6 +424,37 @@ assert.deepEqual(
   [listedMap.areas[0].ajuste_x, listedMap.areas[0].ajuste_y, listedMap.areas[0].escala_x, listedMap.areas[0].escala_y],
   [0, 0, 1, 1]
 );
+const hiddenMapQueries = [];
+const hiddenMapModel = createFacilitiesModel({
+  db: { query: async (sql, params) => {
+    hiddenMapQueries.push({ sql, params });
+    if (sql.includes("FROM mapas m")) return [[{ id: 12, nome: "Mapa", ativo: true }]];
+    const rows = [
+      { ...detailedMap.map.areas[0], id: 31, mapa_id: 12, excluido_cpd: false },
+      { ...detailedMap.map.areas[0], id: 32, mapa_id: 12, nome: "Escada", tipo: "OUTRO", categoria: "ESCADA", excluido_cpd: true },
+    ];
+    return [sql.includes("a.excluido_cpd = FALSE") ? rows.filter((row) => !row.excluido_cpd) : rows];
+  } }, dayOrderSql: "h.dia",
+});
+const [cpdMap] = await hiddenMapModel.listMaps({ institutionId: 2, authenticated: true });
+assert.deepEqual(cpdMap.areas.map((area) => area.id), [31]);
+assert.deepEqual(cpdMap.areas_ocultas.map((area) => area.id), [32]);
+assert.ok(!hiddenMapQueries.at(-1).sql.includes("a.excluido_cpd = FALSE"));
+const [publicMap] = await hiddenMapModel.listMaps({ institutionId: 2, authenticated: false });
+assert.equal("areas_ocultas" in publicMap, false);
+assert.deepEqual(publicMap.areas.map((area) => area.id), [31]);
+assert.match(hiddenMapQueries.at(-1).sql, /a.excluido_cpd = FALSE/);
+const contentQueries = [];
+const contentModel = createContentModel({ db: { query: async (sql, params) => {
+  contentQueries.push({ sql, params });
+  return [[{ id: 31, nome: "Área" }]];
+} } });
+await contentModel.listSectors({ institutionId: 2, includeInactive: false });
+assert.match(contentQueries.at(-1).sql, /a.excluido_cpd = FALSE/);
+await contentModel.resolveManifestationContext({ institutionId: 2,
+  manifestation: { setor_id: null, sala_id: null, horario_id: null, mapa_area_id: 31 } });
+assert.match(contentQueries.at(-1).sql, /a.excluido_cpd = FALSE/);
+assert.deepEqual(contentQueries.at(-1).params, [31, 2]);
 
 const adjustmentQueries = [];
 let affectedRows = 1;
@@ -455,7 +488,8 @@ const blockArea = {
   nome: "Bloco D", caminho_svg: "M 10 10 H 60 V 50 H 10 Z", bloco_id: 4,
   destino_mapa_id: 13, rotulo_x: 35, rotulo_y: 30,
 };
-const areaSnapshot = { ...blockArea, ajuste_x: 0, ajuste_y: 0, escala_x: 1, escala_y: 1 };
+const areaSnapshot = { ...blockArea, tipo: "BLOCO", categoria: "AMBIENTE", sala_id: null, setor_id: null,
+  descricao: null, ajuste_x: 0, ajuste_y: 0, escala_x: 1, escala_y: 1 };
 let areaCall;
 let areaOutcome = { id: 41 };
 const areaController = createFacilitiesController({
@@ -464,6 +498,7 @@ const areaController = createFacilitiesController({
     createMapBlockArea: async (args) => { areaCall = args; return areaOutcome; },
     updateMapBlockArea: async (args) => { areaCall = args; return areaOutcome; },
     deleteMapBlockArea: async (args) => { areaCall = args; return areaOutcome; },
+    restoreMapArea: async (args) => { areaCall = args; return areaOutcome; },
   },
   httpError: (statusCode, message) => Object.assign(new Error(message), { statusCode }),
   isForeignKeyError: () => false, positiveInt: () => 1,
@@ -503,16 +538,27 @@ await areaController.deleteMapBlockArea({ ...areaRequest, body: { anterior: area
 assert.equal(receivedError, undefined);
 assert.deepEqual(areaCall, { institutionId: 2, mapId: 12, areaId: 41, previous: areaSnapshot });
 receivedError = undefined;
+await areaController.restoreMapArea({ ...areaRequest, body: { anterior: areaSnapshot } }, mapResponse,
+  (error) => { receivedError = error; });
+assert.equal(receivedError, undefined);
+assert.deepEqual(areaCall, { institutionId: 2, mapId: 12, areaId: 41, previous: areaSnapshot });
+receivedError = undefined;
 await areaController.deleteMapBlockArea({ ...areaRequest,
   body: { anterior: { ...areaSnapshot, escala_x: "1" } } }, mapResponse,
 (error) => { receivedError = error; });
 assert.equal(receivedError?.statusCode, 400);
+receivedError = undefined;
+await areaController.deleteMapBlockArea({ ...areaRequest,
+  body: { anterior: { ...areaSnapshot, tipo: "OUTRO", bloco_id: null, sala_id: null } } }, mapResponse,
+  (error) => { receivedError = error; });
+assert.equal(receivedError, undefined, "O CPD pode ocultar uma área que não seja bloco.");
 
 const editorQueries = [];
 const editorSteps = [];
 let duplicateArea = [{ id: 41, tipo: "BLOCO", categoria: "AMBIENTE", excluido_cpd: true }];
 let destinationAvailable = true;
 let editorAffected = 1;
+let editorTargetExists = true;
 const editorModel = createFacilitiesModel({
   db: {
     getConnection: async () => ({
@@ -535,7 +581,7 @@ const editorModel = createFacilitiesModel({
       editorQueries.push({ sql, params });
       if (sql.includes("SELECT id FROM mapas")) return [destinationAvailable ? [{ id: 13 }] : []];
       if (sql.includes("UPDATE mapa_areas")) return [{ affectedRows: editorAffected }];
-      return [[{ id: 41 }]];
+      return [editorTargetExists ? [{ id: 41 }] : []];
     },
   }, dayOrderSql: "h.dia",
 });
@@ -563,6 +609,23 @@ assert.deepEqual(await editorModel.deleteMapBlockArea({ institutionId: 2, mapId:
   previous: areaSnapshot }), { ok: true });
 assert.match(editorQueries.at(-1).sql, /editado_cpd = TRUE, excluido_cpd = TRUE/);
 assert.ok(!editorQueries.at(-1).sql.includes("DELETE FROM"));
+assert.ok(!editorQueries.at(-1).sql.includes("a.tipo = 'BLOCO'"));
+assert.match(editorQueries.at(-1).sql, /a.sala_id IS NOT DISTINCT FROM \?/);
+assert.match(editorQueries.at(-1).sql, /a.rotulo_x::float8 IS NOT DISTINCT FROM \?/);
+assert.deepEqual(editorQueries.at(-1).params, [41, 12, 2,
+  "BLOCO", "AMBIENTE", "Bloco D", blockArea.caminho_svg, 4, null, null, 13, 35, 30, null, 0, 0, 1, 1]);
+assert.deepEqual(await editorModel.restoreMapArea({ institutionId: 2, mapId: 12, areaId: 41,
+  previous: areaSnapshot }), { ok: true });
+assert.match(editorQueries.at(-1).sql, /excluido_cpd = TRUE AND/);
+assert.match(editorQueries.at(-1).sql, /destino.ativo = TRUE/);
+assert.match(editorQueries.at(-1).sql, /LOWER\(outra.nome\) = LOWER\(a.nome\)/);
+assert.deepEqual(editorQueries.at(-1).params, editorQueries.at(-2).params);
+editorAffected = 0;
+assert.deepEqual(await editorModel.restoreMapArea({ institutionId: 2, mapId: 12, areaId: 41,
+  previous: areaSnapshot }), { conflict: true });
+editorTargetExists = false;
+assert.deepEqual(await editorModel.restoreMapArea({ institutionId: 2, mapId: 12, areaId: 41,
+  previous: areaSnapshot }), { notFound: true });
 
 const fullMapArea = { id: 31, tipo: "OUTRO", nome: "Bloco D", caminho_svg: blockArea.caminho_svg,
   bloco_id: null, sala_id: null, setor_id: null, rotulo_x: 35, rotulo_y: 30,
