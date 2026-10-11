@@ -210,7 +210,7 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
                     onClickCapture={(event) => { if (drag.current?.moved) { event.stopPropagation(); drag.current = null; } }}>
                     <title>{mapTitle(activeMap)}</title><desc>{activeMap.descricao || "Selecione um ambiente ou acesso. Use os controles para ampliar e mover o mapa."}</desc>
                     {activeMap.areas.map((area) => {
-                      const interactive = area.categoria !== "CIRCULACAO" && area.categoria !== "PATIO";
+                      const interactive = area.destino_mapa_id != null || (area.categoria !== "CIRCULACAO" && area.categoria !== "PATIO");
                       const selected = area.id === activeArea?.id;
                       const box = bounds[area.id];
                       const labelPosition = area.rotulo_x != null && area.rotulo_y != null
@@ -220,7 +220,7 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
                       const label: string[] = [];
                       const showOnOverview = area.tipo === "BLOCO" ||
                         (canvasSize.width >= 480 && area.categoria === "PATIO") ||
-                        ((area.categoria ?? "AMBIENTE") === "AMBIENTE" && /^(Museu|Ginásio)/i.test(area.nome));
+                        (area.tipo === "OUTRO" && (area.categoria ?? "AMBIENTE") === "AMBIENTE");
                       const labelEligible = !activeMap.visao_geral || showOnOverview || selected;
                       let showLabel = false;
                       for (const name of labelEligible ? [area.nome, compactName] : []) {
@@ -269,7 +269,7 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
               )}
               {activeMap?.descricao && <p className="text-sm leading-relaxed text-muted-foreground">{activeMap.descricao}</p>}
               {activeMap && <details className="rounded-lg border p-3 text-sm"><summary className="cursor-pointer font-medium">Ambientes e acessos desta vista</summary>
-                <div className="mt-2 flex flex-wrap gap-2">{activeMap.areas.filter((area) => area.categoria !== "CIRCULACAO" && area.categoria !== "PATIO").map((area) => (
+                <div className="mt-2 flex flex-wrap gap-2">{activeMap.areas.filter((area) => area.destino_mapa_id != null || (area.categoria !== "CIRCULACAO" && area.categoria !== "PATIO")).map((area) => (
                   <Button key={area.id} size="sm" variant="outline" onClick={() => map.selectArea(area)} className="h-auto min-h-9 whitespace-normal text-left">{area.nome.replace(/\n/g, " ")}</Button>
                 ))}</div>
               </details>}

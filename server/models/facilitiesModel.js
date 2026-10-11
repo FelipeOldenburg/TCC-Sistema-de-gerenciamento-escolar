@@ -493,21 +493,27 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
       if (area.rotulo_x > maps[0].largura || area.rotulo_y > maps[0].altura) {
         await conn.rollback(); return { invalidCoordinates: true };
       }
-      const [blocks] = await conn.query(
-        "SELECT id FROM blocos WHERE id = ? AND instituicao_id = ? LIMIT 1", [area.bloco_id, institutionId]
-      );
-      const [destinations] = await conn.query(
-        "SELECT id FROM mapas WHERE id = ? AND instituicao_id = ? AND ativo = TRUE LIMIT 1",
-        [area.destino_mapa_id, institutionId]
-      );
-      if (!blocks.length || !destinations.length) { await conn.rollback(); return { invalidReference: true }; }
+      if (area.bloco_id !== null) {
+        const [blocks] = await conn.query(
+          "SELECT id FROM blocos WHERE id = ? AND instituicao_id = ? LIMIT 1", [area.bloco_id, institutionId]
+        );
+        if (!blocks.length) { await conn.rollback(); return { invalidReference: true }; }
+      }
+      if (area.destino_mapa_id !== null) {
+        const [destinations] = await conn.query(
+          "SELECT id FROM mapas WHERE id = ? AND instituicao_id = ? AND ativo = TRUE LIMIT 1",
+          [area.destino_mapa_id, institutionId]
+        );
+        if (!destinations.length) { await conn.rollback(); return { invalidReference: true }; }
+      }
+      const type = area.bloco_id === null ? "OUTRO" : "BLOCO";
       const [duplicates] = await conn.query(
         `SELECT id, tipo, categoria, excluido_cpd FROM mapa_areas
           WHERE mapa_id = ? AND instituicao_id = ? AND LOWER(nome) = LOWER(?)
           LIMIT 2 FOR UPDATE`, [mapId, institutionId, area.nome]
       );
       if (duplicates.length > 1 || duplicates.some((row) => !row.excluido_cpd ||
-          row.tipo !== "BLOCO" || row.categoria !== "AMBIENTE")) {
+          row.tipo !== type || row.categoria !== area.categoria)) {
         await conn.rollback(); return { conflict: true };
       }
       const [counts] = await conn.query(
@@ -519,21 +525,21 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
       if (duplicates.length) {
         id = duplicates[0].id;
         await conn.query(
-          `UPDATE mapa_areas SET tipo = 'BLOCO', nome = ?, caminho_svg = ?, bloco_id = ?, sala_id = NULL,
-             setor_id = NULL, rotulo_x = ?, rotulo_y = ?, categoria = 'AMBIENTE', destino_mapa_id = ?,
+          `UPDATE mapa_areas SET tipo = ?, nome = ?, caminho_svg = ?, bloco_id = ?, sala_id = NULL,
+             setor_id = NULL, rotulo_x = ?, rotulo_y = ?, categoria = ?, destino_mapa_id = ?,
              descricao = ?, ajuste_x = 0, ajuste_y = 0, escala_x = 1, escala_y = 1,
              editado_cpd = TRUE, excluido_cpd = FALSE
            WHERE id = ? AND mapa_id = ? AND instituicao_id = ?`,
-          [area.nome, area.caminho_svg, area.bloco_id, area.rotulo_x, area.rotulo_y,
-            area.destino_mapa_id, area.descricao, id, mapId, institutionId]
+          [type, area.nome, area.caminho_svg, area.bloco_id, area.rotulo_x, area.rotulo_y,
+            area.categoria, area.destino_mapa_id, area.descricao, id, mapId, institutionId]
         );
       } else {
         const [result] = await conn.query(
           `INSERT INTO mapa_areas (instituicao_id, mapa_id, tipo, nome, caminho_svg, bloco_id,
              rotulo_x, rotulo_y, categoria, destino_mapa_id, descricao, editado_cpd)
-           VALUES (?, ?, 'BLOCO', ?, ?, ?, ?, ?, 'AMBIENTE', ?, ?, TRUE) RETURNING id`,
-          [institutionId, mapId, area.nome, area.caminho_svg, area.bloco_id,
-            area.rotulo_x, area.rotulo_y, area.destino_mapa_id, area.descricao]
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE) RETURNING id`,
+          [institutionId, mapId, type, area.nome, area.caminho_svg, area.bloco_id,
+            area.rotulo_x, area.rotulo_y, area.categoria, area.destino_mapa_id, area.descricao]
         );
         id = result.insertId;
       }
@@ -567,21 +573,20 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
     area.rotulo_y, area.descricao, area.ajuste_x, area.ajuste_y, area.escala_x, area.escala_y];
 
   const updateMapBlockArea = async ({ institutionId, mapId, areaId, destinationId, previous }) => {
-    const [destinations] = await db.query(
-      "SELECT id FROM mapas WHERE id = ? AND instituicao_id = ? AND ativo = TRUE LIMIT 1",
-      [destinationId, institutionId]
-    );
-    if (!destinations.length) return { invalidReference: true };
+    if (destinationId !== null) {
+      const [destinations] = await db.query(
+        "SELECT id FROM mapas WHERE id = ? AND instituicao_id = ? AND ativo = TRUE LIMIT 1",
+        [destinationId, institutionId]
+      );
+      if (!destinations.length) return { invalidReference: true };
+    }
     const [result] = await db.query(
       `UPDATE mapa_areas a SET destino_mapa_id = ?, editado_cpd = TRUE, updated_at = CURRENT_TIMESTAMP
        WHERE a.id = ? AND a.mapa_id = ? AND a.instituicao_id = ?
-         AND (a.tipo = 'BLOCO' OR a.categoria IN ('ACESSO', 'ESCADA') OR a.destino_mapa_id IS NOT NULL)
          AND a.excluido_cpd = FALSE
-         AND a.nome = ? AND a.caminho_svg = ? AND a.bloco_id IS NOT DISTINCT FROM ?
-         AND a.destino_mapa_id IS NOT DISTINCT FROM ?
+         AND ${mapAreaSnapshotCondition}
          AND EXISTS (SELECT 1 FROM mapas m WHERE m.id = a.mapa_id AND m.instituicao_id = a.instituicao_id)`,
-      [destinationId, areaId, mapId, institutionId,
-        previous.nome, previous.caminho_svg, previous.bloco_id, previous.destino_mapa_id]
+      [destinationId, areaId, mapId, institutionId, ...mapAreaSnapshotValues(previous)]
     );
     if (result.affectedRows) return { ok: true };
     return await mapAreaExists({ institutionId, mapId, areaId }) ? { conflict: true } : { notFound: true };
@@ -624,20 +629,21 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
     return areas.length ? { conflict: true } : { notFound: true };
   };
 
-  const updateMapAreaAdjustment = async ({ institutionId, mapId, areaId, adjustment, previous }) => {
-    const [result] = await db.query(
-      `UPDATE mapa_areas a
+  const mapAreaAdjustmentSql = `UPDATE mapa_areas a
           SET ajuste_x = ?, ajuste_y = ?, escala_x = ?, escala_y = ?,
               editado_cpd = TRUE, updated_at = CURRENT_TIMESTAMP
         WHERE a.id = ? AND a.mapa_id = ? AND a.instituicao_id = ?
           AND a.excluido_cpd = FALSE
           AND a.caminho_svg = ?
           AND a.ajuste_x = ? AND a.ajuste_y = ? AND a.escala_x = ? AND a.escala_y = ?
-          AND EXISTS (SELECT 1 FROM mapas m WHERE m.id = a.mapa_id AND m.instituicao_id = a.instituicao_id)`,
-      [adjustment.ajuste_x, adjustment.ajuste_y, adjustment.escala_x, adjustment.escala_y,
+          AND EXISTS (SELECT 1 FROM mapas m WHERE m.id = a.mapa_id AND m.instituicao_id = a.instituicao_id)`;
+  const mapAreaAdjustmentValues = ({ institutionId, mapId, areaId, adjustment, previous }) =>
+    [adjustment.ajuste_x, adjustment.ajuste_y, adjustment.escala_x, adjustment.escala_y,
         areaId, mapId, institutionId, previous.caminho_svg,
-        previous.ajuste_x, previous.ajuste_y, previous.escala_x, previous.escala_y]
-    );
+        previous.ajuste_x, previous.ajuste_y, previous.escala_x, previous.escala_y];
+  const updateMapAreaAdjustment = async ({ institutionId, mapId, areaId, adjustment, previous }) => {
+    const [result] = await db.query(mapAreaAdjustmentSql,
+      mapAreaAdjustmentValues({ institutionId, mapId, areaId, adjustment, previous }));
     if (result.affectedRows) return { adjustment };
     const [areas] = await db.query(
       `SELECT a.id FROM mapa_areas a
@@ -646,6 +652,39 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
       [areaId, mapId, institutionId]
     );
     return areas.length ? { conflict: true } : { notFound: true };
+  };
+
+  const updateMapAreaAdjustments = async ({ institutionId, mapId, adjustments }) => {
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [maps] = await conn.query(
+        "SELECT id FROM mapas WHERE id = ? AND instituicao_id = ? FOR UPDATE", [mapId, institutionId]
+      );
+      if (!maps.length) { await conn.rollback(); return { notFound: true }; }
+      for (const item of adjustments) {
+        const areaId = item.area_id;
+        const adjustment = { ajuste_x: item.ajuste_x, ajuste_y: item.ajuste_y,
+          escala_x: item.escala_x, escala_y: item.escala_y };
+        const [result] = await conn.query(mapAreaAdjustmentSql,
+          mapAreaAdjustmentValues({ institutionId, mapId, areaId, adjustment, previous: item.anterior }));
+        if (!result.affectedRows) {
+          const [areas] = await conn.query(
+            `SELECT a.id FROM mapa_areas a WHERE a.id = ? AND a.mapa_id = ? AND a.instituicao_id = ? LIMIT 1`,
+            [areaId, mapId, institutionId]
+          );
+          await conn.rollback();
+          return areas.length ? { conflict: true } : { notFound: true };
+        }
+      }
+      await conn.commit();
+      return { ok: true };
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
   };
 
   return {
@@ -667,6 +706,7 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
     countActiveSchedules,
     saveMap,
     updateMapAreaAdjustment,
+    updateMapAreaAdjustments,
     updateMapBlockArea,
     updateBlock,
     updateRoom,

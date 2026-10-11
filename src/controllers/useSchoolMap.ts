@@ -104,8 +104,7 @@ export const useSchoolMap = (selectedAreaId?: number | null) => {
     setNavigationBlockId(blockForArea(area, rooms, maps) ?? map.bloco_id ?? (map.id === activeMap?.id ? navigationBlockId : null));
   };
   const selectArea = (area: MapArea) => {
-    const destination = area.destino_mapa_id ?? (activeMap?.visao_geral && area.tipo === "BLOCO" && (area.categoria ?? "AMBIENTE") === "AMBIENTE"
-      ? maps.find((map) => map.bloco_id === area.bloco_id && /t[eé]rreo/i.test(map.piso ?? ""))?.id : null);
+    const destination = area.destino_mapa_id;
     if (destination) openMap(destination, area.bloco_id);
     else if (activeMap) selectLocation({ map: activeMap, area });
   };

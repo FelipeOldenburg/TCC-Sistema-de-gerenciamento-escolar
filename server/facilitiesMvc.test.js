@@ -10,7 +10,7 @@ const app = Object.fromEntries(
 );
 const controller = Object.fromEntries(
   [
-    "listMaps", "saveMap", "createMapBlockArea", "updateMapBlockArea", "deleteMapBlockArea", "restoreMapArea", "updateMapAreaAdjustment",
+    "listMaps", "saveMap", "createMapBlockArea", "updateMapBlockArea", "deleteMapBlockArea", "restoreMapArea", "updateMapAreaAdjustment", "updateMapAreaAdjustments",
     "listBlocks", "createBlock", "updateBlock", "deleteBlock", "listRooms", "listRoomOccupations", "getRoom",
     "getRoomOccupation", "listRoomChanges", "createRoom", "updateRoom", "deleteRoom",
   ].map((name) => [name, () => {}])
@@ -29,6 +29,7 @@ assert.deepEqual(
     "post /api/mapas",
     "put /api/mapas/:id",
     "post /api/mapas/:mapId/areas",
+    "patch /api/mapas/:mapId/areas/ajustes",
     "patch /api/mapas/:mapId/areas/:areaId",
     "delete /api/mapas/:mapId/areas/:areaId",
     "post /api/mapas/:mapId/areas/:areaId/restaurar",
@@ -47,7 +48,7 @@ assert.deepEqual(
     "delete /api/salas/:id",
   ]
 );
-assert.equal(routes.filter(([, , middleware]) => middleware === cpdOnly).length, 14);
+assert.equal(routes.filter(([, , middleware]) => middleware === cpdOnly).length, 15);
 
 let savedRoom;
 let savedSoftwareLink;
@@ -160,6 +161,8 @@ assert.deepEqual(missingBlockTransaction, ["begin", "rollback", "release"]);
 let savedMap;
 let savedAdjustment;
 let adjustmentOutcome;
+let savedBatch;
+let batchOutcome;
 const mapController = createFacilitiesController({
   asBoolean: (value) => value === true,
   cacheableJson: () => {},
@@ -171,6 +174,10 @@ const mapController = createFacilitiesController({
     updateMapAreaAdjustment: async (value) => {
       savedAdjustment = value;
       return adjustmentOutcome;
+    },
+    updateMapAreaAdjustments: async (value) => {
+      savedBatch = value;
+      return batchOutcome;
     },
   },
   httpError: (statusCode, message) => Object.assign(new Error(message), { statusCode }),
@@ -228,6 +235,29 @@ for (const [result, status] of [[{ conflict: true }, 409], [{ notFound: true }, 
   adjustmentOutcome = result;
   receivedError = undefined;
   await mapController.updateMapAreaAdjustment(adjustmentRequest, adjustmentResponse, (error) => { receivedError = error; });
+  assert.equal(receivedError?.statusCode, status);
+}
+const batchItem = { area_id: 31, ...adjustment, anterior: previous };
+batchOutcome = { ok: true }; receivedError = undefined;
+await mapController.updateMapAreaAdjustments({ params: { mapId: "12" }, institution: { id: 2 },
+  body: { ajustes: [batchItem, { ...batchItem, area_id: 32 }] } }, adjustmentResponse,
+  (error) => { receivedError = error; });
+assert.equal(receivedError, undefined);
+assert.deepEqual(savedBatch, { institutionId: 2, mapId: 12,
+  adjustments: [batchItem, { ...batchItem, area_id: 32 }] });
+for (const ajustes of [[], [batchItem, batchItem], [{ ...batchItem, area_id: 0 }],
+  [{ ...batchItem, anterior: { ...previous, caminho_svg: "" } }],
+  [{ ...batchItem, escala_x: 0 }]]) {
+  savedBatch = null; receivedError = undefined;
+  await mapController.updateMapAreaAdjustments({ params: { mapId: "12" }, institution: { id: 2 },
+    body: { ajustes } }, adjustmentResponse, (error) => { receivedError = error; });
+  assert.equal(receivedError?.statusCode, 400);
+  assert.equal(savedBatch, null);
+}
+for (const [result, status] of [[{ conflict: true }, 409], [{ notFound: true }, 404]]) {
+  batchOutcome = result; receivedError = undefined;
+  await mapController.updateMapAreaAdjustments({ params: { mapId: "12" }, institution: { id: 2 },
+    body: { ajustes: [batchItem] } }, adjustmentResponse, (error) => { receivedError = error; });
   assert.equal(receivedError?.statusCode, status);
 }
 
@@ -484,9 +514,47 @@ assert.deepEqual(adjustmentQueries.at(-1).params, [31, 12, 2]);
 targetExists = false;
 assert.deepEqual(await adjustmentModel.updateMapAreaAdjustment(adjustmentArgs), { notFound: true });
 
+const batchQueries = [];
+const batchSteps = [];
+let batchAffected = [1, 1];
+let batchMapExists = true;
+let batchAreaExists = true;
+const batchModel = createFacilitiesModel({
+  db: { getConnection: async () => ({
+    query: async (sql, params) => {
+      batchQueries.push({ sql, params });
+      if (sql.startsWith("SELECT id FROM mapas")) return [batchMapExists ? [{ id: 12 }] : []];
+      if (sql.startsWith("UPDATE mapa_areas")) return [{ affectedRows: batchAffected.shift() ?? 1 }];
+      return [batchAreaExists ? [{ id: 32 }] : []];
+    },
+    beginTransaction: async () => batchSteps.push("begin"),
+    commit: async () => batchSteps.push("commit"),
+    rollback: async () => batchSteps.push("rollback"),
+    release: () => batchSteps.push("release"),
+  }) }, dayOrderSql: "h.dia",
+});
+const batchArgs = { institutionId: 2, mapId: 12,
+  adjustments: [
+    { area_id: 31, ...adjustment, anterior: previous },
+    { area_id: 32, ...adjustment, anterior: previous },
+  ] };
+assert.deepEqual(await batchModel.updateMapAreaAdjustments(batchArgs), { ok: true });
+assert.deepEqual(batchSteps, ["begin", "commit", "release"]);
+assert.equal(batchQueries.filter(({ sql }) => sql.startsWith("UPDATE mapa_areas")).length, 2);
+assert.deepEqual(batchQueries[1].params, adjustmentQueries[0].params);
+batchSteps.length = 0; batchAffected = [1, 0];
+assert.deepEqual(await batchModel.updateMapAreaAdjustments(batchArgs), { conflict: true });
+assert.deepEqual(batchSteps, ["begin", "rollback", "release"], "Conflito deve desfazer até o primeiro ajuste.");
+batchSteps.length = 0; batchAffected = [1, 0]; batchAreaExists = false;
+assert.deepEqual(await batchModel.updateMapAreaAdjustments(batchArgs), { notFound: true });
+assert.deepEqual(batchSteps, ["begin", "rollback", "release"]);
+batchSteps.length = 0; batchMapExists = false;
+assert.deepEqual(await batchModel.updateMapAreaAdjustments(batchArgs), { notFound: true });
+assert.deepEqual(batchSteps, ["begin", "rollback", "release"]);
+
 const blockArea = {
   nome: "Bloco D", caminho_svg: "M 10 10 H 60 V 50 H 10 Z", bloco_id: 4,
-  destino_mapa_id: 13, rotulo_x: 35, rotulo_y: 30,
+  destino_mapa_id: 13, rotulo_x: 35, rotulo_y: 30, categoria: "AMBIENTE",
 };
 const areaSnapshot = { ...blockArea, tipo: "BLOCO", categoria: "AMBIENTE", sala_id: null, setor_id: null,
   descricao: null, ajuste_x: 0, ajuste_y: 0, escala_x: 1, escala_y: 1 };
@@ -513,7 +581,7 @@ assert.equal(mapResponse.statusCode, 201);
 assert.deepEqual(mapResponse.payload, { id: 41 });
 for (const changed of [
   { destino_mapa_id: 12 }, { destino_mapa_id: 0 }, { caminho_svg: "M0 0\" onload=alert(1)" },
-  { bloco_id: "not-an-id" }, { rotulo_x: 10001 },
+  { bloco_id: "not-an-id" }, { rotulo_x: 10001 }, { categoria: "OUTRA" },
 ]) {
   areaCall = null; receivedError = undefined;
   await areaController.createMapBlockArea({ ...areaRequest, body: { ...blockArea, ...changed } }, mapResponse,
@@ -521,6 +589,16 @@ for (const changed of [
   assert.equal(receivedError?.statusCode, 400);
   assert.equal(areaCall, null);
 }
+const freeArea = { nome: "Caminho ao ginásio", caminho_svg: blockArea.caminho_svg,
+  categoria: "CIRCULACAO", destino_mapa_id: null, rotulo_x: 35, rotulo_y: 30 };
+areaOutcome = { id: 42 }; receivedError = undefined;
+await areaController.createMapBlockArea({ ...areaRequest, body: freeArea }, mapResponse,
+  (error) => { receivedError = error; });
+assert.equal(receivedError, undefined);
+assert.deepEqual(areaCall, { institutionId: 2, mapId: 12, area: {
+  ...freeArea, bloco_id: null, descricao: null,
+} });
+assert.deepEqual(mapResponse.payload, { id: 42 });
 areaOutcome = { conflict: true }; receivedError = undefined;
 await areaController.createMapBlockArea({ ...areaRequest, body: blockArea }, mapResponse,
   (error) => { receivedError = error; });
@@ -532,6 +610,17 @@ await areaController.updateMapBlockArea({ ...areaRequest,
 assert.equal(receivedError, undefined);
 assert.deepEqual(areaCall, { institutionId: 2, mapId: 12, areaId: 41,
   destinationId: 14, previous: areaSnapshot });
+receivedError = undefined;
+await areaController.updateMapBlockArea({ ...areaRequest,
+  body: { destino_mapa_id: null, anterior: { ...areaSnapshot, tipo: "OUTRO", bloco_id: null } } }, mapResponse,
+  (error) => { receivedError = error; });
+assert.equal(receivedError, undefined, "Uma área livre pode perder sua função de navegação.");
+assert.equal(areaCall.destinationId, null);
+areaCall = null; receivedError = undefined;
+await areaController.updateMapBlockArea({ ...areaRequest, body: { anterior: areaSnapshot } }, mapResponse,
+  (error) => { receivedError = error; });
+assert.equal(receivedError?.statusCode, 400);
+assert.equal(areaCall, null);
 receivedError = undefined;
 await areaController.deleteMapBlockArea({ ...areaRequest, body: { anterior: areaSnapshot } }, mapResponse,
   (error) => { receivedError = error; });
@@ -596,11 +685,21 @@ duplicateArea = []; destinationAvailable = false;
 assert.deepEqual(await editorModel.createMapBlockArea({ institutionId: 2, mapId: 12, area: blockArea }), { invalidReference: true });
 destinationAvailable = true;
 assert.deepEqual(await editorModel.createMapBlockArea({ institutionId: 2, mapId: 12, area: blockArea }), { id: 42 });
+const freeAreaRecord = { ...freeArea, bloco_id: null, descricao: null };
+const queriesBeforeFreeCreate = editorQueries.length;
+assert.deepEqual(await editorModel.createMapBlockArea({ institutionId: 2, mapId: 12, area: freeAreaRecord }), { id: 42 });
+const freeCreateQueries = editorQueries.slice(queriesBeforeFreeCreate);
+assert.ok(!freeCreateQueries.some(({ sql }) => sql.includes("SELECT id FROM blocos") || sql.includes("SELECT id FROM mapas WHERE")));
+assert.deepEqual(freeCreateQueries.find(({ sql }) => sql.includes("INSERT INTO mapa_areas")).params,
+  [2, 12, "OUTRO", freeArea.nome, freeArea.caminho_svg, null, 35, 30, "CIRCULACAO", null, null]);
 assert.deepEqual(await editorModel.updateMapBlockArea({ institutionId: 2, mapId: 12, areaId: 41,
   destinationId: 14, previous: areaSnapshot }), { ok: true });
-assert.match(editorQueries.at(-1).sql, /a.categoria IN \('ACESSO', 'ESCADA'\) OR a.destino_mapa_id IS NOT NULL/);
-assert.deepEqual(editorQueries.at(-1).params, [14, 41, 12, 2, areaSnapshot.nome,
-  areaSnapshot.caminho_svg, areaSnapshot.bloco_id, areaSnapshot.destino_mapa_id]);
+assert.match(editorQueries.at(-1).sql, /a.tipo = \? AND a.categoria = \?/);
+assert.deepEqual(editorQueries.at(-1).params, [14, 41, 12, 2, "BLOCO", "AMBIENTE", "Bloco D",
+  blockArea.caminho_svg, 4, null, null, 13, 35, 30, null, 0, 0, 1, 1]);
+assert.deepEqual(await editorModel.updateMapBlockArea({ institutionId: 2, mapId: 12, areaId: 41,
+  destinationId: null, previous: { ...areaSnapshot, tipo: "OUTRO", bloco_id: null } }), { ok: true });
+assert.equal(editorQueries.at(-1).params[0], null);
 editorAffected = 0;
 assert.deepEqual(await editorModel.updateMapBlockArea({ institutionId: 2, mapId: 12, areaId: 41,
   destinationId: 14, previous: areaSnapshot }), { conflict: true });

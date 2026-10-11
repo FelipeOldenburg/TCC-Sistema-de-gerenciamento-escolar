@@ -387,6 +387,29 @@ export const createFacilitiesController = ({
     }
   };
 
+  const updateMapAreaAdjustments = async (req, res, next) => {
+    try {
+      const ids = mapAreaIds(req);
+      const adjustments = req.body?.ajustes;
+      if (!ids || !Array.isArray(adjustments) || adjustments.length < 1 || adjustments.length > 500 ||
+          new Set(adjustments.map((item) => item?.area_id)).size !== adjustments.length ||
+          adjustments.some((item) => !Number.isSafeInteger(item?.area_id) || item.area_id < 1 ||
+            !validMapAdjustment(item) || !validMapAdjustment(item.anterior) ||
+            typeof item.anterior.caminho_svg !== "string" || !item.anterior.caminho_svg.trim() ||
+            item.anterior.caminho_svg.length > 8000 || !svgPathPattern.test(item.anterior.caminho_svg))) {
+        throw httpError(400, "Informe ajustes válidos e sem áreas repetidas para o mapa.");
+      }
+      const result = await facilitiesModel.updateMapAreaAdjustments({
+        institutionId: req.institution.id, mapId: ids.mapId, adjustments,
+      });
+      if (result.notFound) throw httpError(404, "Área ou mapa não encontrado nesta instituição.");
+      if (result.conflict) throw httpError(409, "Uma área mudou. Recarregue o mapa antes de salvar.");
+      return res.json({ ok: true });
+    } catch (error) {
+      return next(error);
+    }
+  };
+
   const createMapBlockArea = async (req, res, next) => {
     try {
       const ids = mapAreaIds(req);
@@ -394,21 +417,23 @@ export const createFacilitiesController = ({
       const area = {
         nome: String(body.nome || "").trim(),
         caminho_svg: String(body.caminho_svg || "").trim(),
-        bloco_id: Number(body.bloco_id),
-        destino_mapa_id: Number(body.destino_mapa_id),
-        rotulo_x: Number(body.rotulo_x),
-        rotulo_y: Number(body.rotulo_y),
+        bloco_id: nullableNumber(body.bloco_id),
+        destino_mapa_id: nullableNumber(body.destino_mapa_id),
+        rotulo_x: nullableNumber(body.rotulo_x),
+        rotulo_y: nullableNumber(body.rotulo_y),
+        categoria: String(body.categoria || "AMBIENTE").trim().toUpperCase(),
         descricao: String(body.descricao || "").trim() || null,
       };
       if (!ids || !area.nome || area.nome.length > 120 || !area.caminho_svg ||
           area.caminho_svg.length > 8000 || !svgPathPattern.test(area.caminho_svg) ||
-          !Number.isSafeInteger(area.bloco_id) || area.bloco_id < 1 ||
-          !Number.isSafeInteger(area.destino_mapa_id) || area.destino_mapa_id < 1 ||
+          (area.bloco_id !== null && (!Number.isSafeInteger(area.bloco_id) || area.bloco_id < 1)) ||
+          (area.destino_mapa_id !== null && (!Number.isSafeInteger(area.destino_mapa_id) || area.destino_mapa_id < 1)) ||
           area.destino_mapa_id === ids.mapId ||
-          !Number.isFinite(area.rotulo_x) || !Number.isFinite(area.rotulo_y) ||
-          area.rotulo_x < 0 || area.rotulo_y < 0 || area.rotulo_x > 10000 || area.rotulo_y > 10000 ||
+          (area.rotulo_x === null) !== (area.rotulo_y === null) ||
+          [area.rotulo_x, area.rotulo_y].some((value) => value !== null && (!Number.isFinite(value) || value < 0 || value > 10000)) ||
+          !["AMBIENTE", "CIRCULACAO", "ESCADA", "ACESSO", "PATIO"].includes(area.categoria) ||
           (area.descricao?.length || 0) > 2000) {
-        throw httpError(400, "Informe nome, bloco, destino e desenho válidos para a área.");
+        throw httpError(400, "Informe nome e desenho válidos para a área.");
       }
       const result = await facilitiesModel.createMapBlockArea({ institutionId: req.institution.id, mapId: ids.mapId, area });
       if (result.notFound) throw httpError(404, "Mapa não encontrado.");
@@ -426,8 +451,9 @@ export const createFacilitiesController = ({
     try {
       const ids = mapAreaIds(req, true);
       const previous = req.body?.anterior;
-      const destinationId = Number(req.body?.destino_mapa_id);
-      if (!ids || !validMapAreaSnapshot(previous) || !Number.isSafeInteger(destinationId) || destinationId < 1 ||
+      const destinationId = nullableNumber(req.body?.destino_mapa_id);
+      if (!ids || !Object.hasOwn(req.body || {}, "destino_mapa_id") || !validFullMapAreaSnapshot(previous) ||
+          (destinationId !== null && (!Number.isSafeInteger(destinationId) || destinationId < 1)) ||
           destinationId === ids.mapId) {
         throw httpError(400, "Informe um destino válido para a área do mapa.");
       }
@@ -492,6 +518,7 @@ export const createFacilitiesController = ({
     restoreMapArea,
     saveMap,
     updateMapAreaAdjustment,
+    updateMapAreaAdjustments,
     updateMapBlockArea,
     updateBlock,
     updateRoom,

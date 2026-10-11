@@ -332,4 +332,25 @@ describe("SchoolMap", () => {
     expect(screen.getByRole("group", { name: "CIMOL · Blocos C e D · 2º pavimento" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Escolher bloco" })).toHaveValue("3");
   });
+
+  it("respeita a função opcional dos bloquinhos e oferece atalhos de pátio na lista", async () => {
+    const campus = view(1, "Visão geral", [
+      area(101, 1, "Bloco sem atalho", { tipo: "BLOCO", bloco_id: 3, bloco_nome: "Bloco C" }),
+      area(102, 1, "Pátio com atalho", { categoria: "PATIO", destino_mapa_id: 2 }),
+      area(103, 1, "Corredor sem atalho", { categoria: "CIRCULACAO" }),
+    ], { visao_geral: true, piso: null, bloco_id: null, bloco_nome: null });
+    const destination = view(2, "Bloco C · Térreo", [], { piso: "Térreo" });
+    mockApi({ maps: [campus, destination], roomData: [] });
+    render(<SchoolMap />);
+
+    const overview = await screen.findByRole("group", { name: "CIMOL · Visão geral" });
+    expect(within(overview).queryByRole("button", { name: "Corredor sem atalho" })).not.toBeInTheDocument();
+    fireEvent.click(within(overview).getByRole("button", { name: "Bloco sem atalho" }));
+    expect(screen.getByRole("group", { name: "CIMOL · Visão geral" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Detalhes da área selecionada" })).toHaveTextContent("Bloco sem atalho");
+    fireEvent.click(screen.getByText("Ambientes e acessos desta vista"));
+    expect(screen.getAllByRole("button", { name: "Pátio com atalho" })).toHaveLength(2);
+    fireEvent.click(within(overview).getByRole("button", { name: "Pátio com atalho" }));
+    expect(screen.getByRole("group", { name: "CIMOL · Bloco C · Térreo" })).toBeInTheDocument();
+  });
 });

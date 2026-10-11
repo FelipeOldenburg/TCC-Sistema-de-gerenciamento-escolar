@@ -26,16 +26,20 @@ const mockApi = (patchStatus = 200, mapData: MapView[] = maps) => {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/api/mapas")) return new Response(JSON.stringify(currentMaps));
-    if (url.endsWith("/api/blocos")) return new Response(JSON.stringify([{ id: 3, nome: "Bloco C" }, { id: 4, nome: "Bloco D" }]));
-    if (url.endsWith("/api/mapas/1/areas/1/ajuste")) {
+    if (url.endsWith("/api/mapas/1/areas/ajustes") && init?.method === "PATCH") {
       if (patchStatus === 409) return new Response(JSON.stringify({ message: "A área mudou." }), { status: 409 });
-      const { anterior: _anterior, ...updated } = JSON.parse(String(init?.body));
-      return new Response(JSON.stringify(updated));
+      const body = JSON.parse(String(init.body));
+      currentMaps = currentMaps.map((map) => map.id !== 1 ? map : { ...map, areas: map.areas.map((item) => {
+        const next = body.ajustes.find((adjustment: { area_id: number }) => adjustment.area_id === item.id);
+        return next ? { ...item, ajuste_x: next.ajuste_x, ajuste_y: next.ajuste_y,
+          escala_x: next.escala_x, escala_y: next.escala_y } : item;
+      }) });
+      return new Response(JSON.stringify({ ok: true }));
     }
     if (url.endsWith("/api/mapas/1/areas") && init?.method === "POST") {
       const body = JSON.parse(String(init.body));
       currentMaps = currentMaps.map((map) => map.id !== 1 ? map : { ...map, areas: [...map.areas, {
-        ...body, id: 6, mapa_id: 1, tipo: "BLOCO", categoria: "AMBIENTE", bloco_nome: "Bloco D",
+        ...body, id: 6, mapa_id: 1, tipo: "OUTRO", bloco_id: null, bloco_nome: null,
         sala_id: null, setor_id: null, sala_nome: null, setor_nome: null,
       }] });
       return new Response(JSON.stringify({ id: 6 }), { status: 201 });
@@ -77,7 +81,7 @@ const selectArea = async (id = 1) => {
 };
 
 const patchCalls = (fetchMock: ReturnType<typeof mockApi>) =>
-  fetchMock.mock.calls.filter(([input]) => String(input).includes("/ajuste"));
+  fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/areas/ajustes"));
 
 describe("MapaEditorSection", () => {
   const originalGetBBox = Object.getOwnPropertyDescriptor(SVGElement.prototype, "getBBox");
@@ -120,33 +124,35 @@ describe("MapaEditorSection", () => {
     expect(screen.getByRole("status")).toHaveTextContent(/vista está inativa.*só aparecem para alunos e docentes/i);
   });
 
-  it("cria uma área de bloco, altera seu destino e a remove sem excluir o cadastro", async () => {
+  it("cria um bloquinho com nome livre e destino opcional, altera seu destino e o remove", async () => {
     const mapData = [maps[0], { ...maps[0], id: 2, nome: "CIMOL · Bloco D · Térreo", areas: [] },
       { ...maps[0], id: 3, nome: "CIMOL · Bloco D · 2º pavimento", areas: [] }];
     const fetchMock = mockApi(200, mapData);
     vi.stubGlobal("confirm", vi.fn(() => true));
     render(<MapaEditorSection institutionId={1} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Adicionar bloco ao mapa" }));
-    fireEvent.change(screen.getByLabelText("Bloco cadastrado"), { target: { value: "4" } });
-    fireEvent.change(screen.getByLabelText("Abrir ao clicar"), { target: { value: "2" } });
-    fireEvent.click(screen.getByRole("button", { name: "Criar área do bloco" }));
-    await screen.findByRole("button", { name: "Selecionar e mover Bloco D" });
+    fireEvent.click(await screen.findByRole("button", { name: "Criar bloquinho" }));
+    fireEvent.change(screen.getByLabelText("Nome do bloquinho"), { target: { value: "Entrada lateral" } });
+    fireEvent.change(screen.getByLabelText("Aparência da área"), { target: { value: "ACESSO" } });
+    fireEvent.change(screen.getByLabelText("Função ao clicar"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Criar bloquinho" }));
+    await screen.findByRole("button", { name: "Selecionar e mover Entrada lateral" });
     const post = fetchMock.mock.calls.find(([input, init]) => String(input).endsWith("/api/mapas/1/areas") && init?.method === "POST");
-    expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({ nome: "Bloco D", bloco_id: 4, destino_mapa_id: 2 });
-    expect(screen.getByLabelText("Ao clicar em Bloco D, abrir")).toHaveValue("2");
+    expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({ nome: "Entrada lateral", categoria: "ACESSO", destino_mapa_id: 2 });
+    expect(JSON.parse(String(post?.[1]?.body))).not.toHaveProperty("bloco_id");
+    expect(screen.getByLabelText("Ao clicar em Entrada lateral, abrir")).toHaveValue("2");
 
-    fireEvent.change(screen.getByLabelText("Ao clicar em Bloco D, abrir"), { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText("Ao clicar em Entrada lateral, abrir"), { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "Salvar destino" }));
-    await waitFor(() => expect(screen.getByLabelText("Ao clicar em Bloco D, abrir")).toHaveValue("3"));
+    await waitFor(() => expect(screen.getByLabelText("Ao clicar em Entrada lateral, abrir")).toHaveValue("3"));
     const change = fetchMock.mock.calls.find(([input, init]) => String(input).endsWith("/api/mapas/1/areas/6") && init?.method === "PATCH");
-    expect(JSON.parse(String(change?.[1]?.body))).toMatchObject({ destino_mapa_id: 3, anterior: { nome: "Bloco D", destino_mapa_id: 2 } });
+    expect(JSON.parse(String(change?.[1]?.body))).toMatchObject({ destino_mapa_id: 3, anterior: { nome: "Entrada lateral", destino_mapa_id: 2 } });
 
     fireEvent.click(screen.getByRole("button", { name: "Remover do mapa" }));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Selecionar e mover Bloco D" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Selecionar e mover Entrada lateral" })).not.toBeInTheDocument());
     const removal = fetchMock.mock.calls.find(([input, init]) => String(input).endsWith("/api/mapas/1/areas/6") && init?.method === "DELETE");
-    expect(JSON.parse(String(removal?.[1]?.body))).toMatchObject({ anterior: { nome: "Bloco D", destino_mapa_id: 3 } });
-    expect(fetchMock.mock.calls.some(([input, init]) => String(input).endsWith("/api/blocos/4") && init?.method === "DELETE")).toBe(false);
+    expect(JSON.parse(String(removal?.[1]?.body))).toMatchObject({ anterior: { nome: "Entrada lateral", destino_mapa_id: 3 } });
+    expect(fetchMock.mock.calls.some(([input, init]) => String(input).includes("/api/blocos/") && init?.method === "DELETE")).toBe(false);
   });
 
   it("remove qualquer tipo de área do desenho e permite restaurá-la", async () => {
@@ -178,27 +184,26 @@ describe("MapaEditorSection", () => {
     expect(fetchMock.mock.calls.some(([input, init]) => String(input).includes("/api/blocos/") && init?.method === "DELETE")).toBe(false);
   });
 
-  it("não adiciona um bloco com o mesmo nome de uma área existente na vista", async () => {
+  it("não cria um bloquinho com o mesmo nome de uma área existente na vista", async () => {
     const fetchMock = mockApi(200, [{ ...maps[0], areas: [...areas, area(7, "Bloco D", "AMBIENTE")] },
       { ...maps[0], id: 2, areas: [] }]);
     render(<MapaEditorSection institutionId={1} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Adicionar bloco ao mapa" }));
-    fireEvent.change(screen.getByLabelText("Bloco cadastrado"), { target: { value: "4" } });
-    fireEvent.change(screen.getByLabelText("Abrir ao clicar"), { target: { value: "2" } });
-    fireEvent.click(screen.getByRole("button", { name: "Criar área do bloco" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/já possui uma área/i);
+    fireEvent.click(await screen.findByRole("button", { name: "Criar bloquinho" }));
+    fireEvent.change(screen.getByLabelText("Nome do bloquinho"), { target: { value: " bloco d " } });
+    fireEvent.click(screen.getByRole("button", { name: "Criar bloquinho" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/já existe uma área/i);
     expect(fetchMock.mock.calls.some(([input, init]) => String(input).endsWith("/api/mapas/1/areas") && init?.method === "POST")).toBe(false);
   });
 
-  it("mantém o ajuste do mapa disponível quando o cadastro de blocos falha", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/api/mapas")
-      ? new Response(JSON.stringify(maps)) : new Response(JSON.stringify({ message: "Falha ao carregar blocos" }), { status: 503 })));
+  it("cria um bloquinho sem destino nem cadastro de bloco", async () => {
+    const fetchMock = mockApi();
     render(<MapaEditorSection institutionId={1} />);
-    await selectArea();
-    expect(screen.getByRole("button", { name: "Selecionar e mover Sala 201" })).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(screen.getByRole("button", { name: "Adicionar bloco ao mapa" }));
-    expect(screen.getAllByRole("alert").some((alert) => /não foi possível carregar os blocos/i.test(alert.textContent ?? ""))).toBe(true);
-    expect(screen.getByRole("button", { name: "Criar área do bloco" })).toBeDisabled();
+    fireEvent.click(await screen.findByRole("button", { name: "Criar bloquinho" }));
+    fireEvent.change(screen.getByLabelText("Nome do bloquinho"), { target: { value: "Sala de apoio" } });
+    fireEvent.click(screen.getByRole("button", { name: "Criar bloquinho" }));
+    expect(await screen.findByRole("button", { name: "Selecionar e mover Sala de apoio" })).toBeInTheDocument();
+    const post = fetchMock.mock.calls.find(([input, init]) => String(input).endsWith("/api/mapas/1/areas") && init?.method === "POST");
+    expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({ nome: "Sala de apoio", categoria: "AMBIENTE", destino_mapa_id: null });
   });
 
   it("permite corrigir o destino de um acesso sem trocar o desenho", async () => {
@@ -214,7 +219,65 @@ describe("MapaEditorSection", () => {
     expect(screen.getByRole("button", { name: "Selecionar e mover Entrada" })).toHaveAttribute("d", path);
   });
 
-  it("move por teclado e salva só o ajuste com o caminho anterior como snapshot", async () => {
+  it("permite definir e limpar o destino de qualquer bloquinho", async () => {
+    const fetchMock = mockApi(200, [{ ...maps[0], areas: [areas[1], areas[4]] },
+      { ...maps[0], id: 2, nome: "CIMOL · Pátio C", areas: [] }]);
+    render(<MapaEditorSection institutionId={1} />);
+    await selectArea(2);
+    fireEvent.change(screen.getByLabelText("Ao clicar em Corredor, abrir"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar destino" }));
+    await waitFor(() => expect(screen.getByLabelText("Ao clicar em Corredor, abrir")).toHaveValue("2"));
+    fireEvent.change(screen.getByLabelText("Ao clicar em Corredor, abrir"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar destino" }));
+    await waitFor(() => expect(screen.getByLabelText("Ao clicar em Corredor, abrir")).toHaveValue(""));
+    const patches = fetchMock.mock.calls.filter(([input, init]) => String(input).endsWith("/api/mapas/1/areas/2") && init?.method === "PATCH");
+    expect(patches).toHaveLength(2);
+    expect(JSON.parse(String(patches[1][1]?.body))).toMatchObject({ destino_mapa_id: null });
+  });
+
+  it("ajusta várias áreas em sequência e salva todas em uma requisição", async () => {
+    const fetchMock = mockApi();
+    render(<MapaEditorSection institutionId={1} />);
+    await selectArea(1);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Selecionar e mover Sala 201" }), { key: "ArrowRight" });
+    await selectArea(2);
+    expect(screen.getByRole("button", { name: "Selecionar e mover Sala 201" })).toHaveAttribute("transform", "matrix(1 0 0 1 1 0)");
+    fireEvent.keyDown(screen.getByRole("button", { name: "Selecionar e mover Corredor" }), { key: "ArrowDown" });
+    expect(screen.getByRole("button", { name: "Selecionar e mover Corredor" })).toHaveAttribute("transform", "matrix(1 0 0 1 0 1)");
+    expect(screen.getByRole("status")).toHaveTextContent("2 áreas ajustadas sem salvar");
+    expect(screen.getByLabelText("Mapa / pavimento")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Criar bloquinho" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar 2 ajustes" }));
+    await waitFor(() => expect(patchCalls(fetchMock)).toHaveLength(1));
+    expect(JSON.parse(String(patchCalls(fetchMock)[0][1]?.body))).toEqual({ ajustes: [
+      { area_id: 1, ajuste_x: 1, ajuste_y: 0, escala_x: 1, escala_y: 1,
+        anterior: { ajuste_x: 0, ajuste_y: 0, escala_x: 1, escala_y: 1, caminho_svg: path } },
+      { area_id: 2, ajuste_x: 0, ajuste_y: 1, escala_x: 1, escala_y: 1,
+        anterior: { ajuste_x: 0, ajuste_y: 0, escala_x: 1, escala_y: 1, caminho_svg: path } },
+    ] });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Salvar ajuste" })).toBeDisabled());
+    expect(screen.getByLabelText("Mapa / pavimento")).toBeEnabled();
+  });
+
+  it("recupera vários ajustes na sessão e só descarta todos por ação explícita", async () => {
+    mockApi();
+    const first = render(<MapaEditorSection institutionId={1} />);
+    await selectArea(1);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Selecionar e mover Sala 201" }), { key: "ArrowRight" });
+    await selectArea(2);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Selecionar e mover Corredor" }), { key: "ArrowDown" });
+    expect(JSON.parse(sessionStorage.getItem("design-compass.map-editor-draft.1") ?? "[]")).toHaveLength(2);
+    first.unmount();
+    render(<MapaEditorSection institutionId={1} />);
+    expect(await screen.findByRole("button", { name: "Salvar 2 ajustes" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Selecionar e mover Sala 201" })).toHaveAttribute("transform", "matrix(1 0 0 1 1 0)");
+    expect(screen.getByRole("button", { name: "Selecionar e mover Corredor" })).toHaveAttribute("transform", "matrix(1 0 0 1 0 1)");
+    fireEvent.click(screen.getByRole("button", { name: "Descartar todos" }));
+    expect(screen.getByRole("button", { name: "Salvar ajuste" })).toBeDisabled();
+    expect(sessionStorage.getItem("design-compass.map-editor-draft.1")).toBeNull();
+  });
+
+  it("move por teclado e salva o ajuste com o caminho anterior como snapshot", async () => {
     const fetchMock = mockApi();
     render(<MapaEditorSection institutionId={1} />);
     await selectArea();
@@ -227,10 +290,10 @@ describe("MapaEditorSection", () => {
     await waitFor(() => expect(patchCalls(fetchMock)).toHaveLength(1));
     const [, request] = patchCalls(fetchMock)[0];
     expect(request?.method).toBe("PATCH");
-    expect(JSON.parse(String(request?.body))).toEqual({
-      ajuste_x: 1, ajuste_y: 0, escala_x: 1, escala_y: 1,
+    expect(JSON.parse(String(request?.body))).toEqual({ ajustes: [{
+      area_id: 1, ajuste_x: 1, ajuste_y: 0, escala_x: 1, escala_y: 1,
       anterior: { ajuste_x: 0, ajuste_y: 0, escala_x: 1, escala_y: 1, caminho_svg: path },
-    });
+    }] });
     await waitFor(() => expect(screen.getByRole("button", { name: "Salvar ajuste" })).toBeDisabled());
   });
 
@@ -256,7 +319,7 @@ describe("MapaEditorSection", () => {
     const selected = screen.getByRole("button", { name: "Selecionar e mover Sala 201" });
     fireEvent.keyDown(selected, { key: "ArrowDown" });
     expect(selected).toHaveAttribute("transform", "matrix(1 0 0 1 0 1)");
-    fireEvent.click(screen.getByRole("button", { name: "Cancelar ajuste" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar ajuste desta área" }));
     expect(selected).toHaveAttribute("transform", "matrix(1 0 0 1 0 0)");
     expect(screen.getByRole("button", { name: "Salvar ajuste" })).toBeDisabled();
     expect(patchCalls(fetchMock)).toHaveLength(0);
@@ -323,7 +386,7 @@ describe("MapaEditorSection", () => {
     expect(selected).toHaveAttribute("transform", "matrix(1.05 0 0 1.05 -0.5 -0.5)");
     fireEvent.click(screen.getByRole("button", { name: "Salvar ajuste" }));
     await waitFor(() => expect(patchCalls(fetchMock)).toHaveLength(1));
-    expect(JSON.parse(String(patchCalls(fetchMock)[0][1]?.body))).toMatchObject({ escala_x: 1.05, escala_y: 1.05 });
+    expect(JSON.parse(String(patchCalls(fetchMock)[0][1]?.body))).toMatchObject({ ajustes: [{ area_id: 1, escala_x: 1.05, escala_y: 1.05 }] });
   });
 
   it("mostra o conflito 409 e mantém o ajuste visível até descarte explícito", async () => {
