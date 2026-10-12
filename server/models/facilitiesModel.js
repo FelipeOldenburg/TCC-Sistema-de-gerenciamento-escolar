@@ -1,3 +1,15 @@
+import { cimolMapViews } from "../data/cimolMap.js";
+
+const publishedViewsByName = new Map(cimolMapViews.map((view) => [`CIMOL · ${view.nome}`, view]));
+
+const legacyPublicationKey = (map, area) => {
+  const view = map.slug === "cimol" ? publishedViewsByName.get(map.nome) : null;
+  if (!view) return null;
+  const canonical = view.areas.filter((candidate) => candidate.nome === area.nome &&
+    candidate.caminho_svg === area.caminho_svg);
+  return canonical.length === 1 ? canonical[0].key : null;
+};
+
 const roomSelect = `
   SELECT s.id, s.instituicao_id, s.nome, s.bloco_id, b.nome AS bloco_nome, s.andar, s.capacidade, s.tipo,
          s.status, s.acessivel, s.possui_computadores, s.possui_data_show, s.possui_internet,
@@ -343,7 +355,8 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
     );
     if (!maps.length) return [];
     const [areas] = await db.query(
-      `SELECT a.id, a.mapa_id, a.tipo, a.nome, a.caminho_svg, a.bloco_id, a.sala_id, a.setor_id,
+      `SELECT a.id, a.mapa_id, a.tipo, a.nome, a.caminho_svg, a.chave_publicacao,
+              a.bloco_id, a.sala_id, a.setor_id,
               a.rotulo_x::float8 AS rotulo_x, a.rotulo_y::float8 AS rotulo_y,
               a.ajuste_x, a.ajuste_y, a.escala_x, a.escala_y,
               a.categoria, a.destino_mapa_id, a.descricao, a.excluido_cpd,
@@ -572,24 +585,62 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
     area.bloco_id, area.sala_id, area.setor_id, area.destino_mapa_id, area.rotulo_x,
     area.rotulo_y, area.descricao, area.ajuste_x, area.ajuste_y, area.escala_x, area.escala_y];
 
-  const updateMapBlockArea = async ({ institutionId, mapId, areaId, destinationId, previous }) => {
-    if (destinationId !== null) {
-      const [destinations] = await db.query(
-        "SELECT id FROM mapas WHERE id = ? AND instituicao_id = ? AND ativo = TRUE LIMIT 1",
-        [destinationId, institutionId]
+  const updateMapBlockArea = async ({ institutionId, mapId, areaId, name, destinationId, previous }) => {
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [maps] = await conn.query(
+        `SELECT m.id, m.nome, i.slug FROM mapas m
+           JOIN instituicoes i ON i.id = m.instituicao_id
+          WHERE m.id = ? AND m.instituicao_id = ? FOR UPDATE OF m`, [mapId, institutionId]
       );
-      if (!destinations.length) return { invalidReference: true };
+      if (!maps.length) { await conn.rollback(); return { notFound: true }; }
+      if (destinationId !== undefined && destinationId !== null) {
+        const [destinations] = await conn.query(
+          "SELECT id FROM mapas WHERE id = ? AND instituicao_id = ? AND ativo = TRUE LIMIT 1",
+          [destinationId, institutionId]
+        );
+        if (!destinations.length) { await conn.rollback(); return { invalidReference: true }; }
+      }
+      if (name !== undefined) {
+        const [duplicates] = await conn.query(
+          `SELECT id FROM mapa_areas WHERE mapa_id = ? AND instituicao_id = ? AND id <> ?
+             AND excluido_cpd = FALSE AND LOWER(nome) = LOWER(?) LIMIT 1`,
+          [mapId, institutionId, areaId, name]
+        );
+        if (duplicates.length) { await conn.rollback(); return { duplicateName: true }; }
+      }
+      const fields = [
+        ...(name === undefined ? [] : ["nome = ?"]),
+        ...(destinationId === undefined ? [] : ["destino_mapa_id = ?"]),
+        "chave_publicacao = COALESCE(a.chave_publicacao, ?)",
+        "editado_cpd = TRUE", "updated_at = CURRENT_TIMESTAMP",
+      ];
+      const sourceKey = legacyPublicationKey(maps[0], previous);
+      const [result] = await conn.query(
+        `UPDATE mapa_areas a SET ${fields.join(", ")}
+         WHERE a.id = ? AND a.mapa_id = ? AND a.instituicao_id = ?
+           AND a.excluido_cpd = FALSE AND ${mapAreaSnapshotCondition}`,
+        [...(name === undefined ? [] : [name]), ...(destinationId === undefined ? [] : [destinationId]), sourceKey,
+          areaId, mapId, institutionId, ...mapAreaSnapshotValues(previous)]
+      );
+      if (!result.affectedRows) {
+        const [areas] = await conn.query(
+          "SELECT id FROM mapa_areas WHERE id = ? AND mapa_id = ? AND instituicao_id = ? LIMIT 1",
+          [areaId, mapId, institutionId]
+        );
+        await conn.rollback();
+        return areas.length ? { conflict: true } : { notFound: true };
+      }
+      await conn.commit();
+      return { ok: true };
+    } catch (error) {
+      await conn.rollback();
+      if (error?.constraint === "uq_mapa_areas_chave_publicacao") return { conflict: true };
+      throw error;
+    } finally {
+      conn.release();
     }
-    const [result] = await db.query(
-      `UPDATE mapa_areas a SET destino_mapa_id = ?, editado_cpd = TRUE, updated_at = CURRENT_TIMESTAMP
-       WHERE a.id = ? AND a.mapa_id = ? AND a.instituicao_id = ?
-         AND a.excluido_cpd = FALSE
-         AND ${mapAreaSnapshotCondition}
-         AND EXISTS (SELECT 1 FROM mapas m WHERE m.id = a.mapa_id AND m.instituicao_id = a.instituicao_id)`,
-      [destinationId, areaId, mapId, institutionId, ...mapAreaSnapshotValues(previous)]
-    );
-    if (result.affectedRows) return { ok: true };
-    return await mapAreaExists({ institutionId, mapId, areaId }) ? { conflict: true } : { notFound: true };
   };
 
   const deleteMapBlockArea = async ({ institutionId, mapId, areaId, previous }) => {
@@ -605,28 +656,40 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
   };
 
   const restoreMapArea = async ({ institutionId, mapId, areaId, previous }) => {
-    const [result] = await db.query(
-      `UPDATE mapa_areas a SET editado_cpd = TRUE, excluido_cpd = FALSE, updated_at = CURRENT_TIMESTAMP
-       WHERE a.id = ? AND a.mapa_id = ? AND a.instituicao_id = ?
-         AND a.excluido_cpd = TRUE AND ${mapAreaSnapshotCondition}
-         AND EXISTS (SELECT 1 FROM mapas m WHERE m.id = a.mapa_id AND m.instituicao_id = a.instituicao_id)
-         AND (a.destino_mapa_id IS NULL OR EXISTS (
-           SELECT 1 FROM mapas destino WHERE destino.id = a.destino_mapa_id
-             AND destino.instituicao_id = a.instituicao_id AND destino.ativo = TRUE))
-         AND NOT EXISTS (SELECT 1 FROM mapa_areas outra WHERE outra.mapa_id = a.mapa_id
-           AND outra.instituicao_id = a.instituicao_id AND outra.excluido_cpd = FALSE
-           AND LOWER(outra.nome) = LOWER(a.nome))
-         AND (SELECT COUNT(*) FROM mapa_areas visivel WHERE visivel.mapa_id = a.mapa_id
-           AND visivel.instituicao_id = a.instituicao_id AND visivel.excluido_cpd = FALSE) < 500`,
-      [areaId, mapId, institutionId, ...mapAreaSnapshotValues(previous)]
-    );
-    if (result.affectedRows) return { ok: true };
-    const [areas] = await db.query(
-      `SELECT a.id FROM mapa_areas a JOIN mapas m ON m.id = a.mapa_id AND m.instituicao_id = a.instituicao_id
-       WHERE a.id = ? AND a.mapa_id = ? AND a.instituicao_id = ? LIMIT 1`,
-      [areaId, mapId, institutionId]
-    );
-    return areas.length ? { conflict: true } : { notFound: true };
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [maps] = await conn.query(
+        "SELECT id FROM mapas WHERE id = ? AND instituicao_id = ? FOR UPDATE", [mapId, institutionId]
+      );
+      if (!maps.length) { await conn.rollback(); return { notFound: true }; }
+      const [result] = await conn.query(
+        `UPDATE mapa_areas a SET editado_cpd = TRUE, excluido_cpd = FALSE, updated_at = CURRENT_TIMESTAMP
+         WHERE a.id = ? AND a.mapa_id = ? AND a.instituicao_id = ?
+           AND a.excluido_cpd = TRUE AND ${mapAreaSnapshotCondition}
+           AND (a.destino_mapa_id IS NULL OR EXISTS (
+             SELECT 1 FROM mapas destino WHERE destino.id = a.destino_mapa_id
+               AND destino.instituicao_id = a.instituicao_id AND destino.ativo = TRUE))
+           AND NOT EXISTS (SELECT 1 FROM mapa_areas outra WHERE outra.mapa_id = a.mapa_id
+             AND outra.instituicao_id = a.instituicao_id AND outra.excluido_cpd = FALSE
+             AND LOWER(outra.nome) = LOWER(a.nome))
+           AND (SELECT COUNT(*) FROM mapa_areas visivel WHERE visivel.mapa_id = a.mapa_id
+             AND visivel.instituicao_id = a.instituicao_id AND visivel.excluido_cpd = FALSE) < 500`,
+        [areaId, mapId, institutionId, ...mapAreaSnapshotValues(previous)]
+      );
+      if (result.affectedRows) { await conn.commit(); return { ok: true }; }
+      const [areas] = await conn.query(
+        "SELECT id FROM mapa_areas WHERE id = ? AND mapa_id = ? AND instituicao_id = ? LIMIT 1",
+        [areaId, mapId, institutionId]
+      );
+      await conn.rollback();
+      return areas.length ? { conflict: true } : { notFound: true };
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
   };
 
   const mapAreaAdjustmentSql = `UPDATE mapa_areas a

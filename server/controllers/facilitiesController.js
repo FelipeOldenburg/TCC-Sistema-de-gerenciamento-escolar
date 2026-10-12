@@ -451,17 +451,23 @@ export const createFacilitiesController = ({
     try {
       const ids = mapAreaIds(req, true);
       const previous = req.body?.anterior;
-      const destinationId = nullableNumber(req.body?.destino_mapa_id);
-      if (!ids || !Object.hasOwn(req.body || {}, "destino_mapa_id") || !validFullMapAreaSnapshot(previous) ||
-          (destinationId !== null && (!Number.isSafeInteger(destinationId) || destinationId < 1)) ||
-          destinationId === ids.mapId) {
-        throw httpError(400, "Informe um destino válido para a área do mapa.");
+      const hasName = Object.hasOwn(req.body || {}, "nome");
+      const hasDestination = Object.hasOwn(req.body || {}, "destino_mapa_id");
+      const name = hasName && typeof req.body.nome === "string" ? req.body.nome.trim() : null;
+      const destinationId = hasDestination ? nullableNumber(req.body.destino_mapa_id) : undefined;
+      if (!ids || !validFullMapAreaSnapshot(previous) || (!hasName && !hasDestination) ||
+          (hasName && (!name || name.length > 120)) ||
+          (hasDestination && destinationId !== null && (!Number.isSafeInteger(destinationId) || destinationId < 1)) ||
+          (hasDestination && destinationId === ids.mapId)) {
+        throw httpError(400, "Informe um nome ou destino válido para a área do mapa.");
       }
       const result = await facilitiesModel.updateMapBlockArea({
-        institutionId: req.institution.id, ...ids, destinationId, previous,
+        institutionId: req.institution.id, ...ids, ...(hasName ? { name } : {}),
+        ...(hasDestination ? { destinationId } : {}), previous,
       });
       if (result.invalidReference) throw httpError(400, "Mapa de destino não encontrado nesta instituição.");
       if (result.notFound) throw httpError(404, "Área não encontrada neste mapa e instituição.");
+      if (result.duplicateName) throw httpError(409, "Já existe uma área com este nome no mapa.");
       if (result.conflict) throw httpError(409, "A área mudou. Recarregue o mapa antes de salvar.");
       return res.json({ ok: true });
     } catch (error) {

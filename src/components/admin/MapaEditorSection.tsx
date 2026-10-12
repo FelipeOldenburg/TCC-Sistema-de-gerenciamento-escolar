@@ -127,6 +127,7 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
   const [areaId, setAreaId] = useState<number | null>(null);
   const [hiddenAreaId, setHiddenAreaId] = useState<number | null>(null);
   const [drafts, setDrafts] = useState<PendingDraft[]>([]);
+  const [nameDraft, setNameDraft] = useState("");
   const [destinationDraft, setDestinationDraft] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -161,8 +162,10 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
   const draft = selectedArea ? drafts.find((item) => item.areaId === selectedArea.id)?.draft ?? saved : null;
   const adjustmentDirty = drafts.length > 0;
   const selectedAdjustmentDirty = Boolean(selectedArea && drafts.some((item) => item.areaId === selectedArea.id));
+  const nameDirty = Boolean(selectedArea && nameDraft.trim() !== selectedArea.nome.trim());
   const destinationDirty = Boolean(selectedArea && destinationDraft !== (selectedArea.destino_mapa_id ?? null));
-  const dirty = adjustmentDirty || destinationDirty || creating;
+  const areaDetailsDirty = nameDirty || destinationDirty;
+  const dirty = adjustmentDirty || areaDetailsDirty || creating;
   const shownArea = selectedArea && draft ? { ...selectedArea, ...draft } : selectedArea;
   const selectedBounds = shownArea && base ? adjustedBounds(base, shownArea) : null;
   const zoomed = Boolean(activeMap && (viewport.width < activeMap.largura || viewport.height < activeMap.altura));
@@ -211,6 +214,7 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
       setMapId(map?.id ?? null);
       setAreaId(area?.id ?? null);
       setDrafts(orphaned ? pending : restored);
+      setNameDraft(area?.nome ?? "");
       setDestinationDraft(area?.destino_mapa_id ?? null);
       setCreating(false);
       setConflict(stale);
@@ -271,9 +275,10 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
   };
   const chooseArea = (area: MapArea | null) => {
     if (orphanedDraft || conflict) return;
-    if (creating || destinationDirty || saving) { setError(creating ? "Conclua ou cancele a inclusão antes de escolher outra área." : "Salve ou cancele o destino antes de escolher outra área."); return; }
+    if (creating || areaDetailsDirty || saving) { setError(creating ? "Conclua ou cancele a inclusão antes de escolher outra área." : "Salve ou cancele as alterações da área antes de escolher outra."); return; }
     setAreaId(area?.id ?? null);
     setHiddenAreaId(null);
+    setNameDraft(area?.nome ?? "");
     setDestinationDraft(area?.destino_mapa_id ?? null);
     setBase(null);
     setError("");
@@ -294,6 +299,7 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
       return;
     }
     setDrafts((current) => current.filter((item) => item.areaId !== selectedArea?.id));
+    setNameDraft(selectedArea?.nome ?? "");
     setDestinationDraft(selectedArea?.destino_mapa_id ?? null);
     setError("");
   };
@@ -308,7 +314,7 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
     setError("");
   };
   const save = async () => {
-    if (!activeMap || !drafts.length || destinationDirty || saving || conflict || orphanedDraft) return;
+    if (!activeMap || !drafts.length || areaDetailsDirty || saving || conflict || orphanedDraft) return;
     setSaving(true);
     setError("");
     try {
@@ -365,6 +371,7 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
       }] }));
       setCreating(false);
       setAreaId(created.id);
+      setNameDraft(nome);
       setDestinationDraft(newDestinationId);
       await loadMaps(activeMap.id, created.id);
       setNewName("");
@@ -378,25 +385,33 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
     }
   };
 
-  const saveDestination = async () => {
-    if (!activeMap || !selectedArea || !destinationDirty ||
+  const saveAreaDetails = async () => {
+    if (!activeMap || !selectedArea || !areaDetailsDirty ||
       adjustmentDirty || saving || conflict) return;
+    const nome = nameDraft.trim();
+    if (!nome || nome.length > 120) { setError("Informe um nome de até 120 caracteres para a área."); return; }
+    if (nameDirty && activeMap.areas.some((area) => area.id !== selectedArea.id &&
+      area.nome.trim().toLocaleLowerCase("pt-BR") === nome.toLocaleLowerCase("pt-BR"))) {
+      setError("Já existe uma área com esse nome nesta vista.");
+      return;
+    }
     setSaving(true);
     setError("");
     try {
       await apiFetch(`/api/mapas/${activeMap.id}/areas/${selectedArea.id}`, {
-        method: "PATCH", body: JSON.stringify({ destino_mapa_id: destinationDraft, anterior: selectedArea }),
+        method: "PATCH", body: JSON.stringify({ ...(nameDirty ? { nome } : {}),
+          ...(destinationDirty ? { destino_mapa_id: destinationDraft } : {}), anterior: selectedArea }),
       });
       setMaps((current) => current.map((map) => map.id !== activeMap.id ? map : { ...map,
-        areas: map.areas.map((area) => area.id === selectedArea.id ? { ...area, destino_mapa_id: destinationDraft } : area),
+        areas: map.areas.map((area) => area.id === selectedArea.id ? { ...area, nome, destino_mapa_id: destinationDraft } : area),
       }));
       await loadMaps(activeMap.id, selectedArea.id);
-      toast.success("Destino da área atualizado.");
+      toast.success("Área atualizada no mapa.");
     } catch (cause) {
-      if (cause instanceof ApiError && cause.status === 409) {
+      if (cause instanceof ApiError && cause.status === 409 && !cause.message.includes("Já existe uma área")) {
         setConflict(true);
         setError("Esta área mudou desde que você a abriu. Descarte as alterações e atualize antes de editar novamente.");
-      } else setError(cause instanceof Error ? cause.message : "Não foi possível salvar o destino.");
+      } else setError(cause instanceof Error ? cause.message : "Não foi possível salvar a área.");
     } finally {
       setSaving(false);
     }
@@ -417,6 +432,7 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
         areas: map.areas.filter((area) => area.id !== selectedArea.id),
       }));
       setAreaId(null);
+      setNameDraft("");
       setDestinationDraft(null);
       setHiddenAreaId(selectedArea.id);
       await loadMaps(activeMap.id, null);
@@ -514,8 +530,8 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
   const beginAreaDrag = (event: ReactPointerEvent<SVGElement>, area: MapArea, kind: "move" | "resize", corner?: Corner) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
     event.stopPropagation();
-    if (!activeMap || saving || orphanedDraft || creating || destinationDirty || conflict) {
-      if (dirty) setError("Conclua ou cancele a inclusão ou o destino antes de mover outra área.");
+    if (!activeMap || saving || orphanedDraft || creating || areaDetailsDirty || conflict) {
+      if (dirty) setError("Conclua ou cancele as alterações antes de mover outra área.");
       return;
     }
     const path = svgRef.current?.querySelector<SVGPathElement>(`[data-area-id="${area.id}"]`);
@@ -583,7 +599,7 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
       ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
     };
     const direction = directions[event.key];
-    if (!direction || !activeMap || !base || !draft || saving || creating || destinationDirty || conflict) return;
+    if (!direction || !activeMap || !base || !draft || saving || creating || areaDetailsDirty || conflict) return;
     event.preventDefault();
     event.stopPropagation();
     const step = Math.max(1, Math.round(unitPerPixel * (event.shiftKey ? 20 : 5)));
@@ -638,7 +654,7 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
         </label>
         <label className="block text-sm font-medium text-foreground">Área
           <select className="mt-1 block h-11 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            value={selectedArea?.id ?? ""} disabled={!activeMap || creating || destinationDirty || saving || loading || orphanedDraft || conflict}
+            value={selectedArea?.id ?? ""} disabled={!activeMap || creating || areaDetailsDirty || saving || loading || orphanedDraft || conflict}
             onChange={(event) => chooseArea(activeMap?.areas.find((area) => area.id === Number(event.target.value)) ?? null)}>
             <option value="">Selecione no mapa ou nesta lista</option>
             {activeMap?.areas.map((area) => <option key={area.id} value={area.id}>{area.nome.replace(/\n/g, " ")} · {categoryName(area)}{drafts.some((item) => item.areaId === area.id) ? " · ajuste pendente" : ""}</option>)}
@@ -648,7 +664,7 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
       {activeMap?.ativo === false && <p role="status" className="rounded-lg border bg-muted/50 px-3 py-2 text-sm text-foreground">Esta vista está inativa. As alterações só aparecem para alunos e docentes quando ela for ativada.</p>}
       <div className="flex flex-wrap items-center gap-3">
         {!creating ? <Button type="button" variant="outline" className="gap-2" disabled={!activeMap || dirty || saving || loading || orphanedDraft || conflict}
-          onClick={() => { setAreaId(null); setDestinationDraft(null); setBase(null); setCreating(true); setError(""); }}>
+          onClick={() => { setAreaId(null); setNameDraft(""); setDestinationDraft(null); setBase(null); setCreating(true); setError(""); }}>
           <Plus className="h-4 w-4" /> Criar bloquinho
         </Button> : <Button type="button" variant="outline" className="gap-2" disabled={saving} onClick={() => { setCreating(false); setNewName(""); setNewCategory("AMBIENTE"); setNewDestinationId(null); setError(""); }}>
           <X className="h-4 w-4" /> Cancelar inclusão
@@ -762,6 +778,10 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
         </div>
       </div>}
       {selectedArea && activeMap && !creating && <div className="grid gap-3 border-t pt-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+        <label className="block text-sm font-medium text-foreground sm:col-span-2">Nome do bloquinho
+          <input required maxLength={120} className="mt-1 block h-11 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} disabled={saving || loading || adjustmentDirty || conflict} />
+        </label>
         <label className="block text-sm font-medium text-foreground">Ao clicar em {selectedArea.nome.replace(/\n/g, " ")}, abrir
           <select className="mt-1 block h-11 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={destinationDraft ?? ""}
             disabled={saving || loading || adjustmentDirty || conflict} onChange={(event) => setDestinationDraft(Number(event.target.value) || null)}>
@@ -770,22 +790,22 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
               <option key={map.id} value={map.id}>{mapTitle(map)}</option>)}
           </select>
         </label>
-        <Button type="button" className="gap-2" disabled={!destinationDirty || adjustmentDirty || saving || loading || conflict}
-          onClick={() => void saveDestination()}><Save className="h-4 w-4" />Salvar destino</Button>
-        <p className="text-xs text-muted-foreground sm:col-span-2">Escolha outra vista para criar um atalho; deixe vazio para não navegar ao clicar.</p>
+        <Button type="button" className="gap-2" disabled={!areaDetailsDirty || !nameDraft.trim() || adjustmentDirty || saving || loading || conflict}
+          onClick={() => void saveAreaDetails()}><Save className="h-4 w-4" />{nameDirty && destinationDirty ? "Salvar alterações" : nameDirty ? "Salvar nome" : "Salvar destino"}</Button>
+        <p className="text-xs text-muted-foreground sm:col-span-2">O nome muda apenas no mapa; salas e setores cadastrados permanecem iguais. Escolha outra vista para criar um atalho; deixe vazio para não navegar ao clicar.</p>
       </div>}
-      {(adjustmentDirty || destinationDirty) && <p role="status" className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm font-medium text-foreground">{adjustmentDirty
+      {(adjustmentDirty || areaDetailsDirty) && <p role="status" className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm font-medium text-foreground">{adjustmentDirty
         ? `${drafts.length} ${drafts.length === 1 ? "área ajustada" : "áreas ajustadas"} sem salvar. Você pode selecionar outras áreas desta vista e salvar todas de uma vez.`
-        : "Destino ainda não salvo. Salve ou cancele antes de trocar de área."}</p>}
+        : "Alterações da área ainda não salvas. Salve ou cancele antes de trocar de área."}</p>}
       {error && <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">{error}</p>}
       {orphanedDraft && <Button type="button" variant="outline" onClick={discardOrphan}>Descartar rascunho antigo</Button>}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">{selectedArea ? <><strong className="text-foreground">{selectedArea.nome.replace(/\n/g, " ")}</strong> · {categoryName(selectedArea)}</> : "Escolha uma área para começar."}</p>
         <div className="flex flex-wrap gap-2">
-          {(selectedAdjustmentDirty || destinationDirty || conflict) && <Button type="button" variant="outline" onClick={discard} disabled={saving || loading} className="gap-2"><X />{conflict ? "Descartar e atualizar" : destinationDirty ? "Cancelar alteração" : "Cancelar ajuste desta área"}</Button>}
+          {(selectedAdjustmentDirty || areaDetailsDirty || conflict) && <Button type="button" variant="outline" onClick={discard} disabled={saving || loading} className="gap-2"><X />{conflict ? "Descartar e atualizar" : areaDetailsDirty ? "Cancelar alteração" : "Cancelar ajuste desta área"}</Button>}
           {drafts.length > 0 && !conflict && <Button type="button" variant="outline" onClick={discardAll} disabled={saving || loading}>Descartar todos</Button>}
           {selectedArea && <Button type="button" variant="outline" className="gap-2 text-destructive" disabled={dirty || saving || loading || conflict} onClick={() => void removeArea()}><Trash2 className="h-4 w-4" />Remover do mapa</Button>}
-          <Button type="button" onClick={() => void save()} disabled={!adjustmentDirty || destinationDirty || saving || loading || conflict} className="gap-2"><Save />{saving ? "Salvando..." : drafts.length > 1 ? `Salvar ${drafts.length} ajustes` : "Salvar ajuste"}</Button>
+          <Button type="button" onClick={() => void save()} disabled={!adjustmentDirty || areaDetailsDirty || saving || loading || conflict} className="gap-2"><Save />{saving ? "Salvando..." : drafts.length > 1 ? `Salvar ${drafts.length} ajustes` : "Salvar ajuste"}</Button>
         </div>
       </div>
     </div>

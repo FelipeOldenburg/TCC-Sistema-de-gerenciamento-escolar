@@ -41,7 +41,8 @@ export const validateMapViews = (views) => {
     const areaKeys = new Set();
     const areaNames = new Set();
     for (const area of view.areas) {
-      if (!area.key || areaKeys.has(area.key) || !area.nome?.trim() || area.nome.length > 120 || areaNames.has(area.nome)) {
+      if (!area.key || area.key.length > 120 || areaKeys.has(area.key) || !area.nome?.trim() ||
+          area.nome.length > 120 || areaNames.has(area.nome)) {
         throw new Error(`Áreas precisam de chaves e nomes únicos: ${view.key}.`);
       }
       areaKeys.add(area.key);
@@ -82,10 +83,11 @@ export const publishCimolMap = async (db, { views, slug = "cimol", apply = false
     const mapNames = views.map((view) => `${prefix}${view.nome}`);
     const placeholders = mapNames.map(() => "?").join(", ");
     const [existingMaps] = await conn.query(
-      `SELECT id, nome FROM mapas WHERE instituicao_id = ? AND nome IN (${placeholders})`, [institutionId, ...mapNames]
+      `SELECT id, nome FROM mapas WHERE instituicao_id = ? AND nome IN (${placeholders})${apply ? " FOR UPDATE" : ""}`,
+      [institutionId, ...mapNames]
     );
     const [existingAreas] = await conn.query(
-      `SELECT a.id, a.mapa_id, a.nome, a.editado_cpd, a.excluido_cpd FROM mapa_areas a
+      `SELECT a.id, a.mapa_id, a.nome, a.caminho_svg, a.chave_publicacao, a.editado_cpd, a.excluido_cpd FROM mapa_areas a
        JOIN mapas m ON m.id = a.mapa_id AND m.instituicao_id = a.instituicao_id
        WHERE a.instituicao_id = ? AND m.nome IN (${placeholders})`, [institutionId, ...mapNames]
     );
@@ -99,9 +101,6 @@ export const publishCimolMap = async (db, { views, slug = "cimol", apply = false
       const existingMap = existingMaps.find((map) => map.nome === `${prefix}${view.nome}`);
       report[existingMap ? "updatedMaps" : "createdMaps"]++;
       const priorAreas = existingAreas.filter((area) => area.mapa_id === existingMap?.id);
-      if (new Set(priorAreas.map((area) => area.nome)).size !== priorAreas.length) {
-        throw new Error(`O mapa reservado tem áreas com nomes repetidos: ${view.key}.`);
-      }
       report.preservedAreas += priorAreas.filter((area) => area.editado_cpd || area.excluido_cpd).length;
       const areas = view.areas.map((area) => {
         const areaBlock = area.bloco_nome ? uniqueMatch(blocks, area.bloco_nome) : block;
@@ -115,15 +114,30 @@ export const publishCimolMap = async (db, { views, slug = "cimol", apply = false
         if (area.setor_nome && !sector) missing("setores", view, area, area.setor_nome);
         const tipo = area.sala_nome ? (room ? "SALA" : "OUTRO")
           : area.setor_nome ? (sector ? "SETOR" : "OUTRO") : area.bloco_nome && areaBlock ? "BLOCO" : "OUTRO";
-        const prior = priorAreas.find((candidate) => candidate.nome === area.nome);
+        // shortcut: geometria SVG única identifica áreas legadas renomeadas; caminhos repetidos exigem associação manual.
+        const pathMatches = view.areas.filter((candidate) => candidate.caminho_svg === area.caminho_svg).length === 1
+          ? priorAreas.filter((candidate) => candidate.chave_publicacao == null && candidate.caminho_svg === area.caminho_svg)
+          : [];
+        const nameMatches = priorAreas.filter((candidate) => candidate.chave_publicacao == null && candidate.nome === area.nome);
+        const prior = priorAreas.find((candidate) => candidate.chave_publicacao === area.key) ||
+          (pathMatches.length === 1 ? pathMatches[0] : null) ||
+          (nameMatches.length === 1 ? nameMatches[0] : null);
+        if (!prior && (pathMatches.length > 1 || nameMatches.length > 1)) {
+          throw new Error(`Não foi possível associar a área ambígua ${view.key}/${area.key} à publicação.`);
+        }
         if (!prior) report.createdAreas++;
         else if (!prior.editado_cpd && !prior.excluido_cpd) report.updatedAreas++;
         report.areas++;
-        return { ...area, id: prior?.id, protectedByCpd: prior?.editado_cpd || prior?.excluido_cpd, tipo, bloco_id: tipo === "BLOCO" ? areaBlock.id : null,
+        return { ...area, id: prior?.id, needsSourceKey: prior && !prior.chave_publicacao,
+          protectedByCpd: prior?.editado_cpd || prior?.excluido_cpd, tipo, bloco_id: tipo === "BLOCO" ? areaBlock.id : null,
           sala_id: tipo === "SALA" ? room.id : null, setor_id: tipo === "SALA" || tipo === "SETOR" ? sector?.id || null : null };
       });
+      const retainedIds = areas.map((area) => area.id).filter(Boolean);
+      if (new Set(retainedIds).size !== retainedIds.length) {
+        throw new Error(`Áreas da vista ${view.key} possuem associação ambígua à publicação.`);
+      }
       const removed = priorAreas.filter((prior) => !prior.editado_cpd && !prior.excluido_cpd &&
-        !areas.some((area) => area.nome === prior.nome));
+        !areas.some((area) => area.id === prior.id));
       report.removedAreas += removed.length;
       return { ...view, id: existingMap?.id, bloco_id: block?.id || null, areas, removed };
     });
@@ -147,19 +161,26 @@ export const publishCimolMap = async (db, { views, slug = "cimol", apply = false
         for (const area of view.areas) {
           const values = [area.tipo, area.nome, area.caminho_svg, area.bloco_id, area.sala_id, area.setor_id,
             area.rotulo_x ?? null, area.rotulo_y ?? null, area.categoria || "AMBIENTE", area.descricao || null,
-            area.destino_key ? mapIds.get(area.destino_key) : null];
-          if (area.protectedByCpd) continue;
+            area.destino_key ? mapIds.get(area.destino_key) : null, area.key];
+          if (area.protectedByCpd) {
+            if (area.needsSourceKey) await conn.query(
+              "UPDATE mapa_areas SET chave_publicacao = ? WHERE id = ? AND mapa_id = ? AND instituicao_id = ?",
+              [area.key, area.id, view.id, institutionId]
+            );
+            continue;
+          }
           if (area.id) {
             await conn.query(
               `UPDATE mapa_areas SET tipo = ?, nome = ?, caminho_svg = ?, bloco_id = ?, sala_id = ?, setor_id = ?,
-                 rotulo_x = ?, rotulo_y = ?, categoria = ?, descricao = ?, destino_mapa_id = ?, updated_at = CURRENT_TIMESTAMP
+                 rotulo_x = ?, rotulo_y = ?, categoria = ?, descricao = ?, destino_mapa_id = ?,
+                 chave_publicacao = ?, updated_at = CURRENT_TIMESTAMP
                WHERE id = ? AND mapa_id = ? AND instituicao_id = ?`, [...values, area.id, view.id, institutionId]
             );
           } else {
             await conn.query(
               `INSERT INTO mapa_areas (tipo, nome, caminho_svg, bloco_id, sala_id, setor_id,
-                 rotulo_x, rotulo_y, categoria, descricao, destino_mapa_id, mapa_id, instituicao_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [...values, view.id, institutionId]
+                 rotulo_x, rotulo_y, categoria, descricao, destino_mapa_id, chave_publicacao, mapa_id, instituicao_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [...values, view.id, institutionId]
             );
           }
         }

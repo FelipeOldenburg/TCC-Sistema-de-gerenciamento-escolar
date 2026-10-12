@@ -65,7 +65,11 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
     const path = svgRef.current?.querySelector<SVGPathElement>(`[data-area-id="${activeArea.id}"]`);
     if (!path?.getBBox) return;
     const box = adjustedBounds(path.getBBox(), activeArea);
-    const commonStair = activeMap.areas.find((area) => area.nome === "Escada única C–D");
+    // shortcut: há uma só escada ao térreo nesta vista; dar identidade própria se outra for adicionada.
+    const commonStair = activeMap.bloco_id == null && activeMap.piso === "2º pavimento"
+      ? activeMap.areas.find((area) => area.categoria === "ESCADA" &&
+        map.maps.some((view) => view.id === area.destino_mapa_id && view.piso === "Térreo"))
+      : undefined;
     const stairPath = commonStair && commonStair.id !== activeArea.id
       ? svgRef.current?.querySelector<SVGPathElement>(`[data-area-id="${commonStair.id}"]`) : null;
     const stairBox = commonStair && stairPath?.getBBox ? adjustedBounds(stairPath.getBBox(), commonStair) : null;
@@ -82,7 +86,7 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
       y: Math.max(0, Math.min(activeMap.altura - height, target.y + target.height / 2 - height / 2)),
       width, height,
     });
-  }, [activeMap, activeArea, canvasSize]);
+  }, [activeMap, activeArea, canvasSize, map.maps]);
   useEffect(() => {
     if (activeArea && !activeMap?.visao_geral) focusSelection();
   }, [activeMap, activeArea, focusSelection]);

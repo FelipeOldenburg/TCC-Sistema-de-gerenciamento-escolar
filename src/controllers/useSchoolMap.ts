@@ -6,6 +6,7 @@ export type MapArea = AreaAdjustment & {
   id: number; mapa_id: number; tipo: "BLOCO" | "SALA" | "SETOR" | "OUTRO";
   nome: string; caminho_svg: string; bloco_id: number | null; sala_id: number | null; setor_id: number | null;
   bloco_nome: string | null; sala_nome: string | null; setor_nome: string | null;
+  chave_publicacao?: string | null;
   categoria?: "AMBIENTE" | "CIRCULACAO" | "ESCADA" | "ACESSO" | "PATIO";
   rotulo_x?: number | null; rotulo_y?: number | null; descricao?: string | null; destino_mapa_id?: number | null;
 };
@@ -26,14 +27,19 @@ export const normalizeMapText = (value: string) => value.normalize("NFD").replac
 export const mapTitle = (map: MapView) => map.nome.replace(/^CIMOL\s*·\s*/, "");
 
 // Duas portas numeradas podem pertencer ao mesmo recinto na planta (C302 / C303).
-export const areaContainsRoom = (area: MapArea, room: Room) => area.sala_id === room.id || (
-  /^[A-E]\d{3}(?:\([A-Z]\))?$/i.test(room.nome.replace(/\s/g, "")) &&
-  area.nome.toUpperCase().replace(/\s/g, "").split("/").includes(room.nome.toUpperCase().replace(/\s/g, ""))
-);
+const publishedRoomCodes = (area: MapArea) => area.chave_publicacao?.toUpperCase().split("-")
+  .filter((part) => /^[A-E]\d{3}$/.test(part)) ?? [];
+export const areaContainsRoom = (area: MapArea, room: Room) => {
+  if (area.sala_id === room.id) return true;
+  const code = room.nome.toUpperCase().replace(/\s/g, "");
+  if (!/^[A-E]\d{3}(?:\([A-Z]\))?$/.test(code)) return false;
+  const published = publishedRoomCodes(area);
+  return published.length ? published.includes(code) : area.nome.toUpperCase().replace(/\s/g, "").split("/").includes(code);
+};
 
 const blockForArea = (area: MapArea | undefined, rooms: Room[], maps: MapView[]) => {
   if (!area) return null;
-  const blockLetter = area.nome.match(/^([A-E])\d{3}/i)?.[1]?.toUpperCase();
+  const blockLetter = publishedRoomCodes(area)[0]?.[0] ?? area.nome.match(/^([A-E])\d{3}/i)?.[1]?.toUpperCase();
   return area.bloco_id ?? rooms.find((room) => room.id === area.sala_id)?.bloco_id ??
     (blockLetter ? maps.find((map) => map.bloco_nome === `Bloco ${blockLetter}`)?.bloco_id : null) ?? null;
 };

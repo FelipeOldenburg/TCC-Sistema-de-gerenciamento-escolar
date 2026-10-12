@@ -438,6 +438,10 @@ ALTER TABLE mapa_areas ADD COLUMN IF NOT EXISTS escala_y DOUBLE PRECISION NOT NU
   CHECK (escala_y BETWEEN 0.05 AND 20);
 ALTER TABLE mapa_areas ADD COLUMN IF NOT EXISTS editado_cpd BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE mapa_areas ADD COLUMN IF NOT EXISTS excluido_cpd BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE mapa_areas ADD COLUMN IF NOT EXISTS chave_publicacao VARCHAR(120) NULL;
+DROP INDEX IF EXISTS uq_mapa_areas_nome_visivel;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mapa_areas_chave_publicacao
+  ON mapa_areas (instituicao_id, mapa_id, chave_publicacao) WHERE chave_publicacao IS NOT NULL;
 UPDATE mapa_areas SET editado_cpd = TRUE
  WHERE editado_cpd = FALSE AND (ajuste_x <> 0 OR ajuste_y <> 0 OR escala_x <> 1 OR escala_y <> 1);
 ALTER TABLE mapa_areas DROP CONSTRAINT IF EXISTS ck_mapa_area_referencia_unica;

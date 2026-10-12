@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createFacilitiesController } from "./controllers/facilitiesController.js";
 import { createFacilitiesModel } from "./models/facilitiesModel.js";
 import { createContentModel } from "./models/contentModel.js";
+import { cimolMapViews } from "./data/cimolMap.js";
 import { registerFacilitiesRoutes } from "./routes/facilitiesRoutes.js";
 
 const routes = [];
@@ -429,10 +431,11 @@ const metadataModel = createFacilitiesModel({
         return [[{ ...detailedMap.map, id: 12, bloco_nome: "Bloco D" }]];
       }
       assert.match(sql, /a.rotulo_x::float8 AS rotulo_x/);
+      assert.match(sql, /a.chave_publicacao/);
       assert.match(sql, /a.ajuste_x, a.ajuste_y, a.escala_x, a.escala_y/);
       assert.match(sql, /a.excluido_cpd = FALSE/);
       return [[{ ...detailedMap.map.areas[0], id: 32, mapa_id: 12,
-        ajuste_x: 0, ajuste_y: 0, escala_x: 1, escala_y: 1 }]];
+        chave_publicacao: "d202", ajuste_x: 0, ajuste_y: 0, escala_x: 1, escala_y: 1 }]];
     },
   },
   dayOrderSql: "h.dia",
@@ -450,6 +453,7 @@ assert.equal(listedMap.bloco_nome, "Bloco D");
 assert.equal(listedMap.visao_geral, true);
 assert.equal(listedMap.areas[0].rotulo_x, 0);
 assert.equal(listedMap.areas[0].destino_mapa_id, 13);
+assert.equal(listedMap.areas[0].chave_publicacao, "d202");
 assert.deepEqual(
   [listedMap.areas[0].ajuste_x, listedMap.areas[0].ajuste_y, listedMap.areas[0].escala_x, listedMap.areas[0].escala_y],
   [0, 0, 1, 1]
@@ -612,6 +616,28 @@ assert.deepEqual(areaCall, { institutionId: 2, mapId: 12, areaId: 41,
   destinationId: 14, previous: areaSnapshot });
 receivedError = undefined;
 await areaController.updateMapBlockArea({ ...areaRequest,
+  body: { nome: "  Entrada para o pátio  ", anterior: areaSnapshot } }, mapResponse,
+  (error) => { receivedError = error; });
+assert.equal(receivedError, undefined, "Qualquer desenho pode ser renomeado sem alterar seu destino.");
+assert.deepEqual(areaCall, { institutionId: 2, mapId: 12, areaId: 41,
+  name: "Entrada para o pátio", previous: areaSnapshot });
+for (const nome of ["", "   ", 123, "x".repeat(121)]) {
+  areaCall = null; receivedError = undefined;
+  await areaController.updateMapBlockArea({ ...areaRequest,
+    body: { nome, anterior: areaSnapshot } }, mapResponse,
+    (error) => { receivedError = error; });
+  assert.equal(receivedError?.statusCode, 400);
+  assert.equal(areaCall, null);
+}
+areaOutcome = { duplicateName: true }; receivedError = undefined;
+await areaController.updateMapBlockArea({ ...areaRequest,
+  body: { nome: "Bloco A", anterior: areaSnapshot } }, mapResponse,
+  (error) => { receivedError = error; });
+assert.equal(receivedError?.statusCode, 409);
+assert.match(receivedError.message, /Já existe uma área com este nome/);
+areaOutcome = { ok: true };
+receivedError = undefined;
+await areaController.updateMapBlockArea({ ...areaRequest,
   body: { destino_mapa_id: null, anterior: { ...areaSnapshot, tipo: "OUTRO", bloco_id: null } } }, mapResponse,
   (error) => { receivedError = error; });
 assert.equal(receivedError, undefined, "Uma área livre pode perder sua função de navegação.");
@@ -648,6 +674,10 @@ let duplicateArea = [{ id: 41, tipo: "BLOCO", categoria: "AMBIENTE", excluido_cp
 let destinationAvailable = true;
 let editorAffected = 1;
 let editorTargetExists = true;
+let duplicateEditorName = false;
+let uniqueViolation = false;
+let editorMapExists = true;
+let editorMapName = "Mapa";
 const editorModel = createFacilitiesModel({
   db: {
     getConnection: async () => ({
@@ -655,10 +685,22 @@ const editorModel = createFacilitiesModel({
         editorQueries.push({ sql, params });
         if (sql.includes("SELECT largura, altura FROM mapas")) return [[{ largura: 800, altura: 600 }]];
         if (sql.includes("SELECT id FROM blocos")) return [[{ id: 4 }]];
+        if (sql.includes("SELECT m.id, m.nome, i.slug FROM mapas m")) return [editorMapExists ? [
+          { id: 12, nome: editorMapName, slug: "cimol" },
+        ] : []];
+        if (sql.includes("SELECT id FROM mapas WHERE id = ? AND instituicao_id = ? FOR UPDATE")) return [editorMapExists ? [{ id: 12 }] : []];
         if (sql.includes("SELECT id FROM mapas")) return [destinationAvailable ? [{ id: 13 }] : []];
         if (sql.includes("SELECT id, tipo, categoria, excluido_cpd FROM mapa_areas")) return [duplicateArea];
+        if (sql.includes("SELECT id FROM mapa_areas WHERE mapa_id = ?")) return [duplicateEditorName ? [{ id: 42 }] : []];
+        if (sql.includes("SELECT id FROM mapa_areas WHERE id = ?")) return [editorTargetExists ? [{ id: 41 }] : []];
         if (sql.includes("SELECT COUNT(*)::int")) return [[{ total: 8 }]];
         if (sql.includes("INSERT INTO mapa_areas")) return [{ insertId: 42 }];
+        if (sql.includes("UPDATE mapa_areas")) {
+          if (uniqueViolation) throw Object.assign(new Error("Chave duplicada"), {
+            code: "23505", constraint: "uq_mapa_areas_chave_publicacao",
+          });
+          return [{ affectedRows: editorAffected }];
+        }
         return [{ affectedRows: 1 }];
       },
       beginTransaction: async () => editorSteps.push("begin"),
@@ -695,8 +737,44 @@ assert.deepEqual(freeCreateQueries.find(({ sql }) => sql.includes("INSERT INTO m
 assert.deepEqual(await editorModel.updateMapBlockArea({ institutionId: 2, mapId: 12, areaId: 41,
   destinationId: 14, previous: areaSnapshot }), { ok: true });
 assert.match(editorQueries.at(-1).sql, /a.tipo = \? AND a.categoria = \?/);
-assert.deepEqual(editorQueries.at(-1).params, [14, 41, 12, 2, "BLOCO", "AMBIENTE", "Bloco D",
+assert.deepEqual(editorQueries.at(-1).params, [14, null, 41, 12, 2, "BLOCO", "AMBIENTE", "Bloco D",
   blockArea.caminho_svg, 4, null, null, 13, 35, 30, null, 0, 0, 1, 1]);
+const beforeRename = editorQueries.length;
+const beforeRenameSteps = editorSteps.length;
+assert.deepEqual(await editorModel.updateMapBlockArea({ institutionId: 2, mapId: 12, areaId: 41,
+  name: "Entrada para o pátio", previous: areaSnapshot }), { ok: true });
+assert.deepEqual(editorSteps.slice(beforeRenameSteps), ["begin", "commit", "release"]);
+assert.match(editorQueries[beforeRename].sql, /FOR UPDATE/);
+assert.match(editorQueries.at(-1).sql, /SET nome = \?, chave_publicacao = COALESCE\(a.chave_publicacao, \?\), editado_cpd = TRUE/);
+assert.deepEqual(editorQueries.at(-1).params.slice(0, 5), ["Entrada para o pátio", null, 41, 12, 2]);
+assert.match(editorQueries.at(-1).sql, /a.nome = \?/);
+editorMapName = "CIMOL · Visão geral";
+assert.deepEqual(await editorModel.updateMapBlockArea({ institutionId: 2, mapId: 12, areaId: 41,
+  name: "Pavilhão D", previous: areaSnapshot }), { ok: true });
+assert.match(editorQueries.at(-1).sql, /chave_publicacao = COALESCE\(a.chave_publicacao, \?\)/);
+assert.deepEqual(editorQueries.at(-1).params.slice(0, 5), ["Pavilhão D", null, 41, 12, 2],
+  "Um desenho criado pelo CPD não pode herdar uma chave publicada só por ter o mesmo nome.");
+const canonicalD = cimolMapViews.find((view) => view.key === "campus").areas.find((area) => area.key === "d");
+const publishedSnapshot = { ...areaSnapshot, caminho_svg: canonicalD.caminho_svg };
+assert.deepEqual(await editorModel.updateMapBlockArea({ institutionId: 2, mapId: 12, areaId: 41,
+  name: "Pavilhão D", previous: publishedSnapshot }), { ok: true });
+assert.deepEqual(editorQueries.at(-1).params.slice(0, 5), ["Pavilhão D", "d", 41, 12, 2],
+  "A área legada canônica recebe a chave antes de ser renomeada.");
+editorMapName = "Mapa";
+duplicateEditorName = true;
+assert.deepEqual(await editorModel.updateMapBlockArea({ institutionId: 2, mapId: 12, areaId: 41,
+  name: "Bloco B", previous: areaSnapshot }), { duplicateName: true });
+duplicateEditorName = false;
+assert.deepEqual(editorSteps.slice(-2), ["rollback", "release"]);
+uniqueViolation = true;
+assert.deepEqual(await editorModel.updateMapBlockArea({ institutionId: 2, mapId: 12, areaId: 41,
+  name: "Bloco B", previous: publishedSnapshot }), { conflict: true },
+"Colisões da chave de publicação devem ser tratadas como conflito de edição.");
+uniqueViolation = false;
+editorMapExists = false;
+assert.deepEqual(await editorModel.updateMapBlockArea({ institutionId: 2, mapId: 12, areaId: 41,
+  name: "Bloco B", previous: areaSnapshot }), { notFound: true });
+editorMapExists = true;
 assert.deepEqual(await editorModel.updateMapBlockArea({ institutionId: 2, mapId: 12, areaId: 41,
   destinationId: null, previous: { ...areaSnapshot, tipo: "OUTRO", bloco_id: null } }), { ok: true });
 assert.equal(editorQueries.at(-1).params[0], null);
@@ -713,18 +791,28 @@ assert.match(editorQueries.at(-1).sql, /a.sala_id IS NOT DISTINCT FROM \?/);
 assert.match(editorQueries.at(-1).sql, /a.rotulo_x::float8 IS NOT DISTINCT FROM \?/);
 assert.deepEqual(editorQueries.at(-1).params, [41, 12, 2,
   "BLOCO", "AMBIENTE", "Bloco D", blockArea.caminho_svg, 4, null, null, 13, 35, 30, null, 0, 0, 1, 1]);
+const beforeRestore = editorQueries.length;
+const beforeRestoreSteps = editorSteps.length;
+const deletedAreaParams = editorQueries.at(-1).params;
 assert.deepEqual(await editorModel.restoreMapArea({ institutionId: 2, mapId: 12, areaId: 41,
   previous: areaSnapshot }), { ok: true });
+assert.match(editorQueries[beforeRestore].sql, /FOR UPDATE/);
+assert.deepEqual(editorSteps.slice(beforeRestoreSteps), ["begin", "commit", "release"]);
 assert.match(editorQueries.at(-1).sql, /excluido_cpd = TRUE AND/);
 assert.match(editorQueries.at(-1).sql, /destino.ativo = TRUE/);
 assert.match(editorQueries.at(-1).sql, /LOWER\(outra.nome\) = LOWER\(a.nome\)/);
-assert.deepEqual(editorQueries.at(-1).params, editorQueries.at(-2).params);
+assert.deepEqual(editorQueries.at(-1).params, deletedAreaParams);
 editorAffected = 0;
 assert.deepEqual(await editorModel.restoreMapArea({ institutionId: 2, mapId: 12, areaId: 41,
   previous: areaSnapshot }), { conflict: true });
+assert.deepEqual(editorSteps.slice(-2), ["rollback", "release"]);
 editorTargetExists = false;
 assert.deepEqual(await editorModel.restoreMapArea({ institutionId: 2, mapId: 12, areaId: 41,
   previous: areaSnapshot }), { notFound: true });
+editorMapExists = false;
+assert.deepEqual(await editorModel.restoreMapArea({ institutionId: 2, mapId: 12, areaId: 41,
+  previous: areaSnapshot }), { notFound: true });
+editorMapExists = true;
 
 const fullMapArea = { id: 31, tipo: "OUTRO", nome: "Bloco D", caminho_svg: blockArea.caminho_svg,
   bloco_id: null, sala_id: null, setor_id: null, rotulo_x: 35, rotulo_y: 30,
@@ -776,3 +864,31 @@ await protectedController.saveMap({ body: { ...fullMap, areas: [
 ] }, params: { id: "12" }, institution: { id: 2 } }, mapResponse,
 (error) => { receivedError = error; });
 assert.equal(receivedError?.statusCode, 400);
+
+const schemaSql = readFileSync(new URL("./schema.sql", import.meta.url), "utf8");
+assert.match(schemaSql, /DROP INDEX IF EXISTS uq_mapa_areas_nome_visivel/);
+assert.doesNotMatch(schemaSql, /CREATE UNIQUE INDEX IF NOT EXISTS uq_mapa_areas_nome_visivel/);
+const swapAreas = [{ id: 51, nome: "Sala A", excluido_cpd: false },
+  { id: 52, nome: "Sala B", excluido_cpd: false }];
+const swapSteps = [];
+const swapModel = createFacilitiesModel({ db: { getConnection: async () => ({
+  query: async (sql, params) => {
+    if (sql.includes("SELECT nome FROM mapas")) return [[{ nome: "Mapa livre" }]];
+    if (sql.includes("SELECT id, nome, excluido_cpd FROM mapa_areas")) return [swapAreas.map((area) => ({ ...area }))];
+    if (/UPDATE mapa_areas\s+SET tipo/.test(sql)) {
+      swapAreas.find((area) => area.id === params.at(-3)).nome = params[1];
+    }
+    return [{ affectedRows: 1 }];
+  },
+  beginTransaction: async () => swapSteps.push("begin"),
+  commit: async () => swapSteps.push("commit"),
+  rollback: async () => swapSteps.push("rollback"),
+  release: () => swapSteps.push("release"),
+}) }, dayOrderSql: "h.dia" });
+const swappedMap = { ...fullMap, nome: "Mapa livre", areas: [
+  { ...fullMapArea, id: 51, nome: "Sala B" },
+  { ...fullMapArea, id: 52, nome: "Sala A" },
+] };
+assert.deepEqual(await swapModel.saveMap({ institutionId: 2, mapId: 12, map: swappedMap }), { id: 12 });
+assert.deepEqual(swapAreas.map((area) => area.nome), ["Sala B", "Sala A"]);
+assert.deepEqual(swapSteps, ["begin", "commit", "release"]);

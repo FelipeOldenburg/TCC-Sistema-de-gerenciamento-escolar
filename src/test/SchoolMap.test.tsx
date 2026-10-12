@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import SchoolMap from "@/components/SchoolMap";
+import { areaContainsRoom } from "@/controllers/useSchoolMap";
 import type { MapArea, MapView, Room, Sector } from "@/controllers/useSchoolMap";
 
 const rooms = [
@@ -204,6 +205,40 @@ describe("SchoolMap", () => {
     await waitForSchedule();
   });
 
+  it("localiza as duas salas de um recinto renomeado pela chave estável", async () => {
+    expect(areaContainsRoom(area(999, 5, "D201", { chave_publicacao: "c302-c303" }),
+      navigationRooms.find((room) => room.nome === "D201")!)).toBe(false);
+    const renamedMaps = navigationMaps.map((map) => map.id !== 5 ? map : { ...map,
+      areas: [area(501, 5, "Sala compartilhada", { chave_publicacao: "c302-c303" })],
+    });
+    mockApi({ maps: renamedMaps, roomData: navigationRooms });
+    render(<SchoolMap />);
+    await screen.findByRole("group", { name: "CIMOL · Visão geral" });
+
+    for (const code of ["C302", "C303"]) {
+      chooseResult(code, new RegExp(`^${code}`));
+      const shared = within(screen.getByRole("group", { name: "CIMOL · Bloco C · 3º pavimento" }))
+        .getByRole("button", { name: "Sala compartilhada" });
+      expect(shared).toHaveAttribute("aria-pressed", "true");
+      expect(within(screen.getByRole("region", { name: "Detalhes da sala selecionada" }))
+        .getByRole("heading", { name: code })).toBeInTheDocument();
+      await waitForSchedule();
+    }
+  });
+
+  it("mantém o bloco de uma área renomeada numa vista compartilhada", async () => {
+    const campus = view(1, "Visão geral", [], { visao_geral: true, piso: null, bloco_id: null, bloco_nome: null });
+    const dGround = view(3, "Bloco D · Térreo", [], { piso: "Térreo", bloco_id: 4, bloco_nome: "Bloco D" });
+    const shared = view(4, "Blocos C e D · 2º pavimento", [
+      area(401, 4, "Laboratório automatizado", { chave_publicacao: "d207" }),
+    ], { bloco_id: null, bloco_nome: null });
+    mockApi({ maps: [campus, dGround, shared], roomData: [] });
+    render(<SchoolMap selectedAreaId={401} />);
+
+    expect(await screen.findByRole("group", { name: "CIMOL · Blocos C e D · 2º pavimento" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Escolher bloco" })).toHaveValue("4");
+  });
+
   it("limpa o destaque anterior quando a sala buscada não tem posição identificada", async () => {
     mockApi({ maps: navigationMaps, roomData: navigationRooms });
     render(<SchoolMap />);
@@ -291,6 +326,31 @@ describe("SchoolMap", () => {
     expect(screen.getByRole("button", { name: "Bloco D · Térreo" })).toBeInTheDocument();
     fireEvent.click(within(screen.getByRole("group", { name: "CIMOL · Blocos C e D · 2º pavimento" })).getByRole("button", { name: "Escada única C–D" }));
     expect(screen.getByRole("group", { name: "CIMOL · Bloco C · Térreo" })).toBeInTheDocument();
+  });
+
+  it("enquadra a escada compartilhada mesmo após mudar seu nome", async () => {
+    const originalGetBBox = Object.getOwnPropertyDescriptor(SVGElement.prototype, "getBBox");
+    Object.defineProperty(SVGElement.prototype, "getBBox", {
+      configurable: true,
+      value: function (this: SVGElement) {
+        return { x: this.getAttribute("data-area-id") === "401" ? 650 : 100, y: 150, width: 50, height: 50 };
+      },
+    });
+    try {
+      const ground = view(2, "Bloco C · Térreo", [], { piso: "Térreo" });
+      const shared = view(4, "Blocos C e D · 2º pavimento", [
+        area(401, 4, "Escada principal renomeada", { categoria: "ESCADA", destino_mapa_id: 2 }),
+        area(402, 4, "Entrada de C2", { categoria: "ACESSO", bloco_id: 3 }),
+      ], { bloco_id: null, largura: 1000, altura: 500 });
+      mockApi({ maps: [ground, shared], roomData: [] });
+      render(<SchoolMap selectedAreaId={402} />);
+
+      const svg = await screen.findByRole("group", { name: "CIMOL · Blocos C e D · 2º pavimento" });
+      await waitFor(() => expect(Number(svg.getAttribute("viewBox")?.split(" ")[2])).toBeGreaterThan(700));
+    } finally {
+      if (originalGetBBox) Object.defineProperty(SVGElement.prototype, "getBBox", originalGetBBox);
+      else Reflect.deleteProperty(SVGElement.prototype, "getBBox");
+    }
   });
 
   it("busca o Museu uma vez na vista detalhada sem ocultar um bloco exclusivo da visão geral", async () => {

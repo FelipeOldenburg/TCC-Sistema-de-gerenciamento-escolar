@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { publicationOptions, publishCimolMap, validateMapViews } from "../scripts/publish-cimol-map.mjs";
+import { createFacilitiesModel } from "./models/facilitiesModel.js";
 
 const sampleViews = [
   { key: "main", nome: "C · 2º pavimento", bloco_nome: "Bloco C", piso: "2º pavimento", largura: 300, altura: 200,
@@ -78,8 +79,16 @@ const db = { getConnection: async () => {
         assert.match(sql, /WHERE instituicao_id = \?/);
         return [state.maps.filter((map) => map.instituicao_id === params[0] && params.slice(1).includes(map.nome))];
       }
+      if (sql.startsWith("SELECT m.id, m.nome, i.slug FROM mapas m")) {
+        const map = state.maps.find((row) => row.id === params[0] && row.instituicao_id === params[1]);
+        return [map ? [{ ...map, slug: "cimol" }] : []];
+      }
+      if (sql.startsWith("SELECT id FROM mapa_areas WHERE mapa_id =")) {
+        return [state.areas.filter((area) => area.mapa_id === params[0] && area.instituicao_id === params[1] &&
+          area.id !== params[2] && !area.excluido_cpd && area.nome.toLowerCase() === params[3].toLowerCase())];
+      }
       if (sql.startsWith("SELECT a.id, a.mapa_id, a.nome")) {
-        assert.match(sql, /a\.editado_cpd, a\.excluido_cpd/);
+        assert.match(sql, /a\.chave_publicacao, a\.editado_cpd, a\.excluido_cpd/);
         assert.match(sql, /m.instituicao_id = a.instituicao_id/);
         assert.match(sql, /WHERE a.instituicao_id = \?/);
         return [state.areas.filter((area) => area.instituicao_id === params[0] && state.maps.some((map) =>
@@ -100,20 +109,35 @@ const db = { getConnection: async () => {
         Object.assign(map, { instituicao_id: params[0], nome: params[1] });
         return [{ insertId: map.id }];
       }
+      if (sql.startsWith("UPDATE mapa_areas SET chave_publicacao =")) {
+        const area = state.areas.find((row) => row.id === params[1] && row.mapa_id === params[2] && row.instituicao_id === params[3]);
+        assert.ok(area);
+        area.chave_publicacao = params[0];
+        return [{ affectedRows: 1 }];
+      }
+      if (sql.startsWith("UPDATE mapa_areas a SET")) {
+        const area = state.areas.find((row) => row.id === params[2] && row.mapa_id === params[3] && row.instituicao_id === params[4]);
+        assert.ok(area);
+        area.nome = params[0];
+        area.chave_publicacao ??= params[1];
+        area.editado_cpd = true;
+        return [{ affectedRows: 1 }];
+      }
       if (sql.startsWith("INSERT INTO mapa_areas") || sql.startsWith("UPDATE mapa_areas")) {
         if (failArea) throw new Error("Falha simulada após gravar as vistas.");
         const update = sql.startsWith("UPDATE");
-        const institutionId = params[update ? 13 : 12];
-        const mapId = params[update ? 12 : 11];
+        const institutionId = params[update ? 14 : 13];
+        const mapId = params[update ? 13 : 12];
         assert.equal(institutionId, 1);
         assert.ok(state.maps.some((map) => map.id === mapId && map.instituicao_id === institutionId));
-        const area = update ? state.areas.find((row) => row.id === params[11] && row.mapa_id === mapId && row.instituicao_id === institutionId)
+        const area = update ? state.areas.find((row) => row.id === params[12] && row.mapa_id === mapId && row.instituicao_id === institutionId)
           : { id: nextId++, instituicao_id: institutionId, mapa_id: mapId };
         assert.ok(area);
         if (!update) state.areas.push(area);
         else assert.match(sql, /WHERE id = \? AND mapa_id = \? AND instituicao_id = \?/);
-        Object.assign(area, { tipo: params[0], nome: params[1], bloco_id: params[3], sala_id: params[4], setor_id: params[5],
-          destino_mapa_id: params[10], editado_cpd: false, excluido_cpd: false });
+        Object.assign(area, { tipo: params[0], nome: params[1], caminho_svg: params[2],
+          bloco_id: params[3], sala_id: params[4], setor_id: params[5],
+          destino_mapa_id: params[10], chave_publicacao: params[11], editado_cpd: false, excluido_cpd: false });
         return [{ insertId: area.id }];
       }
       if (sql.startsWith("DELETE FROM mapa_areas")) {
@@ -149,9 +173,11 @@ assert.equal(state.areas.find((area) => area.nome === "C299").setor_id, null);
 assert.equal(state.areas.find((area) => area.nome === "Escada própria").destino_mapa_id,
   state.maps.find((map) => map.nome.endsWith("lateral")).id);
 const firstIds = { maps: state.maps.map((map) => map.id), areas: state.areas.map((area) => area.id) };
+roomArea.chave_publicacao = null;
 const second = await publishCimolMap(db, { views: sampleViews, apply: true });
 assert.equal(second.createdMaps, 0);
 assert.equal(second.createdAreas, 0);
+assert.equal(roomArea.chave_publicacao, "room", "Áreas antigas mantêm o ID quando recebem a chave estável.");
 assert.deepEqual({ maps: state.maps.map((map) => map.id), areas: state.areas.map((area) => area.id) }, firstIds);
 assert.deepEqual(state.maps.filter((map) => [700, 710, 723].includes(map.id)),
   protectedRows.maps.filter((map) => [700, 710, 723].includes(map.id)));
@@ -159,11 +185,18 @@ assert.deepEqual(state.areas.filter((area) => area.id === 800 || area.id === 810
 
 const mainMap = state.maps.find((map) => map.instituicao_id === 1 && map.nome === "CIMOL · C · 2º pavimento");
 const editedStair = state.areas.find((area) => area.mapa_id === mainMap.id && area.nome === "Escada própria");
-editedStair.editado_cpd = true;
 editedStair.destino_mapa_id = 710;
+editedStair.chave_publicacao = null;
+const priorStair = { ...editedStair, categoria: "ESCADA", bloco_id: null, sala_id: null, setor_id: null,
+  rotulo_x: null, rotulo_y: null, descricao: null, ajuste_x: 0, ajuste_y: 0, escala_x: 1, escala_y: 1 };
+const areaEditor = createFacilitiesModel({ db, dayOrderSql: "h.dia" });
+assert.deepEqual(await areaEditor.updateMapBlockArea({ institutionId: 1, mapId: mainMap.id,
+  areaId: editedStair.id, name: "Escada lateral renomeada", previous: priorStair }), { ok: true });
+assert.equal(editedStair.chave_publicacao, null, "A vista sintética depende do fallback por geometria na publicação.");
 const deletedSeedArea = state.areas.find((area) => area.mapa_id === mainMap.id && area.nome === "C299");
 deletedSeedArea.editado_cpd = false;
 deletedSeedArea.excluido_cpd = true;
+deletedSeedArea.chave_publicacao = null;
 const unmodifiedSeedArea = state.areas.find((area) => area.mapa_id === mainMap.id && area.nome === "Laboratórios");
 unmodifiedSeedArea.destino_mapa_id = 710;
 const addedByCpd = { id: nextId++, instituicao_id: 1, mapa_id: mainMap.id, nome: "Novo bloco",
@@ -184,12 +217,24 @@ assert.equal(afterCpdEdit.preservedAreas, 4);
 assert.equal(afterCpdEdit.removedAreas, 1);
 assert.equal(state.areas.find((area) => area.id === editedStair.id).destino_mapa_id, 710,
   "Uma ação editada pelo CPD não pode ser sobrescrita pela publicação.");
+assert.equal(state.areas.find((area) => area.id === editedStair.id).nome, "Escada lateral renomeada",
+  "O nome editado pelo CPD deve sobreviver sem duplicar a área original.");
+assert.equal(editedStair.chave_publicacao, "stairs", "Uma área renomeada sem chave é reconhecida por sua geometria única.");
+assert.ok(!state.areas.some((area) => area.mapa_id === mainMap.id && area.nome === "Escada própria"));
 assert.equal(state.areas.find((area) => area.id === unmodifiedSeedArea.id).destino_mapa_id, null,
   "Uma área não editada pelo CPD deve continuar recebendo atualizações do seed.");
 assert.ok(state.areas.includes(deletedSeedArea), "O tombstone deve impedir recriar uma área publicada.");
+assert.equal(deletedSeedArea.chave_publicacao, "missing", "A publicação associa áreas antigas à chave sem reativá-las.");
 assert.ok(state.areas.includes(addedByCpd), "A área criada pelo CPD deve sobreviver à publicação.");
 assert.ok(state.areas.includes(removedByCpd), "A exclusão feita pelo CPD deve sobreviver à publicação.");
 assert.ok(!state.areas.includes(obsoleteSeedArea), "Uma área antiga do seed ainda pode ser removida.");
+
+addedByCpd.nome = deletedSeedArea.nome;
+const repeatedHiddenName = await publishCimolMap(db, { views: sampleViews, apply: true });
+assert.equal(repeatedHiddenName.createdAreas, 0, "O nome de uma área oculta pode ser reutilizado sem recriar a área do seed.");
+assert.equal(state.areas.find((area) => area.id === addedByCpd.id).nome, "C299");
+assert.equal(state.areas.find((area) => area.id === addedByCpd.id).excluido_cpd, false);
+assert.equal(state.areas.find((area) => area.id === deletedSeedArea.id).excluido_cpd, true);
 
 const beforeFailure = structuredClone(state);
 failArea = true;
@@ -197,6 +242,18 @@ const failureViews = [...sampleViews, { key: "new", nome: "Vista nova", largura:
 await assert.rejects(publishCimolMap(db, { views: failureViews, apply: true }), /Falha simulada/);
 assert.deepEqual(state, beforeFailure);
 assert.deepEqual(events.slice(-3), ["begin", "rollback", "release"]);
+failArea = false;
+
+const roomWithoutKey = state.areas.find((area) => area.id === roomArea.id);
+roomWithoutKey.chave_publicacao = null;
+roomWithoutKey.caminho_svg = "M200 0 H240 V40 Z";
+state.areas.push({ id: nextId++, instituicao_id: 1, mapa_id: mainMap.id,
+  nome: "C201", caminho_svg: "M250 0 H290 V40 Z", chave_publicacao: null,
+  editado_cpd: true, excluido_cpd: true });
+const beforeAmbiguousName = structuredClone(state);
+await assert.rejects(publishCimolMap(db, { views: sampleViews, apply: true }), /área ambígua/,
+  "Nomes legados repetidos sem chave ou geometria única exigem associação manual.");
+assert.deepEqual(state, beforeAmbiguousName, "Uma publicação ambígua não deve criar área nem alterar o mapa.");
 
 const { cimolMapViews } = await import("./data/cimolMap.js");
 validateMapViews(cimolMapViews);

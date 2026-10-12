@@ -48,7 +48,8 @@ const mockApi = (patchStatus = 200, mapData: MapView[] = maps) => {
       const areaId = Number(url.split("/").pop());
       const body = JSON.parse(String(init.body));
       currentMaps = currentMaps.map((map) => map.id !== 1 ? map : { ...map, areas: map.areas.map((item) =>
-        item.id === areaId ? { ...item, destino_mapa_id: body.destino_mapa_id } : item) });
+        item.id === areaId ? { ...item, ...(Object.hasOwn(body, "nome") ? { nome: body.nome } : {}),
+          ...(Object.hasOwn(body, "destino_mapa_id") ? { destino_mapa_id: body.destino_mapa_id } : {}) } : item) });
       return new Response(JSON.stringify({ ok: true }));
     }
     if (/\/api\/mapas\/1\/areas\/\d+$/.test(url) && init?.method === "DELETE") {
@@ -233,6 +234,56 @@ describe("MapaEditorSection", () => {
     const patches = fetchMock.mock.calls.filter(([input, init]) => String(input).endsWith("/api/mapas/1/areas/2") && init?.method === "PATCH");
     expect(patches).toHaveLength(2);
     expect(JSON.parse(String(patches[1][1]?.body))).toMatchObject({ destino_mapa_id: null });
+  });
+
+  it("renomeia bloquinhos existentes sem alterar o cadastro nem o destino", async () => {
+    const linkedBlock = { ...area(7, "Bloco C", "AMBIENTE"), tipo: "BLOCO" as const,
+      bloco_id: 9, bloco_nome: "Bloco C", destino_mapa_id: 2 };
+    const fetchMock = mockApi(200, [{ ...maps[0], areas: [linkedBlock, areas[1]] },
+      { ...maps[0], id: 2, nome: "CIMOL · Bloco C · 3º pavimento", areas: [] }]);
+    render(<MapaEditorSection institutionId={1} />);
+
+    for (const [id, oldName, newName] of [[7, "Bloco C", "Entrada principal"], [2, "Corredor", "Corredor central"]] as const) {
+      await selectArea(id);
+      fireEvent.change(screen.getByLabelText("Nome do bloquinho"), { target: { value: ` ${newName} ` } });
+      expect(screen.getByLabelText("Área")).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Salvar nome" }));
+      expect(await screen.findByRole("button", { name: `Selecionar e mover ${newName}` })).toBeInTheDocument();
+      const patch = fetchMock.mock.calls.find(([input, init]) =>
+        String(input).endsWith(`/api/mapas/1/areas/${id}`) && init?.method === "PATCH");
+      expect(JSON.parse(String(patch?.[1]?.body))).toMatchObject({ nome: newName,
+        anterior: { id, nome: oldName, caminho_svg: path } });
+      expect(JSON.parse(String(patch?.[1]?.body))).not.toHaveProperty("destino_mapa_id");
+    }
+    expect(screen.getByRole("button", { name: "Selecionar e mover Entrada principal" })).toHaveAttribute("data-kind", "BLOCO");
+    await selectArea(7);
+    expect(screen.getByLabelText("Ao clicar em Entrada principal, abrir")).toHaveValue("2");
+  });
+
+  it("impede renomear uma área para o nome de outra na mesma vista", async () => {
+    const fetchMock = mockApi();
+    render(<MapaEditorSection institutionId={1} />);
+    await selectArea(2);
+    fireEvent.change(screen.getByLabelText("Nome do bloquinho"), { target: { value: " sala 201 " } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar nome" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/já existe uma área/i);
+    expect(fetchMock.mock.calls.some(([input, init]) => String(input).endsWith("/api/mapas/1/areas/2") && init?.method === "PATCH")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar alteração" }));
+    expect(screen.getByLabelText("Nome do bloquinho")).toHaveValue("Corredor");
+  });
+
+  it("salva nome e função do mesmo bloquinho em uma edição", async () => {
+    const fetchMock = mockApi(200, [maps[0], { ...maps[0], id: 2, nome: "CIMOL · Pátio", areas: [] }]);
+    render(<MapaEditorSection institutionId={1} />);
+    await selectArea(4);
+    fireEvent.change(screen.getByLabelText("Nome do bloquinho"), { target: { value: "Acesso ao pátio" } });
+    fireEvent.change(screen.getByLabelText("Ao clicar em Entrada, abrir"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar alterações" }));
+    expect(await screen.findByRole("button", { name: "Selecionar e mover Acesso ao pátio" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Ao clicar em Acesso ao pátio, abrir")).toHaveValue("2");
+    const patch = fetchMock.mock.calls.find(([input, init]) => String(input).endsWith("/api/mapas/1/areas/4") && init?.method === "PATCH");
+    expect(JSON.parse(String(patch?.[1]?.body))).toMatchObject({ nome: "Acesso ao pátio", destino_mapa_id: 2,
+      anterior: { nome: "Entrada" } });
   });
 
   it("ajusta várias áreas em sequência e salva todas em uma requisição", async () => {
