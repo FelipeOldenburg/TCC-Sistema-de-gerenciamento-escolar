@@ -4,9 +4,12 @@ import type { PointerEvent as ReactPointerEvent, KeyboardEvent as ReactKeyboardE
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Maximize2, Minus, Plus, Save, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { apiFetch, ApiError } from "@/lib/api";
 import { adjustedBounds, adjustedPoint, areaTransform } from "@/lib/mapGeometry";
 import type { AreaBounds } from "@/lib/mapGeometry";
+import { pathPieces, snapAreaBounds } from "@/lib/mapSnap";
+import type { SnapShape } from "@/lib/mapSnap";
 import { mapTitle } from "@/controllers/useSchoolMap";
 import type { MapArea, MapView } from "@/controllers/useSchoolMap";
 import "@/components/school-map.css";
@@ -25,6 +28,9 @@ type Drag = {
   startViewport: Viewport;
   startDraft: Adjustment | null;
   base: AreaBounds | null;
+  previous?: SnapShape;
+  peers?: SnapShape[];
+  blockers?: SnapShape[];
   corner?: Corner;
   moved: boolean;
 };
@@ -91,6 +97,21 @@ const resizeAdjustment = (base: AreaBounds, start: Adjustment, corner: Corner, d
   };
 };
 
+const matchingGuide = (box: SnapShape, peers: SnapShape[], axis: "x" | "y") => {
+  const positions = (item: AreaBounds) => axis === "x"
+    ? [item.x, item.x + item.width]
+    : [item.y, item.y + item.height];
+  for (const moving of box.pieces ?? [box]) for (const peer of peers) for (const target of peer.pieces ?? [peer]) {
+    const overlap = axis === "x"
+      ? Math.min(moving.y + moving.height, target.y + target.height) - Math.max(moving.y, target.y)
+      : Math.min(moving.x + moving.width, target.x + target.width) - Math.max(moving.x, target.x);
+    if (overlap <= 0) continue;
+    const guide = positions(moving).find((position) => positions(target).some((edge) => Math.abs(position - edge) < 0.01));
+    if (guide !== undefined) return guide;
+  }
+  return undefined;
+};
+
 const corners: { id: Corner; label: string; cursor: string }[] = [
   { id: "nw", label: "superior esquerdo", cursor: "nwse-resize" },
   { id: "ne", label: "superior direito", cursor: "nesw-resize" },
@@ -112,6 +133,8 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
   const [newCategory, setNewCategory] = useState<NonNullable<MapArea["categoria"]>>("AMBIENTE");
   const [newDestinationId, setNewDestinationId] = useState<number | null>(null);
   const [base, setBase] = useState<AreaBounds | null>(null);
+  const [allowOverlap, setAllowOverlap] = useState(false);
+  const [guides, setGuides] = useState<{ x?: number; y?: number } | null>(null);
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, width: 1000, height: 700 });
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 520 });
   const [loading, setLoading] = useState(true);
@@ -436,6 +459,58 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
     const offsetY = (rect.height - viewport.height * scale) / 2;
     return { x: viewport.x + (clientX - rect.left - offsetX) / scale, y: viewport.y + (clientY - rect.top - offsetY) / scale };
   };
+  const peerBounds = (id: number) => {
+    const peers: SnapShape[] = [];
+    const blockers: SnapShape[] = [];
+    for (const area of activeMap?.areas ?? []) {
+      if (area.id === id) continue;
+      const path = svgRef.current?.querySelector<SVGPathElement>(`[data-area-id="${area.id}"]`);
+      const box = path?.getBBox();
+      if (!box?.width || !box.height) continue;
+      const draft = drafts.find((item) => item.areaId === area.id)?.draft;
+      const bounds = adjustedBounds(box, draft ?? area);
+      const shape = { ...bounds, pieces: pathPieces(area.caminho_svg, draft ?? area) ?? undefined };
+      peers.push(shape);
+      if ((area.categoria ?? "AMBIENTE") === "AMBIENTE") blockers.push(shape);
+    }
+    return { peers, blockers };
+  };
+  const snapDraft = (id: number, base: AreaBounds, candidate: Adjustment, handle: "move" | Corner,
+    previous: SnapShape, peers: SnapShape[], blockers: SnapShape[], tolerance: number, showGuides: boolean): Adjustment => {
+    if (!activeMap) return candidate;
+    const box = adjustedBounds(base, candidate);
+    const area = activeMap.areas.find((item) => item.id === id);
+    const snapped = snapAreaBounds(box, peers, {
+      tolerance, handle, previous, blockers,
+      allowOverlap: allowOverlap || (area?.categoria ?? "AMBIENTE") !== "AMBIENTE",
+      minimum: { width: base.width * 0.05, height: base.height * 0.05 },
+      maximum: { width: base.width * 20, height: base.height * 20 },
+      canvas: { width: activeMap.largura, height: activeMap.altura },
+    });
+    if (showGuides) {
+      const display = { ...snapped, pieces: previous.pieces?.map((piece) => ({
+        x: snapped.x + (piece.x - previous.x) * snapped.width / previous.width,
+        y: snapped.y + (piece.y - previous.y) * snapped.height / previous.height,
+        width: piece.width * snapped.width / previous.width,
+        height: piece.height * snapped.height / previous.height,
+      })) };
+      const xChanged = Math.abs(snapped.x - box.x) > 0.001 || Math.abs(snapped.width - box.width) > 0.001;
+      const yChanged = Math.abs(snapped.y - box.y) > 0.001 || Math.abs(snapped.height - box.height) > 0.001;
+      const x = xChanged ? matchingGuide(display, peers, "x") : undefined;
+      const y = yChanged ? matchingGuide(display, peers, "y") : undefined;
+      setGuides(x !== undefined || y !== undefined ? { x, y } : null);
+    }
+    if (handle === "move") return { ...candidate,
+      ajuste_x: round(candidate.ajuste_x + snapped.x - box.x),
+      ajuste_y: round(candidate.ajuste_y + snapped.y - box.y),
+    };
+    const escala_x = round(snapped.width / base.width);
+    const escala_y = round(snapped.height / base.height);
+    return { escala_x, escala_y,
+      ajuste_x: round(snapped.x - base.x * escala_x),
+      ajuste_y: round(snapped.y - base.y * escala_y),
+    };
+  };
   const beginAreaDrag = (event: ReactPointerEvent<SVGElement>, area: MapArea, kind: "move" | "resize", corner?: Corner) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
     event.stopPropagation();
@@ -448,17 +523,22 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
     if (!box?.width || !box.height) return;
     if (area.id !== areaId) { skipPointerFocus.current = true; chooseArea(area); }
     const current = drafts.find((item) => item.areaId === area.id)?.draft ?? adjustment(area);
+    const targets = peerBounds(area.id);
+    setGuides(null);
     drag.current = {
       pointerId: event.pointerId, kind, corner, areaId: area.id,
       startClient: { x: event.clientX, y: event.clientY },
       startPoint: mapPoint(event.clientX, event.clientY),
       startViewport: viewport, startDraft: current,
-      base: { x: box.x, y: box.y, width: box.width, height: box.height }, moved: false,
+      base: { x: box.x, y: box.y, width: box.width, height: box.height },
+      previous: { ...adjustedBounds(box, current), pieces: pathPieces(area.caminho_svg, current) ?? undefined },
+      ...targets, moved: false,
     };
     svgRef.current?.setPointerCapture?.(event.pointerId);
   };
   const beginPan = (event: ReactPointerEvent<SVGSVGElement>) => {
     if (event.target !== event.currentTarget || !zoomed || saving) return;
+    setGuides(null);
     drag.current = {
       pointerId: event.pointerId, kind: "pan",
       startClient: { x: event.clientX, y: event.clientY },
@@ -485,13 +565,17 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
     const point = mapPoint(event.clientX, event.clientY);
     const dx = point.x - current.startPoint.x;
     const dy = point.y - current.startPoint.y;
-    if (current.areaId !== undefined) updateDraft(current.areaId, current.kind === "move"
+    const candidate = current.kind === "move"
       ? moveAdjustment(current.base, current.startDraft, dx, dy, activeMap)
-      : resizeAdjustment(current.base, current.startDraft, current.corner!, dx, dy, activeMap));
+      : resizeAdjustment(current.base, current.startDraft, current.corner!, dx, dy, activeMap);
+    if (current.areaId !== undefined && current.previous) updateDraft(current.areaId,
+      snapDraft(current.areaId, current.base, candidate, current.kind === "move" ? "move" : current.corner!,
+        current.previous, current.peers ?? [], current.blockers ?? [], 8 * unitPerPixel, true));
   };
   const endPointer = (event: ReactPointerEvent<SVGSVGElement>) => {
     if (drag.current?.pointerId !== event.pointerId) return;
     drag.current = null;
+    setGuides(null);
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
   const keyAdjust = (event: ReactKeyboardEvent<SVGElement>, kind: "move" | "resize", corner?: Corner) => {
@@ -503,9 +587,15 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
     event.preventDefault();
     event.stopPropagation();
     const step = Math.max(1, Math.round(unitPerPixel * (event.shiftKey ? 20 : 5)));
-    if (selectedArea) updateDraft(selectedArea.id, kind === "move"
+    const candidate = kind === "move"
       ? moveAdjustment(base, draft, direction[0] * step, direction[1] * step, activeMap)
-      : resizeAdjustment(base, draft, corner!, direction[0] * step, direction[1] * step, activeMap));
+      : resizeAdjustment(base, draft, corner!, direction[0] * step, direction[1] * step, activeMap);
+    if (selectedArea) {
+      const targets = peerBounds(selectedArea.id);
+      const previous = { ...adjustedBounds(base, draft), pieces: pathPieces(selectedArea.caminho_svg, draft) ?? undefined };
+      updateDraft(selectedArea.id, snapDraft(selectedArea.id, base, candidate, kind === "move" ? "move" : corner!,
+        previous, targets.peers, targets.blockers, 0, false));
+    }
   };
   const zoom = (factor: number) => {
     if (!activeMap) return;
@@ -599,7 +689,15 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
         </label>
         <Button type="button" variant="outline" disabled={!hiddenArea || dirty || saving || loading || conflict || orphanedDraft} onClick={() => void restoreArea()}>Restaurar área</Button>
       </div>}
-      <p id="mapa-editor-help" className="text-sm text-muted-foreground">Clique ou toque numa área e arraste para mover. Puxe uma das quatro alças para mudar o tamanho. Selecione outras áreas e salve todos os ajustes juntos. Pelo teclado, use as setas; Shift acelera.</p>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-muted/50 px-3 py-2">
+        <Switch id="mapa-editor-overlap" checked={allowOverlap} onCheckedChange={setAllowOverlap}
+          aria-describedby="mapa-editor-overlap-help" />
+        <label htmlFor="mapa-editor-overlap" className="cursor-pointer text-sm font-medium">Permitir sobreposição</label>
+        <span id="mapa-editor-overlap-help" className="text-xs text-muted-foreground">{allowOverlap
+          ? "A área de trás pode perder o clique no desenho; ela continua na lista de ambientes e acessos."
+          : "Evita novas sobreposições entre ambientes; pátios e acessos mantêm suas ligações."}</span>
+      </div>
+      <p id="mapa-editor-help" className="text-sm text-muted-foreground">Arraste para mover e puxe uma alça para redimensionar. Bordas próximas se encaixam e mostram uma guia. Selecione outras áreas e salve os ajustes juntos. As setas fazem ajustes finos; Shift acelera.</p>
       {activeMap && <div className="school-map__frame overflow-hidden rounded-xl">
         <div className="school-map__frame-heading flex flex-wrap items-center justify-between gap-2 px-4 py-3">
           <h3 className="font-heading text-base font-bold">{mapTitle(activeMap)}</h3>
@@ -631,6 +729,10 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
                   className="school-map__label mapa-editor__label" aria-hidden="true">{area.nome.replace(/\n/g, " ")}</text>}
               </g>;
             })}
+            {guides?.x !== undefined && <line x1={guides.x} y1={viewport.y} x2={guides.x} y2={viewport.y + viewport.height}
+              className="mapa-editor__guide" vectorEffect="non-scaling-stroke" aria-hidden="true" />}
+            {guides?.y !== undefined && <line x1={viewport.x} y1={guides.y} x2={viewport.x + viewport.width} y2={guides.y}
+              className="mapa-editor__guide" vectorEffect="non-scaling-stroke" aria-hidden="true" />}
             {selectedBounds && selectedArea && <g className="mapa-editor__selection">
               <rect x={selectedBounds.x} y={selectedBounds.y} width={selectedBounds.width} height={selectedBounds.height}
                 fill="none" stroke="var(--map-selection-stroke)" strokeWidth={2} strokeDasharray="6 4" vectorEffect="non-scaling-stroke" pointerEvents="none" />

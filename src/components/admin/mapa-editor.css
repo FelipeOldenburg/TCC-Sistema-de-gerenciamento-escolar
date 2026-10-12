@@ -8,4 +8,5 @@
   stroke-width: 4;
 }
 .mapa-editor__label { pointer-events: none; font-weight: 600; }
+.mapa-editor__guide { pointer-events: none; stroke: hsl(var(--primary)); stroke-width: 2; stroke-dasharray: 5 4; }
 .mapa-editor__tools button { height: 36px; width: 36px; padding: 0; }

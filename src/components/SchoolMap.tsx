@@ -236,6 +236,7 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
                       if (activeMap.visao_geral && !box && area.tipo !== "BLOCO") showLabel = false;
                       return <g key={area.id}>
                         <path data-area-id={area.id} d={area.caminho_svg} transform={areaTransform(area)} role={interactive ? "button" : undefined} tabIndex={interactive ? 0 : undefined}
+                          pointerEvents={interactive ? undefined : "none"}
                           aria-label={area.nome} aria-pressed={interactive ? selected : undefined} onClick={interactive ? () => map.selectArea(area) : undefined}
                           onKeyDown={interactive ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); map.selectArea(area); } } : undefined}
                           data-category={area.categoria ?? "AMBIENTE"} data-kind={area.tipo} data-sector={Boolean(area.setor_id)}

@@ -345,6 +345,7 @@ describe("SchoolMap", () => {
 
     const overview = await screen.findByRole("group", { name: "CIMOL · Visão geral" });
     expect(within(overview).queryByRole("button", { name: "Corredor sem atalho" })).not.toBeInTheDocument();
+    expect(overview.querySelector('[data-area-id="103"]')).toHaveAttribute("pointer-events", "none");
     fireEvent.click(within(overview).getByRole("button", { name: "Bloco sem atalho" }));
     expect(screen.getByRole("group", { name: "CIMOL · Visão geral" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Detalhes da área selecionada" })).toHaveTextContent("Bloco sem atalho");

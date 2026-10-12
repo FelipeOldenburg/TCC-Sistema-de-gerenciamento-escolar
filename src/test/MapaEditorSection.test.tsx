@@ -312,6 +312,38 @@ describe("MapaEditorSection", () => {
     expect(selected.getAttribute("transform")).toMatch(/^matrix\(1 0 0 1 [1-9]/);
   });
 
+  it("encaixa bordas com guia, permite ajuste fino e libera sobreposição pelo controle", async () => {
+    Object.defineProperty(SVGElement.prototype, "getBBox", {
+      configurable: true,
+      value: function (this: SVGElement) {
+        return { x: this.getAttribute("data-area-id") === "2" ? 35 : 10, y: 10, width: 20, height: 20 };
+      },
+    });
+    mockApi(200, [{ ...maps[0], areas: [area(1, "Sala 201", "AMBIENTE"), {
+      ...area(2, "Sala 202", "AMBIENTE"), caminho_svg: "M 35 10 H 55 V 30 H 35 Z",
+    }] }]);
+    render(<MapaEditorSection institutionId={1} />);
+    const svg = await screen.findByRole("group", { name: "Editar áreas de Bloco C · 2º pavimento" });
+    Object.defineProperty(svg, "getBoundingClientRect", {
+      value: () => ({ left: 0, top: 0, width: 800, height: 520 }),
+    });
+    const selected = screen.getByRole("button", { name: "Selecionar e mover Sala 201" });
+    fireEvent(selected, Object.assign(new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 100, clientY: 100 }), { pointerId: 1, pointerType: "mouse" }));
+    fireEvent(svg, Object.assign(new MouseEvent("pointermove", { bubbles: true, clientX: 126, clientY: 100 }), { pointerId: 1 }));
+    expect(selected).toHaveAttribute("transform", "matrix(1 0 0 1 5 0)");
+    expect(svg.querySelector(".mapa-editor__guide")).toHaveAttribute("x1", "35");
+    fireEvent(svg, Object.assign(new MouseEvent("pointerup", { bubbles: true }), { pointerId: 1 }));
+    expect(svg.querySelector(".mapa-editor__guide")).toBeNull();
+
+    fireEvent.keyDown(selected, { key: "ArrowLeft" });
+    expect(selected).toHaveAttribute("transform", "matrix(1 0 0 1 4 0)");
+    fireEvent.click(screen.getByRole("switch", { name: "Permitir sobreposição" }));
+    expect(screen.getByRole("switch", { name: "Permitir sobreposição" })).toBeChecked();
+    fireEvent(selected, Object.assign(new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 100, clientY: 100 }), { pointerId: 2, pointerType: "mouse" }));
+    fireEvent(svg, Object.assign(new MouseEvent("pointermove", { bubbles: true, clientX: 230, clientY: 100 }), { pointerId: 2 }));
+    expect(selected).toHaveAttribute("transform", "matrix(1 0 0 1 25 0)");
+  });
+
   it("cancela o ajuste local sem enviar PATCH", async () => {
     const fetchMock = mockApi();
     render(<MapaEditorSection institutionId={1} />);
