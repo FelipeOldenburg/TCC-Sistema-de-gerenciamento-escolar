@@ -85,8 +85,8 @@ const referenceRooms = [
 export const ensureReferenceRooms = async (institutionId, db) => {
   for (const blockName of ["Bloco A", "Bloco B", "Bloco C", "Bloco D", "Bloco E"]) {
     await db.query(
-      `INSERT INTO blocos (instituicao_id, nome, descricao)
-       VALUES (?, ?, 'Cadastro base do quadro fotografado de salas e laboratorios.')
+      `INSERT INTO blocos (instituicao_id, nome)
+       VALUES (?, ?)
        ON CONFLICT (instituicao_id, nome) DO NOTHING`,
       [institutionId, blockName]
     );
@@ -109,18 +109,12 @@ export const ensureReferenceRooms = async (institutionId, db) => {
       [institutionId, blockId, name]
     );
     if (existingRooms.length) continue;
-    const notes = [
-      "Cadastro inicial a partir das fotos IMG_4403/IMG_4404.",
-      capacity == null ? "Capacidade ilegivel nas fotos; conferir no CPD." : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
     await db.query(
       `INSERT INTO salas
-       (instituicao_id, bloco_id, nome, andar, capacidade, tipo, observacoes)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+       (instituicao_id, bloco_id, nome, andar, capacidade, tipo)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT (instituicao_id, bloco_id, nome) DO NOTHING`,
-      [institutionId, blockId, name, floorFromRoom(name), capacity, type, notes]
+      [institutionId, blockId, name, floorFromRoom(name), capacity, type]
     );
   }
 };

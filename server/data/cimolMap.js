@@ -30,7 +30,7 @@ export const cimolMapViews = [
   {
     key: 'campus', nome: 'Visão geral', bloco_nome: null, visao_geral: true,
     piso: null, largura: 1400, altura: 930,
-    descricao: 'Implantação esquemática baseada na montagem dos térreos, sem escala ou orientação cardinal. O B separa os dois pátios; o Museu tem acesso pelo pátio de C.',
+    descricao: 'Mapa esquemático do campus, sem escala ou orientação cardinal. O B separa os dois pátios; o Museu tem acesso pelo pátio de C.',
     areas: [
       rect('patio-b-c', 'Pátio de C', 90, 180, 820, 160, { categoria: 'PATIO', descricao: 'Pátio central entre a ala superior de C e a faixa de salas do B.' }),
       rect('patio-a-b', 'Pátio entre A e B', 20, 460, 630, 200, { categoria: 'PATIO', descricao: 'Ao sair de A, atravesse o pátio para o acesso a B ou siga à direita para o ginásio.' }),
@@ -46,7 +46,7 @@ export const cimolMapViews = [
       rect('entrada', 'Entrada de A', 350, 850, 115, 55, { categoria: 'ACESSO', destino_key: 'a-terreo', descricao: 'Acesso do passeio à circulação central do térreo de A.' }),
       rect('carros', 'Entrada de carros', 20, 660, 50, 190, { categoria: 'ACESSO', descricao: 'Acesso de veículos ao lado da biblioteca de A.' }),
       rect('a-patio', 'Saída para o pátio', 350, 625, 115, 35, { categoria: 'ACESSO', destino_key: 'a-terreo', descricao: 'A circulação central de A se abre para o pátio.' }),
-      rect('b-patio', 'Entrada principal de B', 355, 440, 100, 40, { categoria: 'ACESSO', destino_key: 'b-terreo', descricao: 'Entrada de B pela face inferior da montagem, voltada ao pátio central.' }),
+      rect('b-patio', 'Entrada principal de B', 355, 440, 100, 40, { categoria: 'ACESSO', destino_key: 'b-terreo', descricao: 'Entrada de B voltada ao pátio central entre A e B.' }),
       rect('b-c', 'Saída dos fundos de B', 355, 320, 100, 20, { categoria: 'ACESSO', destino_key: 'b-terreo', descricao: 'Corredor superior de B: saída dos fundos em direção ao pátio de C, não entrada principal.' }),
       rect('c-lateral', 'Escada da ala lateral', 75, 190, 55, 95, { categoria: 'ESCADA', destino_key: 'c-2-lateral', descricao: 'Acesso exclusivo às salas isoladas C210 e C211; não chega ao corredor principal de C2.' }),
       rect('c-acesso', 'Acesso a C térreo', 440, 160, 90, 20, { categoria: 'ACESSO', destino_key: 'c-terreo', descricao: 'Entrada na ala superior do térreo de C pelo pátio central.' }),
