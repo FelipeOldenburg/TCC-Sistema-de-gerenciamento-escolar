@@ -410,6 +410,27 @@ export const createFacilitiesController = ({
     }
   };
 
+  const updateMapAreaLayers = async (req, res, next) => {
+    try {
+      const ids = mapAreaIds(req);
+      const areaIds = req.body?.area_ids;
+      const previousIds = req.body?.anterior;
+      const validIds = (values) => Array.isArray(values) && values.length >= 1 && values.length <= 500 &&
+        values.every((id) => Number.isSafeInteger(id) && id > 0) && new Set(values).size === values.length;
+      if (!ids || !validIds(areaIds) || !validIds(previousIds) || areaIds.length !== previousIds.length) {
+        throw httpError(400, "Informe a ordem anterior e a nova ordem das áreas sem repetições.");
+      }
+      const result = await facilitiesModel.updateMapAreaLayers({
+        institutionId: req.institution.id, mapId: ids.mapId, areaIds, previousIds,
+      });
+      if (result.notFound) throw httpError(404, "Mapa não encontrado nesta instituição.");
+      if (result.conflict) throw httpError(409, "A ordem ou as áreas mudaram. Recarregue o mapa antes de salvar.");
+      return res.json({ ok: true });
+    } catch (error) {
+      return next(error);
+    }
+  };
+
   const createMapBlockArea = async (req, res, next) => {
     try {
       const ids = mapAreaIds(req);
@@ -525,6 +546,7 @@ export const createFacilitiesController = ({
     saveMap,
     updateMapAreaAdjustment,
     updateMapAreaAdjustments,
+    updateMapAreaLayers,
     updateMapBlockArea,
     updateBlock,
     updateRoom,

@@ -12,7 +12,7 @@ const app = Object.fromEntries(
 );
 const controller = Object.fromEntries(
   [
-    "listMaps", "saveMap", "createMapBlockArea", "updateMapBlockArea", "deleteMapBlockArea", "restoreMapArea", "updateMapAreaAdjustment", "updateMapAreaAdjustments",
+    "listMaps", "saveMap", "createMapBlockArea", "updateMapBlockArea", "deleteMapBlockArea", "restoreMapArea", "updateMapAreaAdjustment", "updateMapAreaAdjustments", "updateMapAreaLayers",
     "listBlocks", "createBlock", "updateBlock", "deleteBlock", "listRooms", "listRoomOccupations", "getRoom",
     "getRoomOccupation", "listRoomChanges", "createRoom", "updateRoom", "deleteRoom",
   ].map((name) => [name, () => {}])
@@ -32,6 +32,7 @@ assert.deepEqual(
     "put /api/mapas/:id",
     "post /api/mapas/:mapId/areas",
     "patch /api/mapas/:mapId/areas/ajustes",
+    "patch /api/mapas/:mapId/areas/camadas",
     "patch /api/mapas/:mapId/areas/:areaId",
     "delete /api/mapas/:mapId/areas/:areaId",
     "post /api/mapas/:mapId/areas/:areaId/restaurar",
@@ -50,7 +51,7 @@ assert.deepEqual(
     "delete /api/salas/:id",
   ]
 );
-assert.equal(routes.filter(([, , middleware]) => middleware === cpdOnly).length, 15);
+assert.equal(routes.filter(([, , middleware]) => middleware === cpdOnly).length, 16);
 
 let savedRoom;
 let savedSoftwareLink;
@@ -434,6 +435,7 @@ const metadataModel = createFacilitiesModel({
       assert.match(sql, /a.chave_publicacao/);
       assert.match(sql, /a.ajuste_x, a.ajuste_y, a.escala_x, a.escala_y/);
       assert.match(sql, /a.excluido_cpd = FALSE/);
+      assert.match(sql, /ORDER BY a.ordem_camada ASC NULLS LAST, a.id/);
       return [[{ ...detailedMap.map.areas[0], id: 32, mapa_id: 12,
         chave_publicacao: "d202", ajuste_x: 0, ajuste_y: 0, escala_x: 1, escala_y: 1 }]];
     },
@@ -555,6 +557,97 @@ assert.deepEqual(batchSteps, ["begin", "rollback", "release"]);
 batchSteps.length = 0; batchMapExists = false;
 assert.deepEqual(await batchModel.updateMapAreaAdjustments(batchArgs), { notFound: true });
 assert.deepEqual(batchSteps, ["begin", "rollback", "release"]);
+
+const layerQueries = [];
+const layerSteps = [];
+let currentLayers = [31, 32, 33];
+let layerAffected = 3;
+const layerModel = createFacilitiesModel({
+  db: { getConnection: async () => {
+    const before = [...currentLayers];
+    return {
+      query: async (sql, params) => {
+        layerQueries.push({ sql, params });
+        if (sql.startsWith("SELECT id FROM mapas")) return [params[0] === 12 && params[1] === 2 ? [{ id: 12 }] : []];
+        if (sql.startsWith("SELECT a.id FROM mapa_areas")) {
+          assert.deepEqual(params, [12, 2]);
+          assert.match(sql, /excluido_cpd = FALSE/);
+          assert.match(sql, /ORDER BY a.ordem_camada ASC NULLS LAST, a.id FOR UPDATE OF a/);
+          return [currentLayers.map((id) => ({ id }))];
+        }
+        if (sql.startsWith("UPDATE mapa_areas a SET ordem_camada")) {
+          assert.deepEqual(params.slice(-2), [12, 2]);
+          assert.doesNotMatch(sql, /editado_cpd/);
+          assert.match(sql, /a.id = nova.id AND a.mapa_id = \? AND a.instituicao_id = \?/);
+          if (layerAffected === 3) currentLayers = params.slice(0, -2).filter((_, index) => index % 2 === 0);
+          return [{ affectedRows: layerAffected }];
+        }
+        assert.fail(`Unexpected layer query: ${sql}`);
+      },
+      beginTransaction: async () => layerSteps.push("begin"),
+      commit: async () => layerSteps.push("commit"),
+      rollback: async () => { currentLayers = before; layerSteps.push("rollback"); },
+      release: () => layerSteps.push("release"),
+    };
+  } }, dayOrderSql: "h.dia",
+});
+const layerArgs = { institutionId: 2, mapId: 12, areaIds: [31, 33, 32], previousIds: [31, 32, 33] };
+assert.deepEqual(await layerModel.updateMapAreaLayers(layerArgs), { ok: true });
+assert.deepEqual(currentLayers, [31, 33, 32]);
+assert.deepEqual(layerSteps, ["begin", "commit", "release"]);
+assert.deepEqual(layerQueries.at(-1).params, [31, 0, 33, 1, 32, 2, 12, 2]);
+layerSteps.length = 0;
+assert.deepEqual(await layerModel.updateMapAreaLayers(layerArgs), { conflict: true }, "Ordem antiga não pode sobrescrever outra edição.");
+assert.deepEqual(layerSteps, ["begin", "rollback", "release"]);
+assert.deepEqual(currentLayers, [31, 33, 32]);
+layerSteps.length = 0;
+assert.deepEqual(await layerModel.updateMapAreaLayers({ ...layerArgs, previousIds: currentLayers,
+  areaIds: [31, 33, 999] }), { conflict: true }, "IDs ocultos ou de outra vista não entram na camada.");
+assert.deepEqual(layerSteps, ["begin", "rollback", "release"]);
+layerSteps.length = 0;
+assert.deepEqual(await layerModel.updateMapAreaLayers({ ...layerArgs, institutionId: 3 }), { notFound: true });
+assert.deepEqual(layerSteps, ["begin", "rollback", "release"]);
+layerSteps.length = 0; layerAffected = 0;
+assert.deepEqual(await layerModel.updateMapAreaLayers({ ...layerArgs, previousIds: currentLayers }), { conflict: true });
+assert.deepEqual(layerSteps, ["begin", "rollback", "release"]);
+assert.deepEqual(currentLayers, [31, 33, 32]);
+
+let layerCall;
+let layerOutcome = { ok: true };
+const layerController = createFacilitiesController({
+  asBoolean: Boolean, cacheableJson: () => {},
+  facilitiesModel: { updateMapAreaLayers: async (args) => { layerCall = args; return layerOutcome; } },
+  httpError: (statusCode, message) => Object.assign(new Error(message), { statusCode }),
+});
+receivedError = undefined;
+await layerController.updateMapAreaLayers({ params: { mapId: "12" }, institution: { id: 2 },
+  body: { area_ids: [31, 33, 32], anterior: [31, 32, 33] } }, mapResponse,
+  (error) => { receivedError = error; });
+assert.equal(receivedError, undefined);
+assert.deepEqual(layerCall, { institutionId: 2, mapId: 12, areaIds: [31, 33, 32], previousIds: [31, 32, 33] });
+assert.deepEqual(mapResponse.payload, { ok: true });
+for (const body of [
+  { area_ids: [31, 31], anterior: [31, 32] },
+  { area_ids: [31, "32"], anterior: [31, 32] },
+  { area_ids: [31], anterior: [31, 32] },
+  { area_ids: [], anterior: [] },
+]) {
+  layerCall = null; receivedError = undefined;
+  await layerController.updateMapAreaLayers({ params: { mapId: "12" }, institution: { id: 2 }, body }, mapResponse,
+    (error) => { receivedError = error; });
+  assert.equal(receivedError?.statusCode, 400);
+  assert.equal(layerCall, null);
+}
+layerOutcome = { conflict: true }; receivedError = undefined;
+await layerController.updateMapAreaLayers({ params: { mapId: "12" }, institution: { id: 2 },
+  body: { area_ids: [31], anterior: [31] } }, mapResponse,
+  (error) => { receivedError = error; });
+assert.equal(receivedError?.statusCode, 409);
+layerOutcome = { notFound: true }; receivedError = undefined;
+await layerController.updateMapAreaLayers({ params: { mapId: "12" }, institution: { id: 2 },
+  body: { area_ids: [31], anterior: [31] } }, mapResponse,
+  (error) => { receivedError = error; });
+assert.equal(receivedError?.statusCode, 404);
 
 const blockArea = {
   nome: "Bloco D", caminho_svg: "M 10 10 H 60 V 50 H 10 Z", bloco_id: 4,
@@ -867,6 +960,7 @@ assert.equal(receivedError?.statusCode, 400);
 
 const schemaSql = readFileSync(new URL("./schema.sql", import.meta.url), "utf8");
 assert.match(schemaSql, /DROP INDEX IF EXISTS uq_mapa_areas_nome_visivel/);
+assert.match(schemaSql, /ADD COLUMN IF NOT EXISTS ordem_camada INTEGER NULL/);
 assert.doesNotMatch(schemaSql, /CREATE UNIQUE INDEX IF NOT EXISTS uq_mapa_areas_nome_visivel/);
 const swapAreas = [{ id: 51, nome: "Sala A", excluido_cpd: false },
   { id: 52, nome: "Sala B", excluido_cpd: false }];

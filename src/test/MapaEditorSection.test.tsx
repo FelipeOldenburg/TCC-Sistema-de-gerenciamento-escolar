@@ -36,6 +36,14 @@ const mockApi = (patchStatus = 200, mapData: MapView[] = maps) => {
       }) });
       return new Response(JSON.stringify({ ok: true }));
     }
+    if (url.endsWith("/api/mapas/1/areas/camadas") && init?.method === "PATCH") {
+      if (patchStatus === 409) return new Response(JSON.stringify({ message: "A ordem mudou." }), { status: 409 });
+      const body = JSON.parse(String(init.body)) as { area_ids: number[] };
+      currentMaps = currentMaps.map((map) => map.id !== 1 ? map : { ...map,
+        areas: body.area_ids.map((id) => map.areas.find((item) => item.id === id)!),
+      });
+      return new Response(JSON.stringify({ ok: true }));
+    }
     if (url.endsWith("/api/mapas/1/areas") && init?.method === "POST") {
       const body = JSON.parse(String(init.body));
       currentMaps = currentMaps.map((map) => map.id !== 1 ? map : { ...map, areas: [...map.areas, {
@@ -48,8 +56,8 @@ const mockApi = (patchStatus = 200, mapData: MapView[] = maps) => {
       const areaId = Number(url.split("/").pop());
       const body = JSON.parse(String(init.body));
       currentMaps = currentMaps.map((map) => map.id !== 1 ? map : { ...map, areas: map.areas.map((item) =>
-        item.id === areaId ? { ...item, ...(Object.hasOwn(body, "nome") ? { nome: body.nome } : {}),
-          ...(Object.hasOwn(body, "destino_mapa_id") ? { destino_mapa_id: body.destino_mapa_id } : {}) } : item) });
+        item.id === areaId ? { ...item, ...(Object.prototype.hasOwnProperty.call(body, "nome") ? { nome: body.nome } : {}),
+          ...(Object.prototype.hasOwnProperty.call(body, "destino_mapa_id") ? { destino_mapa_id: body.destino_mapa_id } : {}) } : item) });
       return new Response(JSON.stringify({ ok: true }));
     }
     if (/\/api\/mapas\/1\/areas\/\d+$/.test(url) && init?.method === "DELETE") {
@@ -310,6 +318,51 @@ describe("MapaEditorSection", () => {
     expect(screen.getByLabelText("Mapa / pavimento")).toBeEnabled();
   });
 
+  it("ordena vários bloquinhos em camadas, salva uma vez e mantém a ordem ao recarregar", async () => {
+    const fetchMock = mockApi();
+    const first = render(<MapaEditorSection institutionId={1} />);
+    const svg = await screen.findByRole("group", { name: "Editar áreas de Bloco C · 2º pavimento" });
+    const order = () => Array.from(svg.querySelectorAll("[data-area-id]"), (node) => Number(node.getAttribute("data-area-id")));
+    expect(order()).toEqual([1, 2, 3, 4, 5]);
+
+    await selectArea(1);
+    fireEvent.click(screen.getByRole("button", { name: "Trazer para frente" }));
+    expect(order()).toEqual([2, 3, 4, 5, 1]);
+    await selectArea(3);
+    fireEvent.click(screen.getByRole("button", { name: "Enviar para trás" }));
+    expect(order()).toEqual([3, 2, 4, 5, 1]);
+    await selectArea(4);
+    fireEvent.click(screen.getByRole("button", { name: "Avançar uma camada" }));
+    expect(order()).toEqual([3, 2, 5, 4, 1]);
+    expect(screen.getByLabelText("Mapa / pavimento")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar camadas" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Salvar camadas" })).not.toBeInTheDocument());
+    const calls = fetchMock.mock.calls.filter(([input, init]) => String(input).endsWith("/areas/camadas") && init?.method === "PATCH");
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(String(calls[0][1]?.body))).toEqual({ area_ids: [3, 2, 5, 4, 1], anterior: [1, 2, 3, 4, 5] });
+    expect(screen.getByLabelText("Mapa / pavimento")).toBeEnabled();
+
+    first.unmount();
+    render(<MapaEditorSection institutionId={1} />);
+    const reloaded = await screen.findByRole("group", { name: "Editar áreas de Bloco C · 2º pavimento" });
+    expect(Array.from(reloaded.querySelectorAll("[data-area-id]"), (node) => Number(node.getAttribute("data-area-id"))))
+      .toEqual([3, 2, 5, 4, 1]);
+  });
+
+  it("preserva o rascunho de camadas quando a ordem salva no servidor mudou", async () => {
+    const fetchMock = mockApi(409);
+    render(<MapaEditorSection institutionId={1} />);
+    await selectArea(1);
+    fireEvent.click(screen.getByRole("button", { name: "Trazer para frente" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar camadas" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/ordem das áreas mudou/i);
+    expect(screen.getByRole("button", { name: "Descartar e atualizar" })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/areas/camadas"))).toHaveLength(1);
+    const svg = screen.getByRole("group", { name: "Editar áreas de Bloco C · 2º pavimento" });
+    expect(Array.from(svg.querySelectorAll("[data-area-id]"), (node) => Number(node.getAttribute("data-area-id"))))
+      .toEqual([2, 3, 4, 5, 1]);
+  });
+
   it("recupera vários ajustes na sessão e só descarta todos por ação explícita", async () => {
     mockApi();
     const first = render(<MapaEditorSection institutionId={1} />);
@@ -363,7 +416,7 @@ describe("MapaEditorSection", () => {
     expect(selected.getAttribute("transform")).toMatch(/^matrix\(1 0 0 1 [1-9]/);
   });
 
-  it("encaixa bordas com guia, permite ajuste fino e libera sobreposição pelo controle", async () => {
+  it("encaixa bordas com guia, permite ajuste fino e sobreposição", async () => {
     Object.defineProperty(SVGElement.prototype, "getBBox", {
       configurable: true,
       value: function (this: SVGElement) {
@@ -388,8 +441,6 @@ describe("MapaEditorSection", () => {
 
     fireEvent.keyDown(selected, { key: "ArrowLeft" });
     expect(selected).toHaveAttribute("transform", "matrix(1 0 0 1 4 0)");
-    fireEvent.click(screen.getByRole("switch", { name: "Permitir sobreposição" }));
-    expect(screen.getByRole("switch", { name: "Permitir sobreposição" })).toBeChecked();
     fireEvent(selected, Object.assign(new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 100, clientY: 100 }), { pointerId: 2, pointerType: "mouse" }));
     fireEvent(svg, Object.assign(new MouseEvent("pointermove", { bubbles: true, clientX: 230, clientY: 100 }), { pointerId: 2 }));
     expect(selected).toHaveAttribute("transform", "matrix(1 0 0 1 25 0)");

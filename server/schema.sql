@@ -439,6 +439,7 @@ ALTER TABLE mapa_areas ADD COLUMN IF NOT EXISTS escala_y DOUBLE PRECISION NOT NU
 ALTER TABLE mapa_areas ADD COLUMN IF NOT EXISTS editado_cpd BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE mapa_areas ADD COLUMN IF NOT EXISTS excluido_cpd BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE mapa_areas ADD COLUMN IF NOT EXISTS chave_publicacao VARCHAR(120) NULL;
+ALTER TABLE mapa_areas ADD COLUMN IF NOT EXISTS ordem_camada INTEGER NULL CHECK (ordem_camada >= 0);
 DROP INDEX IF EXISTS uq_mapa_areas_nome_visivel;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_mapa_areas_chave_publicacao
   ON mapa_areas (instituicao_id, mapa_id, chave_publicacao) WHERE chave_publicacao IS NOT NULL;

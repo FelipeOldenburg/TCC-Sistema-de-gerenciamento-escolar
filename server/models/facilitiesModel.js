@@ -367,7 +367,7 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
          LEFT JOIN salas s ON s.id = a.sala_id AND s.instituicao_id = a.instituicao_id
          LEFT JOIN setores st ON st.id = a.setor_id AND st.instituicao_id = a.instituicao_id
         WHERE a.instituicao_id = ? ${authenticated ? "" : "AND a.excluido_cpd = FALSE AND m.ativo = TRUE"}
-        ORDER BY a.id`,
+        ORDER BY a.ordem_camada ASC NULLS LAST, a.id`,
       [institutionId]
     );
     return maps.map((map) => ({
@@ -750,6 +750,44 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
     }
   };
 
+  const updateMapAreaLayers = async ({ institutionId, mapId, areaIds, previousIds }) => {
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [maps] = await conn.query(
+        "SELECT id FROM mapas WHERE id = ? AND instituicao_id = ? FOR UPDATE", [mapId, institutionId]
+      );
+      if (!maps.length) { await conn.rollback(); return { notFound: true }; }
+      const [areas] = await conn.query(
+        `SELECT a.id FROM mapa_areas a
+          WHERE a.mapa_id = ? AND a.instituicao_id = ? AND a.excluido_cpd = FALSE
+          ORDER BY a.ordem_camada ASC NULLS LAST, a.id FOR UPDATE OF a`,
+        [mapId, institutionId]
+      );
+      const currentIds = areas.map((area) => Number(area.id));
+      if (currentIds.length !== previousIds.length || currentIds.some((id, index) => id !== previousIds[index]) ||
+          currentIds.length !== areaIds.length || areaIds.some((id) => !currentIds.includes(id))) {
+        await conn.rollback();
+        return { conflict: true };
+      }
+      const values = areaIds.map(() => "(?::integer, ?::integer)").join(", ");
+      const [result] = await conn.query(
+        `UPDATE mapa_areas a SET ordem_camada = nova.ordem, updated_at = CURRENT_TIMESTAMP
+           FROM (VALUES ${values}) AS nova(id, ordem)
+          WHERE a.id = nova.id AND a.mapa_id = ? AND a.instituicao_id = ? AND a.excluido_cpd = FALSE`,
+        [...areaIds.flatMap((id, index) => [id, index]), mapId, institutionId]
+      );
+      if (result.affectedRows !== areaIds.length) { await conn.rollback(); return { conflict: true }; }
+      await conn.commit();
+      return { ok: true };
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
+  };
+
   return {
     createBlock,
     createMapBlockArea,
@@ -770,6 +808,7 @@ export const createFacilitiesModel = ({ db, dayOrderSql }) => {
     saveMap,
     updateMapAreaAdjustment,
     updateMapAreaAdjustments,
+    updateMapAreaLayers,
     updateMapBlockArea,
     updateBlock,
     updateRoom,

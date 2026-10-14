@@ -126,6 +126,7 @@ const db = { getConnection: async () => {
       if (sql.startsWith("INSERT INTO mapa_areas") || sql.startsWith("UPDATE mapa_areas")) {
         if (failArea) throw new Error("Falha simulada após gravar as vistas.");
         const update = sql.startsWith("UPDATE");
+        if (update) assert.doesNotMatch(sql, /ordem_camada/, "Republicação preserva a ordem definida pelo CPD.");
         const institutionId = params[update ? 14 : 13];
         const mapId = params[update ? 13 : 12];
         assert.equal(institutionId, 1);
@@ -174,10 +175,13 @@ assert.equal(state.areas.find((area) => area.nome === "Escada própria").destino
   state.maps.find((map) => map.nome.endsWith("lateral")).id);
 const firstIds = { maps: state.maps.map((map) => map.id), areas: state.areas.map((area) => area.id) };
 roomArea.chave_publicacao = null;
+roomArea.ordem_camada = 7;
 const second = await publishCimolMap(db, { views: sampleViews, apply: true });
 assert.equal(second.createdMaps, 0);
 assert.equal(second.createdAreas, 0);
 assert.equal(roomArea.chave_publicacao, "room", "Áreas antigas mantêm o ID quando recebem a chave estável.");
+assert.equal(roomArea.ordem_camada, 7, "Republicação mantém a camada sem congelar o restante da área.");
+assert.equal(roomArea.editado_cpd, false);
 assert.deepEqual({ maps: state.maps.map((map) => map.id), areas: state.areas.map((area) => area.id) }, firstIds);
 assert.deepEqual(state.maps.filter((map) => [700, 710, 723].includes(map.id)),
   protectedRows.maps.filter((map) => [700, 710, 723].includes(map.id)));
