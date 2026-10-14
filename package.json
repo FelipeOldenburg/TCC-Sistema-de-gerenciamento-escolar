@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:web -- --wait-for-api\" \"npm run dev:api\"",
     "dev:web": "node scripts/dev-web.mjs",
-    "dev:api": "node server/index.js",
+    "dev:api": "node --watch server/index.js",
     "start": "node server/index.js",
     "db:migrate": "node scripts/migrate-database.mjs",
     "db:bootstrap": "node scripts/bootstrap-database.mjs",

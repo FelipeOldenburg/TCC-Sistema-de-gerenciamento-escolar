@@ -331,52 +331,48 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
     });
     setError("");
   };
-  const saveLayers = async () => {
-    if (!activeMap || !layerDraft || !layerDirty || areaDetailsDirty || saving || conflict || orphanedDraft) return;
-    setSaving(true);
-    setError("");
-    try {
-      await apiFetch(`/api/mapas/${activeMap.id}/areas/camadas`, {
-        method: "PATCH", body: JSON.stringify({ area_ids: layerDraft, anterior: savedLayerIds }),
-      });
-      setMaps((current) => current.map((map) => map.id !== activeMap.id ? map : {
-        ...map,
-        areas: layerDraft.map((id) => map.areas.find((area) => area.id === id)!),
-      }));
-      setLayerDraft(null);
-      toast.success("Ordem das camadas salva no mapa.");
-    } catch (cause) {
-      if (cause instanceof ApiError && cause.status === 409) {
-        setConflict(true);
-        setError("A ordem das áreas mudou desde que você abriu o mapa. Descarte e atualize antes de ordenar novamente.");
-      } else setError(cause instanceof Error ? cause.message : "Não foi possível salvar as camadas.");
-    } finally {
-      setSaving(false);
-    }
-  };
   const save = async () => {
-    if (!activeMap || !drafts.length || areaDetailsDirty || saving || conflict || orphanedDraft) return;
+    if (!activeMap || (!adjustmentDirty && !layerDirty) || areaDetailsDirty || saving || conflict || orphanedDraft) return;
     setSaving(true);
     setError("");
+    let layersSaved = false;
     try {
-      await apiFetch(`/api/mapas/${activeMap.id}/areas/ajustes`, {
-        method: "PATCH",
-        body: JSON.stringify({ ajustes: drafts.map(({ areaId, draft, previous }) => ({
-          area_id: areaId, ...draft, anterior: previous,
-        })) }),
-      });
-      setMaps((current) => current.map((map) => map.id !== activeMap.id ? map : {
-        ...map,
-        areas: map.areas.map((area) => ({ ...area, ...drafts.find((item) => item.areaId === area.id)?.draft })),
-      }));
-      setDrafts([]);
+      if (layerDirty && layerDraft) {
+        await apiFetch(`/api/mapas/${activeMap.id}/areas/camadas`, {
+          method: "PATCH", body: JSON.stringify({ area_ids: layerDraft, anterior: savedLayerIds }),
+        });
+        setMaps((current) => current.map((map) => map.id !== activeMap.id ? map : {
+          ...map, areas: layerDraft.map((id) => map.areas.find((area) => area.id === id)!),
+        }));
+        setLayerDraft(null);
+        layersSaved = true;
+      }
+      if (drafts.length) {
+        await apiFetch(`/api/mapas/${activeMap.id}/areas/ajustes`, {
+          method: "PATCH",
+          body: JSON.stringify({ ajustes: drafts.map(({ areaId, draft, previous }) => ({
+            area_id: areaId, ...draft, anterior: previous,
+          })) }),
+        });
+        setMaps((current) => current.map((map) => map.id !== activeMap.id ? map : {
+          ...map,
+          areas: map.areas.map((area) => ({ ...area, ...drafts.find((item) => item.areaId === area.id)?.draft })),
+        }));
+        setDrafts([]);
+      }
       setConflict(false);
-      toast.success(`${drafts.length} ${drafts.length === 1 ? "área atualizada" : "áreas atualizadas"} no mapa.`);
+      toast.success("Alterações salvas no mapa.");
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 409) {
         setConflict(true);
-        setError("Uma das áreas foi alterada por outra pessoa. Nenhum ajuste foi salvo. Descarte e atualize para editar a versão mais recente.");
-      } else setError(cause instanceof Error ? cause.message : "Não foi possível salvar os ajustes.");
+        setError(layersSaved
+          ? "As camadas foram salvas, mas uma área mudou antes dos ajustes de posição. Descarte e atualize para editar a versão mais recente."
+          : layerDirty ? "A ordem das áreas mudou desde que você abriu o mapa. Descarte e atualize antes de ordenar novamente."
+            : "Uma das áreas foi alterada por outra pessoa. Nenhum ajuste foi salvo. Descarte e atualize para editar a versão mais recente.");
+      } else if (layerDirty && !layersSaved && cause instanceof ApiError && cause.status === 400 &&
+        cause.message.includes("Informe um nome ou destino válido")) {
+        setError("A API em execução está desatualizada. Reinicie npm run dev e tente salvar novamente.");
+      } else setError(`${layersSaved ? "As camadas foram salvas, mas os ajustes de posição não. " : ""}${cause instanceof Error ? cause.message : "Não foi possível salvar as alterações."}`);
     } finally {
       setSaving(false);
     }
@@ -761,7 +757,6 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
         {layerDirty && <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-medium text-foreground">Ordem alterada nesta vista. Salve para todos verem.</span>
           <Button type="button" size="sm" variant="outline" disabled={saving || loading} onClick={() => setLayerDraft(null)}>Descartar camadas</Button>
-          <Button type="button" size="sm" className="gap-1" disabled={saving || loading || areaDetailsDirty || conflict} onClick={() => void saveLayers()}><Save className="h-4 w-4" />Salvar camadas</Button>
         </div>}
       </section>
       <p id="mapa-editor-help" className="text-sm text-muted-foreground">Arraste para mover e puxe uma alça para redimensionar. Bordas próximas se encaixam e mostram uma guia. Selecione outras áreas e salve os ajustes juntos. As setas fazem ajustes finos; Shift acelera.</p>
@@ -841,8 +836,6 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
               <option key={map.id} value={map.id}>{mapTitle(map)}</option>)}
           </select>
         </label>
-        <Button type="button" className="gap-2" disabled={!areaDetailsDirty || !nameDraft.trim() || adjustmentDirty || layerDirty || saving || loading || conflict}
-          onClick={() => void saveAreaDetails()}><Save className="h-4 w-4" />{nameDirty && destinationDirty ? "Salvar alterações" : nameDirty ? "Salvar nome" : "Salvar destino"}</Button>
         <p className="text-xs text-muted-foreground sm:col-span-2">O nome muda apenas no mapa; salas e setores cadastrados permanecem iguais. Escolha outra vista para criar um atalho; deixe vazio para não navegar ao clicar.</p>
       </div>}
       {(adjustmentDirty || areaDetailsDirty) && <p role="status" className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm font-medium text-foreground">{adjustmentDirty
@@ -856,7 +849,9 @@ export default function MapaEditorSection({ institutionId, onUnsavedChange, onSa
           {(selectedAdjustmentDirty || areaDetailsDirty || conflict) && <Button type="button" variant="outline" onClick={discard} disabled={saving || loading} className="gap-2"><X />{conflict ? "Descartar e atualizar" : areaDetailsDirty ? "Cancelar alteração" : "Cancelar ajuste desta área"}</Button>}
           {drafts.length > 0 && !conflict && <Button type="button" variant="outline" onClick={discardAll} disabled={saving || loading}>Descartar todos</Button>}
           {selectedArea && <Button type="button" variant="outline" className="gap-2 text-destructive" disabled={dirty || saving || loading || conflict} onClick={() => void removeArea()}><Trash2 className="h-4 w-4" />Remover do mapa</Button>}
-          <Button type="button" onClick={() => void save()} disabled={!adjustmentDirty || areaDetailsDirty || saving || loading || conflict} className="gap-2"><Save />{saving ? "Salvando..." : drafts.length > 1 ? `Salvar ${drafts.length} ajustes` : "Salvar ajuste"}</Button>
+          <Button type="button" onClick={() => void (areaDetailsDirty ? saveAreaDetails() : save())}
+            disabled={(!adjustmentDirty && !layerDirty && !areaDetailsDirty) || (areaDetailsDirty && !nameDraft.trim()) || saving || loading || conflict || orphanedDraft || creating}
+            className="gap-2"><Save />{saving ? "Salvando..." : "Salvar alterações"}</Button>
         </div>
       </div>
     </div>
