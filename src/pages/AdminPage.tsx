@@ -52,6 +52,8 @@ type ReorganizacaoResposta = {
   } | null;
 };
 
+type TurmaPublicada = { turma: string; curso: string | null; ano: string | null };
+
 const sidebarItems: { id: AdminTab; label: string; icon: typeof FileUp; roles: UserRole[] }[] = [
   { id: "horarios", label: "Turmas e Horários", icon: FileUp, roles: ["ADMIN", "CPD"] },
   { id: "intervalos", label: "Intervalos", icon: Clock, roles: ["CPD"] },
@@ -81,8 +83,11 @@ const ReorganizacaoSection = () => {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
   const [resultado, setResultado] = useState<ReorganizacaoResposta | null>(null);
+  const [turmasPublicadas, setTurmasPublicadas] = useState<TurmaPublicada[]>([]);
+  const [carregandoTurmas, setCarregandoTurmas] = useState(true);
+  const [erroTurmas, setErroTurmas] = useState("");
 
-  const cursosDisponiveis = [
+  const cursosDisponiveis = [...new Set([
     "Informática",
     "Mecânica",
     "Química",
@@ -90,8 +95,9 @@ const ReorganizacaoSection = () => {
     "Eletrotécnica",
     "Móveis",
     "Design de Móveis",
-    "Meio Ambiente"
-  ];
+    "Meio Ambiente",
+    ...turmasPublicadas.flatMap(({ curso }) => curso ? [curso] : []),
+  ])];
 
   const handleAnoChange = (value: string) => {
     // Se o novo valor for menor que o anterior (deletando), limpa o campo
@@ -118,42 +124,10 @@ const ReorganizacaoSection = () => {
   };
 
   const handleTurmaChange = (value: string) => {
-    if (!value) {
-      setTurma("");
-      return;
-    }
-    // Remove qualquer caractere não numérico
-    const numeros = value.replace(/\D/g, "");
-    if (!numeros) {
-      setTurma("");
-      return;
-    }
-
-    // O primeiro dígito precisa ser '6'
-    if (numeros[0] !== "6") {
-      return;
-    }
-
-    let formatado = "6";
-
-    // O segundo dígito precisa ser de 1 a 8 (cursos 61 a 68)
-    if (numeros.length >= 2) {
-      const segundo = numeros[1];
-      if (["1", "2", "3", "4", "5", "6", "7", "8"].includes(segundo)) {
-        formatado += segundo;
-      } else {
-        setTurma(formatado);
-        return;
-      }
-    }
-
-    // O terceiro dígito vira o dígito após o hífen: 62-1
-    if (numeros.length >= 3) {
-      const terceiro = numeros[2];
-      formatado += `-${terceiro}`;
-    }
-
-    setTurma(formatado.slice(0, 4));
+    const selecionada = turmasPublicadas.find((item) => item.turma === value);
+    setTurma(value);
+    setAno(selecionada?.ano?.replace(/^([1-3])º?$/, "$1º") || "");
+    setCurso(selecionada?.curso || "");
   };
 
   const carregarRegistros = async () => {
@@ -174,6 +148,10 @@ const ReorganizacaoSection = () => {
 
   useEffect(() => {
     carregarRegistros();
+    apiFetch<{ turmas: TurmaPublicada[] }>("/api/horarios/publicados?apenas_opcoes=1")
+      .then((dados) => setTurmasPublicadas(dados.turmas))
+      .catch((error) => setErroTurmas(error instanceof Error ? error.message : "Erro ao carregar turmas publicadas."))
+      .finally(() => setCarregandoTurmas(false));
   }, []);
 
   const handleAdicionar = async () => {
@@ -272,14 +250,20 @@ const ReorganizacaoSection = () => {
               />
             </div>
             <div>
-              <label className="text-sm font-medium text-foreground mb-1 block">Turma</label>
-              <Input
-                placeholder="Ex: 621 (fica 62-1)"
+              <label htmlFor="reorganizacao-turma" className="text-sm font-medium text-foreground mb-1 block">Turma</label>
+              <select
+                id="reorganizacao-turma"
                 value={turma}
                 onChange={(e) => handleTurmaChange(e.target.value)}
-                className="rounded-xl"
-                maxLength={4}
-              />
+                disabled={carregandoTurmas || !!erroTurmas || !turmasPublicadas.length}
+                className="flex h-10 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <option value="">{carregandoTurmas ? "Carregando turmas..." : "Selecione a turma publicada"}</option>
+                {turmasPublicadas.map((item) => (
+                  <option key={`${item.turma}-${item.curso}-${item.ano}`} value={item.turma}>{item.turma}</option>
+                ))}
+              </select>
+              {erroTurmas && <p role="alert" className="mt-1 text-xs text-destructive">{erroTurmas}</p>}
             </div>
             <div>
               <label className="text-sm font-medium text-foreground mb-1 block">Curso</label>
