@@ -11,7 +11,7 @@ export const createRoomAssignmentService = ({ dayOrderSql, httpError, isFirstFlo
           AND h.categoria = 'TURMA'
           AND i.status = 'APROVADA'
           AND i.ativa = TRUE
-        FOR UPDATE`,
+        FOR UPDATE OF h`,
       [scheduleId, institutionId]
     );
     if (!schedules.length) throw httpError(404, "Horário publicado não encontrado.");

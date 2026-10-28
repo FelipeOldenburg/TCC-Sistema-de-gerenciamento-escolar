@@ -29,6 +29,9 @@ await service.updatePublishedScheduleRoom(connection, {
   reason: "Ajuste",
 });
 
+const scheduleLock = queries.find(({ sql }) => sql.includes("FOR UPDATE"));
+assert.match(scheduleLock.sql, /FOR UPDATE OF h\b/);
+
 const change = queries.find(({ sql }) => sql.includes("INSERT INTO sala_alteracoes"));
 assert.match(change.sql, /instituicao_id/);
 assert.deepEqual(change.params, [2, 20, 8, "1A", "SEG", 1, null, 4, 25, "Ajuste"]);
