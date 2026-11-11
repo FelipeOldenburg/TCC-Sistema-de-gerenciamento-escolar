@@ -215,6 +215,8 @@ const ReorganizacaoSection = () => {
 
   const trocaLabel = (troca: ReorganizacaoTroca) =>
     `${troca.dia} · ${troca.hora_inicio || `${troca.periodo}ª aula`} · ${troca.disciplina}`;
+  const salaLabel = (nome: string | null | undefined) =>
+    nome?.replace(/\b([a-z]\s*\d{3})\s*\([a-z]\)(?=\s*(?:,|$))/gi, "$1");
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -375,7 +377,7 @@ const ReorganizacaoSection = () => {
               {resultado.reorganizacao.aplicadas.length > 0 && (
                 <div className="mt-2 space-y-1 text-muted-foreground">
                   {resultado.reorganizacao.aplicadas.slice(0, 4).map((troca) => (
-                    <p key={troca.horario_id}>{trocaLabel(troca)}: {troca.sala_anterior || "sem sala"} → {troca.sala_nova}</p>
+                    <p key={troca.horario_id}>{trocaLabel(troca)}: {salaLabel(troca.sala_anterior) || "sem sala"} → {salaLabel(troca.sala_nova)}</p>
                   ))}
                 </div>
               )}
@@ -440,7 +442,7 @@ const ReorganizacaoSection = () => {
                 <TableCell className="text-sm">{reg.turma}</TableCell>
                 <TableCell className="text-sm">{reg.curso}</TableCell>
                 <TableCell className="text-sm">{reg.problema}</TableCell>
-                <TableCell className="text-sm text-primary">{reg.salas || "—"}</TableCell>
+                <TableCell className="text-sm text-primary">{salaLabel(reg.salas) || "—"}</TableCell>
                 <TableCell className="text-sm">
                   {reg.arquivo_nome ? (
                     <a

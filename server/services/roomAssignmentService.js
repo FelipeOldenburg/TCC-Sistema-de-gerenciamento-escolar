@@ -1,4 +1,10 @@
 export const createRoomAssignmentService = ({ dayOrderSql, httpError, isFirstFloorRoom, isUpperFloorRoom }) => {
+  const normalizeRoomText = (value) => String(value || "").normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().replace(/\s+/g, " ");
+  const roomType = (room) => normalizeRoomText(room?.tipo)
+    .replace(/^(?:laboratorio|lab\.?)(?:\s+de)?(?=\s|$)/, "laboratorio");
+  const resources = ["possui_computadores", "possui_data_show", "possui_internet", "possui_ar_condicionado"];
+
   const updatePublishedScheduleRoom = async (conn, { institutionId, scheduleId, roomId, userId, studentCount, reason }) => {
     const [schedules] = await conn.query(
       `SELECT h.id, h.importacao_id, h.turma, h.dia, h.periodo, h.hora_inicio, h.sala_id,
@@ -122,21 +128,22 @@ export const createRoomAssignmentService = ({ dayOrderSql, httpError, isFirstFlo
         ORDER BY ${dayOrderSql}, h.periodo`,
       [institutionId, turma]
     );
-    const upperSchedules = schedules.filter((schedule) =>
-      isUpperFloorRoom({ nome: schedule.sala_nome || schedule.ambiente, andar: schedule.sala_andar })
-    );
     const [rooms] = await conn.query(
-      `SELECT s.id, s.nome, s.andar, s.capacidade, s.acessivel, s.tipo, b.nome AS bloco_nome
+      `SELECT s.id, s.nome, s.andar, s.capacidade, s.acessivel, s.tipo, s.status,
+              s.possui_computadores, s.possui_data_show, s.possui_internet, s.possui_ar_condicionado,
+              b.nome AS bloco_nome
          FROM salas s
          JOIN blocos b ON b.id = s.bloco_id
         WHERE s.instituicao_id = ?
-          AND s.status = 'ATIVA'
         ORDER BY s.acessivel DESC,
                  CASE WHEN LOWER(s.tipo) LIKE '%sala%' THEN 0 ELSE 1 END,
                  b.nome, s.nome`,
       [institutionId]
     );
-    const candidates = rooms.filter(isFirstFloorRoom);
+    const candidates = rooms.filter((room) => room.status === "ATIVA" && isFirstFloorRoom(room));
+    const upperSchedules = schedules.filter((schedule) =>
+      isUpperFloorRoom({ nome: String(schedule.sala_nome || schedule.ambiente || "").trim(), andar: schedule.sala_andar })
+    );
     if (!upperSchedules.length) {
       return { avaliadas: 0, candidatas: candidates.length, aplicadas: [], nao_aplicadas: [] };
     }
@@ -145,8 +152,18 @@ export const createRoomAssignmentService = ({ dayOrderSql, httpError, isFirstFlo
     const skipped = [];
 
     for (const schedule of upperSchedules) {
-      let lastError = "";
-      for (const room of candidates) {
+      const sourceRooms = rooms.filter((room) => schedule.sala_id != null
+        ? Number(room.id) === Number(schedule.sala_id)
+        : normalizeRoomText(room.nome) === normalizeRoomText(schedule.ambiente));
+      const source = sourceRooms.length === 1 ? sourceRooms[0] : null;
+      const type = roomType(source);
+      let lastError = !source ? "Não foi possível identificar a sala de origem com segurança."
+        : !type || type === "laboratorio" ? "Informe o tipo e a especialidade da sala de origem antes da troca automática."
+          : "Nenhuma sala de primeiro andar compatível com o tipo e os recursos da sala de origem está disponível.";
+      const compatibleRooms = source && type && type !== "laboratorio" ? candidates.filter((room) =>
+        roomType(room) === type && resources.every((resource) => !source[resource] || room[resource])
+      ) : [];
+      for (const room of compatibleRooms) {
         if (Number(room.id) === Number(schedule.sala_id || 0)) continue;
         try {
           const result = await updatePublishedScheduleRoom(conn, {
@@ -172,7 +189,7 @@ export const createRoomAssignmentService = ({ dayOrderSql, httpError, isFirstFlo
           hora_inicio: schedule.hora_inicio,
           disciplina: schedule.disciplina,
           sala_anterior: schedule.sala_nome || schedule.ambiente || null,
-          motivo: lastError || "Nenhuma sala de primeiro andar livre para este horário.",
+          motivo: lastError,
         });
       }
     }
