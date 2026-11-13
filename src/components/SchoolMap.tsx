@@ -108,7 +108,7 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
   if (map.error) return <p role="alert" className="rounded-xl border bg-card p-6 text-destructive">{map.error}</p>;
 
   return (
-    <div className="school-map space-y-4">
+    <div className="school-map space-y-4 [overflow-wrap:anywhere]">
       <div className="school-map__search flex flex-col gap-3 rounded-xl p-4 sm:flex-row sm:items-center sm:gap-6 sm:p-5">
         <div className="min-w-0 sm:max-w-64">
           <h3 className="font-heading text-base font-bold text-foreground sm:text-lg">Para onde você vai?</h3>
@@ -144,7 +144,7 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
         <span><strong>{selectedRoom?.nome || selectedSector?.nome || activeArea?.nome.replace(/\n/g, " ")}</strong> · {activeMap && mapTitle(activeMap)}</span>
         <a href="#map-destination" className="font-medium text-primary underline underline-offset-4">{!selectedRoom && selectedSector && activeArea?.setor_id !== selectedSector.id && map.sectorLocations.length > 1 ? "Escolher local" : "Ver detalhes"}</a>
       </div>}
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_288px]">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_288px]">
         <div className="min-w-0 space-y-3">
           {!map.maps.length ? (
             <div className="flex min-h-80 flex-col items-center justify-center rounded-xl border bg-card p-8 text-center">
@@ -281,7 +281,7 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
             </>
           )}
         </div>
-        <aside id="map-destination" className="space-y-4 lg:sticky lg:top-4" aria-live="polite">
+        <aside id="map-destination" className="min-w-0 space-y-4 lg:sticky lg:top-4" aria-live="polite">
           {selectedRoom ? (
             <section className="school-map__detail rounded-xl border bg-card p-5" aria-label="Detalhes da sala selecionada">
               <h3 className="font-heading text-xl font-semibold">{selectedRoom.nome}</h3>
