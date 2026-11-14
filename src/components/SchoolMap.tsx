@@ -190,7 +190,7 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
 
   useEffect(() => {
     if (!activeMap) return;
-    const wideOnPhone = canvasSize.width < 600 && activeMap.largura / activeMap.altura > 1.8;
+    const wideOnPhone = activeMap.visao_geral && canvasSize.width < 600 && activeMap.largura / activeMap.altura > 1.8;
     const width = wideOnPhone ? Math.min(activeMap.largura, activeMap.altura * canvasSize.width / canvasSize.height) : activeMap.largura;
     setMapViewport(() => clampViewport({ x: (activeMap.largura - width) / 2, y: 0, width, height: activeMap.altura }, activeMap.largura, activeMap.altura));
   }, [activeMap, canvasSize.width, canvasSize.height, setMapViewport]);
