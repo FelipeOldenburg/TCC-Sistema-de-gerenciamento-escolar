@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { Building2, Home, LocateFixed, MapPin, MessageSquareWarning, Minus, Plus, RotateCcw, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,6 +7,46 @@ import { mapTitle, useSchoolMap } from "@/controllers/useSchoolMap";
 import { adjustedBounds, adjustedPoint, areaTransform } from "@/lib/mapGeometry";
 import type { ReportContext } from "@/components/sections/ReclamacoesSection";
 import "@/components/school-map.css";
+
+type Viewport = { x: number; y: number; width: number; height: number };
+type Point = { x: number; y: number };
+type PointerGesture = {
+  kind: "pan" | "pinch";
+  pointerIds: number[];
+  startView: Viewport;
+  startDistance: number;
+  anchor: Point;
+  moved: boolean;
+};
+
+const clampViewport = (view: Viewport, mapWidth: number, mapHeight: number): Viewport => {
+  const aspect = view.width / view.height;
+  const maxWidth = Math.min(mapWidth, mapHeight * aspect);
+  const minWidth = Math.min(maxWidth, Math.max(mapWidth / 5, mapHeight * aspect / 5));
+  const width = Math.max(minWidth, Math.min(maxWidth, view.width));
+  const height = width / aspect;
+  return {
+    x: Math.max(0, Math.min(mapWidth - width, view.x)),
+    y: Math.max(0, Math.min(mapHeight - height, view.y)),
+    width,
+    height,
+  };
+};
+
+const screenToViewPoint = (point: Point, view: Viewport, rect: DOMRect): Point => {
+  if (rect.width <= 0 || rect.height <= 0) return { x: view.x + view.width / 2, y: view.y + view.height / 2 };
+  const scale = Math.min(rect.width / view.width, rect.height / view.height);
+  const drawnWidth = view.width * scale;
+  const drawnHeight = view.height * scale;
+  const offsetX = (rect.width - drawnWidth) / 2;
+  const offsetY = (rect.height - drawnHeight) / 2;
+  return {
+    x: view.x + Math.max(0, Math.min(view.width, (point.x - rect.left - offsetX) / scale)),
+    y: view.y + Math.max(0, Math.min(view.height, (point.y - rect.top - offsetY) / scale)),
+  };
+};
+
+const pointsDistance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
 
 const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
   selectedAreaId?: number | null;
@@ -15,18 +56,144 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
   const map = useSchoolMap(selectedAreaId);
   const { activeMap, activeArea, selectedRoom, selectedSector } = map;
   const svgRef = useRef<SVGSVGElement>(null);
-  const [viewport, setViewport] = useState({ x: 0, y: 0, width: 1000, height: 700 });
+  const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, width: 1000, height: 700 });
+  const viewportRef = useRef(viewport);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 520 });
   const [bounds, setBounds] = useState<Record<number, { width: number; height: number }>>({});
-  const drag = useRef<{ x: number; y: number; moved: boolean } | null>(null);
+  const pointers = useRef(new Map<number, Point>());
+  const gesture = useRef<PointerGesture | null>(null);
+  const suppressClickUntil = useRef(0);
   const [resultIndex, setResultIndex] = useState(0);
+
+  const setMapViewport = useCallback((update: (current: Viewport) => Viewport) => {
+    setViewport((current) => {
+      const next = update(current);
+      viewportRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const startPinchGesture = useCallback((svg: SVGSVGElement, pointerIds: number[], startView: Viewport) => {
+    const first = pointers.current.get(pointerIds[0]);
+    const second = pointers.current.get(pointerIds[1]);
+    if (!first || !second) return;
+    const center = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+    gesture.current = {
+      kind: "pinch",
+      pointerIds,
+      startView,
+      startDistance: Math.max(1, pointsDistance(first, second)),
+      anchor: screenToViewPoint(center, startView, svg.getBoundingClientRect()),
+      moved: false,
+    };
+  }, []);
+
+  const handlePointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (pointers.current.size === 0) suppressClickUntil.current = 0;
+    const svg = event.currentTarget;
+    const point = { x: event.clientX, y: event.clientY };
+    pointers.current.set(event.pointerId, point);
+    try { svg.setPointerCapture(event.pointerId); } catch { /* Capture can fail if the pointer already ended. */ }
+
+    if (pointers.current.size >= 2 && activeMap) {
+      startPinchGesture(svg, [...pointers.current.keys()].slice(0, 2), viewportRef.current);
+    } else {
+      gesture.current = {
+        kind: "pan",
+        pointerIds: [event.pointerId],
+        startView: viewportRef.current,
+        startDistance: 0,
+        anchor: point,
+        moved: false,
+      };
+    }
+  };
+
+  const handlePointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (!activeMap || !pointers.current.has(event.pointerId)) return;
+    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const currentGesture = gesture.current;
+    const svg = svgRef.current;
+    if (!currentGesture || !svg) return;
+
+    if (currentGesture.kind === "pinch") {
+      const first = pointers.current.get(currentGesture.pointerIds[0]);
+      const second = pointers.current.get(currentGesture.pointerIds[1]);
+      if (!first || !second) return;
+      const distance = pointsDistance(first, second);
+      if (distance < 1) return;
+      const center = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+      const rect = svg.getBoundingClientRect();
+      const startView = currentGesture.startView;
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const scale = Math.min(rect.width / startView.width, rect.height / startView.height);
+      const offsetX = (rect.width - startView.width * scale) / 2;
+      const offsetY = (rect.height - startView.height * scale) / 2;
+      const centerX = Math.max(0, Math.min(1, (center.x - rect.left - offsetX) / (startView.width * scale)));
+      const centerY = Math.max(0, Math.min(1, (center.y - rect.top - offsetY) / (startView.height * scale)));
+      const factor = currentGesture.startDistance / distance;
+      const bounded = clampViewport({
+        ...startView,
+        x: 0,
+        y: 0,
+        width: startView.width * factor,
+        height: startView.height * factor,
+      }, activeMap.largura, activeMap.altura);
+      currentGesture.moved = true;
+      setMapViewport(() => clampViewport({
+        ...bounded,
+        x: currentGesture.anchor.x - centerX * bounded.width,
+        y: currentGesture.anchor.y - centerY * bounded.height,
+      }, activeMap.largura, activeMap.altura));
+      return;
+    }
+
+    if (currentGesture.pointerIds[0] !== event.pointerId) return;
+    const dx = event.clientX - currentGesture.anchor.x;
+    const dy = event.clientY - currentGesture.anchor.y;
+    if (!currentGesture.moved && Math.hypot(dx, dy) < 5) return;
+    currentGesture.moved = true;
+    const startView = currentGesture.startView;
+    if (startView.width >= activeMap.largura && startView.height >= activeMap.altura) return;
+    const rect = svg.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const scale = Math.min(rect.width / startView.width, rect.height / startView.height);
+    const next = clampViewport({ ...startView, x: startView.x - dx / scale, y: startView.y - dy / scale }, activeMap.largura, activeMap.altura);
+    if (next.x === startView.x && next.y === startView.y) return;
+    setMapViewport(() => next);
+  };
+
+  const handlePointerEnd = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (gesture.current?.moved) suppressClickUntil.current = Date.now() + 400;
+    pointers.current.delete(event.pointerId);
+    const svg = svgRef.current;
+    if (!svg || !activeMap || pointers.current.size === 0) {
+      gesture.current = null;
+      return;
+    }
+    const remaining = [...pointers.current.keys()];
+    const currentView = viewportRef.current;
+    if (remaining.length >= 2) startPinchGesture(svg, remaining.slice(0, 2), currentView);
+    else {
+      const id = remaining[0];
+      gesture.current = {
+        kind: "pan",
+        pointerIds: [id],
+        startView: currentView,
+        startDistance: 0,
+        anchor: pointers.current.get(id)!,
+        moved: false,
+      };
+    }
+  };
 
   useEffect(() => {
     if (!activeMap) return;
     const wideOnPhone = canvasSize.width < 600 && activeMap.largura / activeMap.altura > 1.8;
     const width = wideOnPhone ? Math.min(activeMap.largura, activeMap.altura * canvasSize.width / canvasSize.height) : activeMap.largura;
-    setViewport({ x: (activeMap.largura - width) / 2, y: 0, width, height: activeMap.altura });
-  }, [activeMap, canvasSize.width, canvasSize.height]);
+    setMapViewport(() => clampViewport({ x: (activeMap.largura - width) / 2, y: 0, width, height: activeMap.altura }, activeMap.largura, activeMap.altura));
+  }, [activeMap, canvasSize.width, canvasSize.height, setMapViewport]);
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg || typeof ResizeObserver === "undefined") return;
@@ -44,21 +211,18 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
     setBounds(measured);
   }, [activeMap]);
 
-  const fitMap = () => { if (activeMap) setViewport({ x: 0, y: 0, width: activeMap.largura, height: activeMap.altura }); };
+  const fitMap = () => { if (activeMap) setMapViewport(() => ({ x: 0, y: 0, width: activeMap.largura, height: activeMap.altura })); };
   const zoom = (factor: number) => {
     if (!activeMap) return;
-    setViewport((current) => {
-      const width = Math.max(activeMap.largura / 5, Math.min(activeMap.largura, current.width * factor));
+    setMapViewport((current) => {
+      const width = current.width * factor;
       const height = width * current.height / current.width;
-      return { x: current.x + (current.width - width) / 2, y: current.y + (current.height - height) / 2, width, height };
+      return clampViewport({ x: current.x + (current.width - width) / 2, y: current.y + (current.height - height) / 2, width, height }, activeMap.largura, activeMap.altura);
     });
   };
   const pan = (dx: number, dy: number) => {
     if (!activeMap) return;
-    setViewport((current) => ({ ...current,
-      x: Math.max(0, Math.min(activeMap.largura - current.width, current.x + current.width * dx)),
-      y: Math.max(0, Math.min(activeMap.altura - current.height, current.y + current.height * dy)),
-    }));
+    setMapViewport((current) => clampViewport({ ...current, x: current.x + current.width * dx, y: current.y + current.height * dy }, activeMap.largura, activeMap.altura));
   };
   const focusSelection = useCallback(() => {
     if (!activeMap || !activeArea) return;
@@ -81,12 +245,12 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
     const aspect = canvasSize.width / canvasSize.height;
     const width = Math.min(activeMap.largura, Math.max(box.width * 3, target.width * 1.2, activeMap.largura * 0.48, box.height * 3 * aspect, activeMap.altura * 0.48 * aspect));
     const height = Math.min(activeMap.altura, width / aspect);
-    setViewport({
+    setMapViewport(() => clampViewport({
       x: Math.max(0, Math.min(activeMap.largura - width, target.x + target.width / 2 - width / 2)),
       y: Math.max(0, Math.min(activeMap.altura - height, target.y + target.height / 2 - height / 2)),
       width, height,
-    });
-  }, [activeMap, activeArea, canvasSize, map.maps]);
+    }, activeMap.largura, activeMap.altura));
+  }, [activeMap, activeArea, canvasSize, map.maps, setMapViewport]);
   useEffect(() => {
     if (activeArea && !activeMap?.visao_geral) focusSelection();
   }, [activeMap, activeArea, focusSelection]);
@@ -189,30 +353,19 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
                   </div>
                   <div className="school-map__viewport relative">
                   <svg ref={svgRef} viewBox={`${viewport.x} ${viewport.y} ${viewport.width} ${viewport.height}`} role="group" aria-label={activeMap.nome}
-                    aria-describedby={zoomed ? "school-map-pan-help" : undefined} tabIndex={zoomed ? 0 : undefined}
-                    className="school-map__svg block h-[340px] w-full sm:h-[520px]" style={{ touchAction: zoomed ? "none" : "auto" }}
+                    aria-describedby="school-map-pan-help" tabIndex={zoomed ? 0 : undefined}
+                    className={`school-map__svg block h-[340px] w-full sm:h-[520px]${zoomed ? " school-map__svg--zoomed" : ""}`}
                     onKeyDown={(event) => {
                       const directions: Record<string, [number, number]> = { ArrowLeft: [-0.15, 0], ArrowRight: [0.15, 0], ArrowUp: [0, -0.15], ArrowDown: [0, 0.15] };
                       const direction = directions[event.key];
                       if (zoomed && direction) { event.preventDefault(); pan(...direction); }
                     }}
-                    onPointerDown={(event) => { if (zoomed && event.isPrimary !== false) drag.current = { x: event.clientX, y: event.clientY, moved: false }; }}
-                    onPointerMove={(event) => {
-                      const current = drag.current, svg = svgRef.current;
-                      if (!current || !svg) return;
-                      const dx = event.clientX - current.x, dy = event.clientY - current.y;
-                      if (!current.moved && Math.abs(dx) + Math.abs(dy) < 5) return;
-                      svg.setPointerCapture?.(event.pointerId);
-                      current.moved = true; current.x = event.clientX; current.y = event.clientY;
-                      const rect = svg.getBoundingClientRect(), scale = Math.max(viewport.width / rect.width, viewport.height / rect.height);
-                      setViewport((view) => ({ ...view,
-                        x: Math.max(0, Math.min(activeMap.largura - view.width, view.x - dx * scale)),
-                        y: Math.max(0, Math.min(activeMap.altura - view.height, view.y - dy * scale)),
-                      }));
-                    }}
-                    onPointerUp={() => { if (!drag.current?.moved) drag.current = null; }} onPointerCancel={() => { drag.current = null; }}
-                    onClickCapture={(event) => { if (drag.current?.moved) { event.stopPropagation(); drag.current = null; } }}>
-                    <title>{mapTitle(activeMap)}</title><desc>{activeMap.descricao || "Selecione um ambiente ou acesso. Use os controles para ampliar e mover o mapa."}</desc>
+                    onPointerDown={handlePointerDown} onPointerMove={handlePointerMove}
+                    onPointerUp={handlePointerEnd} onPointerCancel={handlePointerEnd}
+                    onClickCapture={(event) => {
+                      if (Date.now() < suppressClickUntil.current) { event.preventDefault(); event.stopPropagation(); }
+                    }}>
+                    <title>{mapTitle(activeMap)}</title><desc>{activeMap.descricao || "Selecione um ambiente ou acesso. No celular, use pinça para ampliar ou reduzir e arraste para mover."}</desc>
                     {activeMap.areas.map((area) => {
                       const interactive = area.destino_mapa_id != null || (area.categoria !== "CIRCULACAO" && area.categoria !== "PATIO");
                       const selected = area.id === activeArea?.id;
@@ -252,7 +405,7 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
                       </g>;
                     })}
                   </svg>
-                    {zoomed && <span id="school-map-pan-help" className="school-map__pan-hint mx-3 mt-3 block w-fit rounded-md px-2.5 py-1.5 text-xs font-medium sm:absolute sm:left-3 sm:top-3 sm:m-0">Arraste ou use as setas para explorar</span>}
+                    <span id="school-map-pan-help" className="school-map__pan-hint mx-3 mt-3 block w-fit rounded-md px-2.5 py-1.5 text-xs font-medium sm:absolute sm:left-3 sm:top-3 sm:m-0">No celular: use pinça para ampliar ou reduzir e arraste para mover</span>
                     <div className="school-map__tools m-3 ml-auto flex w-fit items-center gap-1 rounded-lg p-1 shadow-sm sm:absolute sm:bottom-3 sm:right-3 sm:m-0" aria-label="Controles do mapa">
                       {activeArea && <Button size="sm" variant="ghost" aria-label="Aproximar seleção" title="Aproximar seleção" onClick={focusSelection}><LocateFixed /></Button>}
                       <Button size="sm" variant="ghost" aria-label="Ampliar mapa" title="Ampliar mapa" onClick={() => zoom(0.75)}><Plus /></Button>

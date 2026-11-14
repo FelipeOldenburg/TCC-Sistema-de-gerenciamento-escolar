@@ -94,6 +94,16 @@
   background-color: var(--map-canvas);
   background-image: linear-gradient(var(--map-grid) 1px, transparent 1px), linear-gradient(90deg, var(--map-grid) 1px, transparent 1px);
   background-size: 24px 24px;
+  touch-action: none;
+  user-select: none;
+}
+
+.school-map__svg--zoomed {
+  cursor: grab;
+}
+
+.school-map__svg--zoomed:active {
+  cursor: grabbing;
 }
 
 .school-map__svg:focus-visible {
