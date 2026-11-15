@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { Building2, Home, LocateFixed, MapPin, MessageSquareWarning, Minus, Plus, RotateCcw, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -188,7 +188,10 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
     }
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    pointers.current.clear();
+    gesture.current = null;
+    suppressClickUntil.current = 0;
     if (!activeMap) return;
     const wideOnPhone = activeMap.visao_geral && canvasSize.width < 600 && activeMap.largura / activeMap.altura > 1.8;
     const width = wideOnPhone ? Math.min(activeMap.largura, activeMap.altura * canvasSize.width / canvasSize.height) : activeMap.largura;

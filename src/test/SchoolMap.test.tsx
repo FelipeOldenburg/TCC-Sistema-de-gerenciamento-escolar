@@ -172,6 +172,30 @@ describe("SchoolMap", () => {
     expect(screen.getByRole("group", { name: "CIMOL · Bloco C · 3º pavimento" })).toBeInTheDocument();
   });
 
+  it("reinicia o zoom de pinça ao trocar de pavimento pelas abas", async () => {
+    mockApi({ maps: navigationMaps, roomData: [] });
+    const getBoundingClientRect = vi.spyOn(SVGElement.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 0, y: 0, left: 0, top: 0, right: 390, bottom: 340, width: 390, height: 340, toJSON: () => ({}),
+    } as DOMRect);
+    render(<SchoolMap />);
+    await screen.findByRole("group", { name: "CIMOL · Visão geral" });
+    fireEvent.change(screen.getByRole("combobox", { name: "Escolher bloco" }), { target: { value: "3" } });
+
+    const svg = screen.getByRole("group", { name: "CIMOL · Bloco C · 2º pavimento" });
+    const pointer = (type: string, pointerId: number, clientX: number, clientY: number) =>
+      fireEvent(svg, Object.assign(new MouseEvent(type, { bubbles: true, clientX, clientY }), { pointerId, pointerType: "touch" }));
+    pointer("pointerdown", 1, 100, 100);
+    pointer("pointerdown", 2, 200, 100);
+    pointer("pointermove", 2, 300, 100);
+    expect(Number(svg.getAttribute("viewBox")?.split(" ")[2])).toBeLessThan(100);
+
+    fireEvent.click(screen.getByRole("button", { name: "Bloco C · 3º pavimento" }));
+    await waitFor(() => expect(screen.getByRole("group", { name: "CIMOL · Bloco C · 3º pavimento" })).toHaveAttribute("viewBox", "0 0 100 80"));
+    fireEvent.click(screen.getByRole("button", { name: "Bloco C · 2º pavimento" }));
+    await waitFor(() => expect(screen.getByRole("group", { name: "CIMOL · Bloco C · 2º pavimento" })).toHaveAttribute("viewBox", "0 0 100 80"));
+    getBoundingClientRect.mockRestore();
+  });
+
   it("pede a escolha de ambiente para um setor presente em mais de uma vista", async () => {
     mockApi({ maps: navigationMaps, roomData: navigationRooms, sectorData: laboratories });
     render(<SchoolMap />);
