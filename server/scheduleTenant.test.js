@@ -36,3 +36,17 @@ await model.createImport({
 const schedules = queries.find(({ sql }) => sql.includes("INSERT INTO horarios_importados"));
 assert.match(schedules.sql, /instituicao_id/);
 assert.deepEqual(schedules.params.slice(0, 2), [3, 2]);
+const syncedGroups = queries.find(({ sql }) => sql.includes("INSERT INTO grupos_academicos"));
+assert.match(syncedGroups.sql, /ON CONFLICT \(instituicao_id, tipo, nome\) DO UPDATE SET ativo = TRUE/);
+const inactiveGroupMappingModel = createScheduleModel({
+  db: { query: async (sql) => {
+    if (sql.includes("SELECT DISTINCT h.turma")) return [[{ turma: "1A", curso: null, ano: null }]];
+    if (sql.includes("SELECT id, tipo, nome FROM grupos_academicos")) return [[{ id: 5, tipo: "TURMA", nome: "1A", ativo: false }]];
+    return [[]];
+  } },
+  dayOrderSql: "h.dia",
+  httpError: (statusCode, message) => Object.assign(new Error(message), { statusCode }),
+  normalizeLookup: (value) => String(value).trim().toLowerCase(),
+});
+const mappedInactiveOptions = await inactiveGroupMappingModel.listPublishedSchedules({ institutionId: 2, onlyOptions: true, query: {} });
+assert.deepEqual(mappedInactiveOptions.turmas[0].grupo_ids, [5]);

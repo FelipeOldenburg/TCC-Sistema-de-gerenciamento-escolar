@@ -756,7 +756,7 @@ export const createScheduleModel = ({ db, dayOrderSql, httpError, normalizeLooku
       [institutionId]
     );
     const [academicGroups] = await db.query(
-      "SELECT id, tipo, nome FROM grupos_academicos WHERE instituicao_id = ? AND ativo = TRUE",
+      "SELECT id, tipo, nome FROM grupos_academicos WHERE instituicao_id = ?",
       [institutionId]
     );
     const groupByKey = new Map(academicGroups.map((group) => [`${group.tipo}\0${group.nome}`, group.id]));
@@ -857,10 +857,17 @@ export const createScheduleModel = ({ db, dayOrderSql, httpError, normalizeLooku
     try {
       await conn.beginTransaction();
       const placeholders = interval.grupo_ids.map(() => "?").join(",");
+      const keepInactiveGroups = intervalId
+        ? `OR EXISTS (
+             SELECT 1 FROM intervalo_grupos ig
+              WHERE ig.instituicao_id = g.instituicao_id AND ig.intervalo_id = ? AND ig.grupo_id = g.id
+           )`
+        : "";
       const [groups] = await conn.query(
-        `SELECT id FROM grupos_academicos
-          WHERE instituicao_id = ? AND ativo = TRUE AND id IN (${placeholders})`,
-        [institutionId, ...interval.grupo_ids]
+        `SELECT g.id FROM grupos_academicos g
+          WHERE g.instituicao_id = ? AND g.id IN (${placeholders})
+            AND (g.ativo = TRUE ${keepInactiveGroups})`,
+        [institutionId, ...interval.grupo_ids, ...(intervalId ? [intervalId] : [])]
       );
       if (groups.length !== interval.grupo_ids.length) {
         await conn.rollback();
