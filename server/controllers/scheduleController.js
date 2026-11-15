@@ -68,12 +68,15 @@ export const createScheduleController = ({
     try {
       const page = Math.max(1, Number(req.query.page) || 1);
       const pageSize = Math.min(500, Math.max(20, Number(req.query.page_size) || 200));
+      const turma = String(req.query.turma || "").trim();
+      const all = req.query.todos === "1" && !turma;
       const detail = await scheduleModel.getImportDetail({
         importId: req.params.id,
         institutionId: req.institution.id,
         page,
         pageSize,
-        turma: String(req.query.turma || "").trim(),
+        turma,
+        all,
       });
       if (!detail) throw httpError(404, "Importação não encontrada.");
       return res.json({
@@ -84,7 +87,7 @@ export const createScheduleController = ({
         turmas: detail.classes,
         horarios: detail.schedules,
         comparacao: detail.comparison,
-        paginacao: { pagina: page, por_pagina: pageSize, total: detail.total },
+        paginacao: { pagina: page, por_pagina: all ? detail.total : pageSize, total: detail.total },
       });
     } catch (error) {
       return next(error);

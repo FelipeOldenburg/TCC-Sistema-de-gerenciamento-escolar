@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -142,6 +143,12 @@ export default function UraniaImportacoesSection({ user }: { user: SessionUser }
   const [roomValue, setRoomValue] = useState("");
   const [savingRoom, setSavingRoom] = useState(false);
   const [roomError, setRoomError] = useState("");
+  const [selectedScheduleIds, setSelectedScheduleIds] = useState<Set<number>>(() => new Set());
+  const [selectionError, setSelectionError] = useState("");
+  const [bulkRoomOpen, setBulkRoomOpen] = useState(false);
+  const [bulkRoomValue, setBulkRoomValue] = useState("");
+  const [bulkRoomError, setBulkRoomError] = useState("");
+  const [savingBulkRoom, setSavingBulkRoom] = useState(false);
   const [error, setError] = useState("");
   const [lastUpload, setLastUpload] = useState<{
     id: number;
@@ -171,8 +178,10 @@ export default function UraniaImportacoesSection({ user }: { user: SessionUser }
   const loadDetail = async (id: number, className = "") => {
     setLoadingDetail(true);
     setError("");
+    setSelectedScheduleIds(new Set());
+    setSelectionError("");
     try {
-      const query = className ? `?turma=${encodeURIComponent(className)}&page_size=500` : "?page_size=200";
+      const query = className ? `?turma=${encodeURIComponent(className)}&page_size=500` : "?todos=1";
       const data = await apiFetch<ImportDetail>(`/api/importacoes/${id}${query}`);
       setDetail(data);
       setSelectedClass(className);
@@ -299,6 +308,62 @@ export default function UraniaImportacoesSection({ user }: { user: SessionUser }
     }
   };
 
+  const toggleScheduleSelection = (scheduleId: number, checked: boolean) => {
+    setSelectedScheduleIds((current) => {
+      if (checked && current.size >= 100 && !current.has(scheduleId)) {
+        setSelectionError("Selecione até 100 horários por operação.");
+        return current;
+      }
+      const next = new Set(current);
+      if (checked) next.add(scheduleId);
+      else next.delete(scheduleId);
+      setSelectionError("");
+      return next;
+    });
+  };
+
+  const openBulkRoomConfig = () => {
+    setBulkRoomValue("");
+    setBulkRoomError("");
+    setRoomError("");
+    setBulkRoomOpen(true);
+    void ensureRoomsLoaded();
+  };
+
+  const saveBulkRoomConfig = async () => {
+    if (!detail || !bulkRoomValue || !selectedScheduleIds.size) {
+      setBulkRoomError("Selecione os horários e uma sala ativa.");
+      return;
+    }
+    const room = rooms.find((item) => String(item.id) === bulkRoomValue && item.status === "ATIVA");
+    if (!room) {
+      setBulkRoomError("Selecione uma sala ativa.");
+      return;
+    }
+    setSavingBulkRoom(true);
+    setBulkRoomError("");
+    try {
+      const scheduleIds = [...selectedScheduleIds];
+      const result = await apiFetch<{ updated: number }>(`/api/importacoes/${detail.id}/horarios/sala/lote`, {
+        method: "PATCH",
+        body: JSON.stringify({ horario_ids: scheduleIds, sala_id: room.id }),
+      });
+      setDetail((current) => current ? {
+        ...current,
+        horarios: current.horarios.map((schedule) => selectedScheduleIds.has(schedule.id)
+          ? { ...schedule, sala_id: room.id, sala_nome: room.nome, bloco_nome: room.bloco_nome }
+          : schedule),
+      } : current);
+      setSelectedScheduleIds(new Set());
+      setBulkRoomOpen(false);
+      toast.success(result.updated ? `Sala aplicada em ${result.updated} horário(s).` : "Os horários já estavam nessa sala.");
+    } catch (err) {
+      setBulkRoomError(err instanceof Error ? err.message : "Erro ao alterar as salas.");
+    } finally {
+      setSavingBulkRoom(false);
+    }
+  };
+
   if (detail || loadingDetail) {
     return (
       <div className="space-y-6 animate-fade-in">
@@ -410,11 +475,24 @@ export default function UraniaImportacoesSection({ user }: { user: SessionUser }
                   </select>
                 </div>
               </div>
+              {detail.status === "PENDENTE" && user.papel === "CPD" && (
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b p-3">
+                  <div>
+                    <p className="text-sm font-medium">{selectedScheduleIds.size} horário(s) selecionado(s) · máximo 100</p>
+                    {selectionError && <p role="alert" className="text-xs text-destructive">{selectionError}</p>}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button type="button" variant="outline" size="sm" onClick={() => { setSelectedScheduleIds(new Set()); setSelectionError(""); }} disabled={!selectedScheduleIds.size}>Limpar</Button>
+                    <Button type="button" size="sm" onClick={openBulkRoomConfig} disabled={!selectedScheduleIds.size}>Alterar sala selecionada</Button>
+                  </div>
+                </div>
+              )}
               <div className="overflow-x-auto max-h-[520px]">
                 <Table>
-                  <TableHeader><TableRow><TableHead>Dia</TableHead><TableHead>Período</TableHead><TableHead>Turma</TableHead><TableHead>Disciplina</TableHead><TableHead>Professor</TableHead><TableHead>Sala</TableHead><TableHead>Categoria</TableHead>{detail.status === "PENDENTE" && user.papel === "CPD" && <TableHead className="text-right">Ação</TableHead>}</TableRow></TableHeader>
+                  <TableHeader><TableRow>{detail.status === "PENDENTE" && user.papel === "CPD" && <TableHead>Selecionar</TableHead>}<TableHead>Dia</TableHead><TableHead>Período</TableHead><TableHead>Turma</TableHead><TableHead>Disciplina</TableHead><TableHead>Professor</TableHead><TableHead>Sala</TableHead><TableHead>Categoria</TableHead>{detail.status === "PENDENTE" && user.papel === "CPD" && <TableHead className="text-right">Ação</TableHead>}</TableRow></TableHeader>
                   <TableBody>
                     {detail.horarios.map((schedule) => <TableRow key={schedule.id}>
+                      {detail.status === "PENDENTE" && user.papel === "CPD" && <TableCell>{schedule.categoria === "TURMA" && <Checkbox aria-label={`Selecionar horário de ${schedule.turma} · ${schedule.disciplina}`} checked={selectedScheduleIds.has(schedule.id)} onCheckedChange={(checked) => toggleScheduleSelection(schedule.id, checked === true)} />}</TableCell>}
                       <TableCell className="font-semibold">{schedule.dia}</TableCell>
                       <TableCell>{schedule.hora_inicio || `${schedule.periodo}ª aula`}</TableCell>
                       <TableCell>{schedule.turma}</TableCell>
@@ -435,8 +513,30 @@ export default function UraniaImportacoesSection({ user }: { user: SessionUser }
                   </TableBody>
                 </Table>
               </div>
-              {detail.paginacao.total > detail.horarios.length && !selectedClass && <p className="p-3 text-xs text-muted-foreground border-t">A prévia geral mostra os primeiros {detail.horarios.length} registros. Selecione uma turma para vê-la por completo.</p>}
+              {!selectedClass && <p className="border-t p-3 text-xs text-muted-foreground">Mostrando todos os {detail.horarios.length} horários desta importação.</p>}
             </div>
+
+            <Dialog open={bulkRoomOpen} onOpenChange={(open) => { if (!savingBulkRoom) setBulkRoomOpen(open); }}>
+              <DialogContent className="sm:max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Alterar sala em lote</DialogTitle>
+                  <DialogDescription>A mesma sala será atribuída aos {selectedScheduleIds.size} horários selecionados. Se houver conflito, nenhuma alteração será salva.</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-3">
+                  <label htmlFor="pending-bulk-room" className="text-sm font-medium">Nova sala</label>
+                  <select id="pending-bulk-room" value={bulkRoomValue} onChange={(event) => setBulkRoomValue(event.target.value)} disabled={loadingRooms || savingBulkRoom} className="h-10 w-full rounded-md border bg-background px-3 text-sm">
+                    <option value="">{loadingRooms ? "Carregando salas..." : "Selecione uma sala ativa"}</option>
+                    {rooms.filter((room) => room.status === "ATIVA").map((room) => <option key={room.id} value={room.id}>{room.nome} · {room.bloco_nome}</option>)}
+                  </select>
+                  {roomError && <p role="alert" className="text-sm text-destructive">{roomError}</p>}
+                  {bulkRoomError && <p role="alert" className="text-sm text-destructive">{bulkRoomError}</p>}
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setBulkRoomOpen(false)} disabled={savingBulkRoom}>Cancelar</Button>
+                  <Button type="button" onClick={saveBulkRoomConfig} disabled={savingBulkRoom || loadingRooms || !bulkRoomValue}>{savingBulkRoom ? "Salvando..." : "Confirmar alteração"}</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
 
             <Dialog open={!!scheduleRoom} onOpenChange={(open) => { if (!open && !savingRoom) setScheduleRoom(null); }}>
               <DialogContent className="sm:max-w-lg">

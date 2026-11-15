@@ -288,7 +288,7 @@ export const createScheduleModel = ({ db, dayOrderSql, httpError, normalizeLooku
     return { rows, total: Number(countRows[0].total) };
   };
 
-  const getImportDetail = async ({ importId, institutionId, page, pageSize, turma }) => {
+  const getImportDetail = async ({ importId, institutionId, page, pageSize, turma, all = false }) => {
     const [imports] = await db.query(
       `SELECT i.*, sender.nome AS enviado_por_nome, sender.usuario AS enviado_por_usuario,
               reviewer.nome AS revisado_por_nome, reviewer.usuario AS revisado_por_usuario
@@ -307,6 +307,8 @@ export const createScheduleModel = ({ db, dayOrderSql, httpError, normalizeLooku
       `SELECT COUNT(*) AS total FROM horarios_importados h WHERE h.importacao_id = ? ${turmaWhere}`,
       scheduleParams
     );
+    const scheduleLimit = all ? "" : "LIMIT ? OFFSET ?";
+    const scheduleQueryParams = all ? scheduleParams : [...scheduleParams, pageSize, (page - 1) * pageSize];
     const [schedules] = await db.query(
       `SELECT h.id, h.categoria, h.turma, h.curso, h.ano, h.dia, h.periodo,
               TO_CHAR(h.hora_inicio, 'HH24:MI') AS hora_inicio, h.disciplina, h.professor,
@@ -314,11 +316,11 @@ export const createScheduleModel = ({ db, dayOrderSql, httpError, normalizeLooku
               h.tipo_turma, h.tipo_disciplina, h.valor_original
          FROM horarios_importados h
          LEFT JOIN salas s ON s.id = h.sala_id
-         LEFT JOIN blocos b ON b.id = s.bloco_id
+        LEFT JOIN blocos b ON b.id = s.bloco_id
         WHERE h.importacao_id = ? ${turmaWhere}
         ORDER BY ${dayOrderSql}, h.periodo, h.turma
-        LIMIT ? OFFSET ?`,
-      [...scheduleParams, pageSize, (page - 1) * pageSize]
+        ${scheduleLimit}`,
+      scheduleQueryParams
     );
     const [classes] = await db.query(
       `SELECT DISTINCT turma, curso, ano, categoria
@@ -343,68 +345,139 @@ export const createScheduleModel = ({ db, dayOrderSql, httpError, normalizeLooku
     };
   };
 
+  const getPendingRoom = async (conn, { institutionId, roomId }) => {
+    if (roomId === null) return null;
+    const [rooms] = await conn.query(
+      `SELECT s.id, s.nome, s.status, b.nome AS bloco_nome
+         FROM salas s
+         JOIN blocos b ON b.id = s.bloco_id AND b.instituicao_id = s.instituicao_id
+        WHERE s.id = ? AND s.instituicao_id = ?
+        LIMIT 1`,
+      [roomId, institutionId]
+    );
+    if (!rooms.length) throw httpError(400, "Sala não encontrada.");
+    if (rooms[0].status !== "ATIVA") throw httpError(409, `A sala ${rooms[0].nome} não está ativa.`);
+    return rooms[0];
+  };
+
+  const updatePendingScheduleRoom = async (conn, { institutionId, importId = null, roomId, scheduleId, room }) => {
+    const importFilter = importId === null ? "" : "AND i.id = ?";
+    const [schedules] = await conn.query(
+      `SELECT h.id, h.importacao_id, h.turma, h.dia, h.periodo, h.disciplina, h.sala_id
+         FROM horarios_importados h
+         JOIN importacoes_horarios i ON i.id = h.importacao_id
+        WHERE h.id = ?
+          AND i.instituicao_id = ?
+          AND h.instituicao_id = ?
+          AND h.categoria = 'TURMA'
+          AND i.status = 'PENDENTE'
+          ${importFilter}
+        FOR UPDATE OF h`,
+      [scheduleId, institutionId, institutionId, ...(importId === null ? [] : [importId])]
+    );
+    if (!schedules.length) throw httpError(404, "Horário pendente não encontrado nesta importação.");
+    const schedule = schedules[0];
+
+    if (room) {
+      const [conflicts] = await conn.query(
+        `SELECT turma, disciplina
+           FROM horarios_importados
+          WHERE importacao_id = ?
+            AND id <> ?
+            AND categoria = 'TURMA'
+            AND dia = ?
+            AND periodo = ?
+            AND (
+              sala_id = ?
+              OR (
+                sala_id IS NULL
+                AND ambiente IS NOT NULL
+                AND REPLACE(LOWER(TRIM(ambiente)), ' ', '') = REPLACE(LOWER(TRIM(?)), ' ', '')
+              )
+            )
+          LIMIT 1`,
+        [schedule.importacao_id, scheduleId, schedule.dia, schedule.periodo, roomId, room.nome]
+      );
+      if (conflicts.length) {
+        throw httpError(409, `A sala já está ocupada por ${conflicts[0].turma} em ${conflicts[0].disciplina}.`);
+      }
+    }
+
+    const changed = Number(schedule.sala_id || 0) !== Number(roomId || 0);
+    if (changed) {
+      await conn.query(
+        "UPDATE horarios_importados SET sala_id = ? WHERE id = ? AND instituicao_id = ?",
+        [roomId, scheduleId, institutionId]
+      );
+    }
+    return {
+      ok: true,
+      id: scheduleId,
+      sala_id: roomId,
+      sala_nome: room?.nome || null,
+      bloco_nome: room?.bloco_nome || null,
+      changed,
+    };
+  };
+
   const assignPendingRoom = async ({ institutionId, roomId, scheduleId }) => {
     const conn = await db.getConnection();
     try {
       await conn.beginTransaction();
-      const [schedules] = await conn.query(
-        `SELECT h.id, h.importacao_id, h.turma, h.dia, h.periodo, h.disciplina
-           FROM horarios_importados h
-           JOIN importacoes_horarios i ON i.id = h.importacao_id
-          WHERE h.id = ?
-            AND i.instituicao_id = ?
-            AND h.categoria = 'TURMA'
-            AND i.status = 'PENDENTE'
-          FOR UPDATE`,
-        [scheduleId, institutionId]
+      const [imports] = await conn.query(
+        `SELECT i.id, i.status
+           FROM importacoes_horarios i
+           JOIN horarios_importados h ON h.importacao_id = i.id
+          WHERE h.id = ? AND h.instituicao_id = ? AND i.instituicao_id = ? AND h.categoria = 'TURMA'
+          FOR UPDATE OF i`,
+        [scheduleId, institutionId, institutionId]
       );
-      if (!schedules.length) throw httpError(404, "Horário pendente não encontrado.");
+      if (!imports.length) throw httpError(404, "Horário pendente não encontrado.");
+      if (imports[0].status !== "PENDENTE") throw httpError(409, "A importação já foi revisada.");
 
-      let room = null;
-      if (roomId !== null) {
-        const [rooms] = await conn.query(
-          `SELECT s.id, s.nome, s.status, b.nome AS bloco_nome
-             FROM salas s
-             JOIN blocos b ON b.id = s.bloco_id AND b.instituicao_id = s.instituicao_id
-            WHERE s.id = ? AND s.instituicao_id = ?
-            LIMIT 1`,
-          [roomId, institutionId]
-        );
-        if (!rooms.length) throw httpError(400, "Sala não encontrada.");
-        if (rooms[0].status !== "ATIVA") throw httpError(409, `A sala ${rooms[0].nome} não está ativa.`);
-        room = rooms[0];
-        const [conflicts] = await conn.query(
-          `SELECT turma, disciplina
-             FROM horarios_importados
-            WHERE importacao_id = ?
-              AND id <> ?
-              AND categoria = 'TURMA'
-              AND dia = ?
-              AND periodo = ?
-              AND (
-                sala_id = ?
-                OR (
-                  sala_id IS NULL
-                  AND ambiente IS NOT NULL
-                  AND REPLACE(LOWER(TRIM(ambiente)), ' ', '') = REPLACE(LOWER(TRIM(?)), ' ', '')
-                )
-              )
-            LIMIT 1`,
-          [schedules[0].importacao_id, scheduleId, schedules[0].dia, schedules[0].periodo, roomId, room.nome]
-        );
-        if (conflicts.length) {
-          throw httpError(409, `A sala já está ocupada por ${conflicts[0].turma} em ${conflicts[0].disciplina}.`);
-        }
+      const room = await getPendingRoom(conn, { institutionId, roomId });
+      const result = await updatePendingScheduleRoom(conn, { institutionId, roomId, scheduleId, room });
+      await conn.commit();
+      return result;
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
+  };
+
+  const assignPendingRooms = async ({ institutionId, importId, roomId, scheduleIds }) => {
+    if (!Number.isInteger(importId) || importId < 1 || !Number.isInteger(roomId) || roomId < 1
+      || !Array.isArray(scheduleIds) || !scheduleIds.length || scheduleIds.length > 100
+      || scheduleIds.some((id) => !Number.isInteger(id) || id < 1)
+      || new Set(scheduleIds).size !== scheduleIds.length) {
+      throw httpError(400, "Selecione de 1 a 100 horários válidos e uma sala.");
+    }
+
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [imports] = await conn.query(
+        "SELECT id, status FROM importacoes_horarios WHERE id = ? AND instituicao_id = ? FOR UPDATE",
+        [importId, institutionId]
+      );
+      if (!imports.length) throw httpError(404, "Importação não encontrada.");
+      if (imports[0].status !== "PENDENTE") throw httpError(409, "A importação já foi revisada.");
+
+      const room = await getPendingRoom(conn, { institutionId, roomId });
+      const results = [];
+      for (const scheduleId of [...scheduleIds].sort((a, b) => a - b)) {
+        results.push(await updatePendingScheduleRoom(conn, { institutionId, importId, roomId, scheduleId, room }));
       }
-
-      await conn.query("UPDATE horarios_importados SET sala_id = ? WHERE id = ?", [roomId, scheduleId]);
       await conn.commit();
       return {
         ok: true,
-        id: scheduleId,
-        sala_id: roomId,
-        sala_nome: room?.nome || null,
-        bloco_nome: room?.bloco_nome || null,
+        sala_id: room.id,
+        sala_nome: room.nome,
+        bloco_nome: room.bloco_nome,
+        updated: results.filter(({ changed }) => changed).length,
+        horarios: results.map(({ id }) => id),
       };
     } catch (error) {
       await conn.rollback();
@@ -924,6 +997,7 @@ export const createScheduleModel = ({ db, dayOrderSql, httpError, normalizeLooku
   return {
     approveImport,
     assignPendingRoom,
+    assignPendingRooms,
     claimNotificationEvents,
     completeNotificationEvent,
     confirmNotificationSubscription,
