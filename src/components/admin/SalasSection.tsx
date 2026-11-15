@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRightLeft, Edit, History, Plus, PowerOff, Save, Search, Trash2, X } from "lucide-react";
+import { ArrowRightLeft, Check, Edit, History, Plus, PowerOff, Save, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +31,7 @@ type Sala = {
 };
 
 type Shift = "manha" | "tarde";
+type AllocationTarget = { key: string; sala: Sala; shift: Shift; period: number };
 
 type RoomOccupancy = {
   id: number;
@@ -142,6 +143,14 @@ export default function SalasSection() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("todas");
   const [selectedDay, setSelectedDay] = useState("SEG");
+  const [selectedTargets, setSelectedTargets] = useState<Map<string, AllocationTarget>>(() => new Map());
+  const [selectionError, setSelectionError] = useState("");
+  const [bulkAllocationOpen, setBulkAllocationOpen] = useState(false);
+  const [bulkScheduleIds, setBulkScheduleIds] = useState<Record<string, string>>({});
+  const [bulkStudentCounts, setBulkStudentCounts] = useState<Record<string, string>>({});
+  const [bulkReason, setBulkReason] = useState("");
+  const [bulkAllocationError, setBulkAllocationError] = useState("");
+  const [savingBulkAllocation, setSavingBulkAllocation] = useState(false);
   const [transfer, setTransfer] = useState<{
     schedule: RoomOccupancy;
     salaId: string;
@@ -149,16 +158,6 @@ export default function SalasSection() {
     motivo: string;
   } | null>(null);
   const [savingTransfer, setSavingTransfer] = useState(false);
-  const [slotPicker, setSlotPicker] = useState<{
-    sala: Sala;
-    shift: Shift;
-    period: number;
-    scheduleId: string;
-    quantidadeAlunos: string;
-    motivo: string;
-  } | null>(null);
-  const [savingSlot, setSavingSlot] = useState(false);
-  const [slotError, setSlotError] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -186,6 +185,11 @@ export default function SalasSection() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    setSelectedTargets(new Map());
+    setSelectionError("");
+  }, [selectedDay]);
 
   const reset = () => {
     setForm(emptyForm);
@@ -304,19 +308,11 @@ export default function SalasSection() {
   }, [salasFiltradas]);
 
   const salasAtivas = useMemo(() => salas.filter((sala) => sala.status === "ATIVA"), [salas]);
+  const selectedTargetList = [...selectedTargets.values()];
   const targetRoom = transfer && transfer.salaId !== WITHOUT_ROOM_VALUE ? salas.find((sala) => String(sala.id) === transfer.salaId) || null : null;
   const targetCapacity = targetRoom?.capacidade ?? null;
   const studentCount = transfer?.quantidadeAlunos ? Number(transfer.quantidadeAlunos) : null;
   const capacityWarning = targetRoom && studentCount && targetCapacity !== null && studentCount > targetCapacity;
-  const slotCandidates = useMemo(() => {
-    if (!slotPicker) return [];
-    return allSchedules
-      .filter((item) => isSameSlot(item, selectedDay, slotPicker.shift, slotPicker.period))
-      .sort(sortOccupancy);
-  }, [allSchedules, selectedDay, slotPicker]);
-  const selectedSlotSchedule = slotCandidates.find((item) => String(item.id) === slotPicker?.scheduleId) || null;
-  const slotStudentCount = slotPicker?.quantidadeAlunos ? Number(slotPicker.quantidadeAlunos) : null;
-  const slotCapacityWarning = Boolean(slotPicker && slotStudentCount && slotPicker.sala.capacidade !== null && slotStudentCount > slotPicker.sala.capacidade);
 
   const openTransfer = (schedule: RoomOccupancy) => {
     setTransfer({
@@ -325,6 +321,87 @@ export default function SalasSection() {
       quantidadeAlunos: "",
       motivo: "",
     });
+  };
+
+  const toggleTargetSelection = (target: AllocationTarget) => {
+    setSelectedTargets((current) => {
+      if (current.has(target.key)) {
+        const next = new Map(current);
+        next.delete(target.key);
+        setSelectionError("");
+        return next;
+      }
+      if (current.size >= 100) {
+        setSelectionError("Selecione até 100 períodos por operação.");
+        return current;
+      }
+      const next = new Map(current);
+      next.set(target.key, target);
+      setSelectionError("");
+      return next;
+    });
+  };
+
+  const openBulkAllocation = () => {
+    setBulkScheduleIds(Object.fromEntries(selectedTargetList.map((target) => [target.key, ""])));
+    setBulkStudentCounts(Object.fromEntries(selectedTargetList.map((target) => [target.key, ""])));
+    setBulkReason("");
+    setBulkAllocationError("");
+    setBulkAllocationOpen(true);
+  };
+
+  const saveBulkAllocation = async () => {
+    const allocations = selectedTargetList.map((target) => ({
+      horario_id: Number(bulkScheduleIds[target.key]),
+      sala_id: target.sala.id,
+      quantidade_alunos: bulkStudentCounts[target.key] ? Number(bulkStudentCounts[target.key]) : null,
+    }));
+    const scheduleIds = allocations.map(({ horario_id }) => horario_id);
+    if (!allocations.length || allocations.some(({ horario_id }) => !Number.isInteger(horario_id) || horario_id < 1)) {
+      setBulkAllocationError("Escolha uma turma para cada período selecionado.");
+      return;
+    }
+    if (new Set(scheduleIds).size !== scheduleIds.length) {
+      setBulkAllocationError("Cada horário pode ocupar apenas um período de sala nesta operação.");
+      return;
+    }
+    const invalidCount = allocations.find(({ quantidade_alunos }) =>
+      quantidade_alunos !== null && (!Number.isInteger(quantidade_alunos) || quantidade_alunos < 1));
+    if (invalidCount) {
+      setBulkAllocationError("Informe uma quantidade inteira de alunos maior que zero.");
+      return;
+    }
+    const overCapacity = selectedTargetList.find((target) => {
+      const count = Number(bulkStudentCounts[target.key]);
+      return bulkStudentCounts[target.key] && target.sala.capacidade !== null && count > target.sala.capacidade;
+    });
+    if (overCapacity) {
+      setBulkAllocationError(`A sala ${overCapacity.sala.nome} não comporta a quantidade informada.`);
+      return;
+    }
+    setSavingBulkAllocation(true);
+    setBulkAllocationError("");
+    try {
+      const result = await apiFetch<{ updated: number }>("/api/horarios/publicados/salas/lote", {
+        method: "PATCH",
+        body: JSON.stringify({
+          alocacoes: allocations.map(({ horario_id, sala_id, quantidade_alunos }) => ({
+            horario_id,
+            sala_id,
+            ...(quantidade_alunos === null ? {} : { quantidade_alunos }),
+          })),
+          motivo: bulkReason.trim() || undefined,
+        }),
+      });
+      setSelectedTargets(new Map());
+      setBulkAllocationOpen(false);
+      toast.success(result.updated ? `Turma alocada em ${result.updated} período(s).` : "Os períodos já estavam atualizados.");
+      await load();
+    } catch (err) {
+      setBulkAllocationError(err instanceof Error ? err.message : "Erro ao alocar as turmas nos períodos.");
+    } finally {
+      setSavingBulkAllocation(false);
+    }
   };
 
   const saveTransfer = async () => {
@@ -350,37 +427,6 @@ export default function SalasSection() {
     }
   };
 
-  const openSlotPicker = (sala: Sala, shift: Shift, period: number) => {
-    setSlotPicker({ sala, shift, period, scheduleId: "", quantidadeAlunos: "", motivo: "" });
-    setSlotError("");
-  };
-
-  const saveSlotAssignment = async () => {
-    if (!slotPicker || !slotPicker.scheduleId) {
-      setSlotError("Selecione uma turma para este período.");
-      return;
-    }
-    setSavingSlot(true);
-    setSlotError("");
-    try {
-      await apiFetch(`/api/horarios/publicados/${slotPicker.scheduleId}/sala`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          sala_id: slotPicker.sala.id,
-          quantidade_alunos: slotPicker.quantidadeAlunos ? Number(slotPicker.quantidadeAlunos) : null,
-          motivo: slotPicker.motivo,
-        }),
-      });
-      toast.success("Turma definida para o período.");
-      setSlotPicker(null);
-      await load();
-    } catch (err) {
-      setSlotError(err instanceof Error ? err.message : "Erro ao definir turma no período.");
-    } finally {
-      setSavingSlot(false);
-    }
-  };
-
   const renderShiftGrid = (sala: Sala, roomOccupancy: RoomOccupancy[], shift: Shift) => (
     <div className="w-full rounded-md border border-slate-300 bg-white text-xs shadow-sm">
       <div className="grid grid-cols-5 border-b border-slate-300 bg-slate-100 font-semibold text-slate-700">
@@ -394,6 +440,9 @@ export default function SalasSection() {
         {sheetPeriods.map((period) => {
           const items = roomOccupancy.filter((item) => isSameSlot(item, selectedDay, shift, period));
           const candidates = allSchedules.filter((item) => isSameSlot(item, selectedDay, shift, period));
+          const key = `${sala.id}:${shift}:${period}`;
+          const selected = selectedTargets.has(key);
+          const target = { key, sala, shift, period };
           return (
             <div key={period} className="min-h-20 border-r border-slate-200 p-1.5 last:border-r-0">
               {items.length ? (
@@ -419,11 +468,13 @@ export default function SalasSection() {
                 <Button
                   type="button"
                   variant="ghost"
-                  disabled={!candidates.length}
-                  onClick={() => openSlotPicker(sala, shift, period)}
-                  className="flex min-h-16 w-full items-center justify-center whitespace-normal rounded border border-dashed border-emerald-200 bg-emerald-50 px-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-100"
+                  disabled={!candidates.length || sala.status !== "ATIVA"}
+                  aria-pressed={selected}
+                  aria-label={`${selected ? "Desmarcar" : "Selecionar"} período ${period} da sala ${sala.nome}, ${shift === "manha" ? "manhã" : "tarde"}`}
+                  onClick={() => toggleTargetSelection(target)}
+                  className={`flex min-h-16 w-full items-center justify-center whitespace-normal rounded border border-dashed px-1 text-[11px] font-medium disabled:opacity-100 ${selected ? "border-primary bg-primary/10 text-primary" : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"}`}
                 >
-                  {candidates.length ? "+ Turma" : "Sem aula"}
+                  {candidates.length ? selected ? <><Check aria-hidden="true" className="mr-1 h-3 w-3" />Selecionado</> : "+ Selecionar período" : "Sem aula"}
                 </Button>
               )}
             </div>
@@ -539,6 +590,20 @@ export default function SalasSection() {
           </div>
         </div>
 
+        {selectedTargetList.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-primary/5 p-4">
+            <div>
+              <p className="text-sm font-medium">{selectedTargetList.length} período(s) de sala selecionado(s)</p>
+              <p className="text-xs text-muted-foreground">Escolha uma turma para cada período selecionado.</p>
+              {selectionError && <p role="alert" className="mt-1 text-xs text-destructive">{selectionError}</p>}
+            </div>
+            <div className="flex gap-2">
+              <Button type="button" size="sm" variant="outline" onClick={() => { setSelectedTargets(new Map()); setSelectionError(""); }}>Limpar seleção</Button>
+              <Button type="button" size="sm" onClick={openBulkAllocation}>Alocar turma nos períodos</Button>
+            </div>
+          </div>
+        )}
+        {selectionError && !selectedTargetList.length && <p role="alert" className="border-b p-3 text-xs text-destructive">{selectionError}</p>}
         {loading && <div className="py-10 text-center text-sm text-muted-foreground">Carregando...</div>}
         {!loading && !salasFiltradas.length && <div className="py-10 text-center text-sm text-muted-foreground">Nenhuma sala encontrada.</div>}
         {!loading && salasPorBloco.map(([bloco, rooms]) => (
@@ -651,53 +716,47 @@ export default function SalasSection() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!slotPicker} onOpenChange={(open) => { if (!open && !savingSlot) setSlotPicker(null); }}>
-        <DialogContent className="sm:max-w-xl">
+      <Dialog open={bulkAllocationOpen} onOpenChange={(open) => { if (!savingBulkAllocation) setBulkAllocationOpen(open); }}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Escolher turma do período</DialogTitle>
-            <DialogDescription>Esta escolha altera a sala da turma neste horário específico.</DialogDescription>
+            <DialogTitle>Alocar turmas nos períodos selecionados</DialogTitle>
+            <DialogDescription>Escolha a turma e a aula de cada período de destino. Conflitos serão validados antes de salvar tudo.</DialogDescription>
           </DialogHeader>
-          {slotPicker && (
-            <div className="space-y-4">
-              <div className="rounded-xl border bg-muted/40 p-4 text-sm">
-                <p><span className="font-medium">Sala:</span> {slotPicker.sala.nome}</p>
-                <p><span className="font-medium">Horário:</span> {dayLabels[selectedDay]} · {slotPicker.shift === "manha" ? "Manhã" : "Tarde"} · {slotPicker.period}ª período</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block">Turma</label>
-                <select
-                  value={slotPicker.scheduleId}
-                  onChange={(event) => setSlotPicker({ ...slotPicker, scheduleId: event.target.value })}
-                  disabled={!slotCandidates.length}
-                  className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-                >
-                  <option value="">Selecione a turma</option>
-                  {slotCandidates.map((schedule) => (
-                    <option key={schedule.id} value={schedule.id}>
-                      {schedule.turma} · {schedule.disciplina} · {schedule.hora_inicio || `${schedule.periodo}ª`}{schedule.sala ? ` · atual: ${schedule.sala}` : " · sem sala"}
-                    </option>
-                  ))}
-                </select>
-                {!slotCandidates.length && <p className="mt-1 text-xs text-muted-foreground">Nenhuma aula publicada para este dia e período.</p>}
-                {selectedSlotSchedule?.sala_id && selectedSlotSchedule.sala_id !== slotPicker.sala.id && (
-                  <p className="mt-1 text-xs text-muted-foreground">A turma sairá de {selectedSlotSchedule.sala || "outra sala"} e irá para {slotPicker.sala.nome}.</p>
-                )}
-              </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block">Quantidade de alunos</label>
-                <Input type="number" min={1} value={slotPicker.quantidadeAlunos} onChange={(event) => setSlotPicker({ ...slotPicker, quantidadeAlunos: event.target.value })} placeholder="Opcional para validar capacidade" />
-                {slotCapacityWarning && <p className="mt-1 text-xs text-destructive">A sala comporta {slotPicker.sala.capacidade} alunos.</p>}
-              </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block">Motivo</label>
-                <Textarea value={slotPicker.motivo} onChange={(event) => setSlotPicker({ ...slotPicker, motivo: event.target.value })} rows={3} placeholder="Opcional" />
-              </div>
-              {slotError && <p className="text-sm text-destructive">{slotError}</p>}
+          <div className="space-y-3">
+            {selectedTargetList.map((target) => {
+              const candidates = allSchedules.filter((item) => isSameSlot(item, selectedDay, target.shift, target.period)).sort(sortOccupancy);
+              return (
+                <div key={target.key} className="grid gap-2 rounded-xl border p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_130px] sm:items-center">
+                  <p className="text-sm font-medium">{target.sala.nome} · {target.shift === "manha" ? "Manhã" : "Tarde"} · {target.period}º período</p>
+                  <select
+                    aria-label={`Turma para ${target.sala.nome}, ${target.shift === "manha" ? "manhã" : "tarde"}, período ${target.period}`}
+                    value={bulkScheduleIds[target.key] || ""}
+                    onChange={(event) => setBulkScheduleIds((current) => ({ ...current, [target.key]: event.target.value }))}
+                    className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                  >
+                    <option value="">Selecione uma turma</option>
+                    {candidates.map((schedule) => <option key={schedule.id} value={schedule.id}>{schedule.turma} · {schedule.disciplina}{schedule.sala ? ` · atual: ${schedule.sala}` : " · sem sala"}</option>)}
+                  </select>
+                  <Input
+                    type="number"
+                    min={1}
+                    aria-label={`Quantidade de alunos em ${target.sala.nome}, período ${target.period}`}
+                    value={bulkStudentCounts[target.key] || ""}
+                    onChange={(event) => setBulkStudentCounts((current) => ({ ...current, [target.key]: event.target.value }))}
+                    placeholder={target.sala.capacidade == null ? "Alunos (opcional)" : `Até ${target.sala.capacidade}`}
+                  />
+                </div>
+              );
+            })}
+            <div className="space-y-1">
+              <label htmlFor="bulk-allocation-reason" className="text-sm font-medium">Motivo (opcional)</label>
+              <Textarea id="bulk-allocation-reason" value={bulkReason} onChange={(event) => setBulkReason(event.target.value)} rows={2} maxLength={255} />
             </div>
-          )}
+            {bulkAllocationError && <p role="alert" className="text-sm text-destructive">{bulkAllocationError}</p>}
+          </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setSlotPicker(null)} disabled={savingSlot}>Cancelar</Button>
-            <Button type="button" onClick={saveSlotAssignment} disabled={savingSlot || !!slotCapacityWarning || !slotCandidates.length}>{savingSlot ? "Salvando..." : "Salvar turma"}</Button>
+            <Button type="button" variant="outline" onClick={() => setBulkAllocationOpen(false)} disabled={savingBulkAllocation}>Cancelar</Button>
+            <Button type="button" onClick={saveBulkAllocation} disabled={savingBulkAllocation || !selectedTargetList.length}>{savingBulkAllocation ? "Salvando..." : "Confirmar alocação"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
