@@ -263,9 +263,10 @@ const uploadRateLimit = rateLimit({
 
 const ouvidoriaRateLimit = rateLimit({
   windowMs: Number(process.env.OUVIDORIA_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000),
-  limit: Number(process.env.OUVIDORIA_RATE_LIMIT || 8),
+  limit: 3,
   standardHeaders: "draft-7",
   legacyHeaders: false,
+  handler: (_req, res) => res.status(429).json({ message: "Limite de 3 relatos por acesso atingido. Tente novamente mais tarde." }),
 });
 
 const notificationRateLimit = rateLimit({
