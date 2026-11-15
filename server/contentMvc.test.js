@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createContentController } from "./controllers/contentController.js";
+import { createContentModel } from "./models/contentModel.js";
 import { registerContentRoutes } from "./routes/contentRoutes.js";
 
 const routes = [];
@@ -52,3 +53,20 @@ await reportController.createManifestation(
   (error) => { receivedError = error; }
 );
 assert.equal(receivedError.statusCode, 400);
+
+const eventQueries = [];
+const eventModel = createContentModel({ db: { query: async (sql, params) => {
+  eventQueries.push({ sql, params });
+  return [{ insertId: 7, affectedRows: 1 }];
+} } });
+await eventModel.createEvent({
+  institutionId: 2,
+  event: { titulo: "Mostra", descricao: null, data_evento: "2026-10-02", hora_evento: null, local: null, ativo: true },
+});
+await eventModel.updateEvent({
+  id: 7,
+  institutionId: 2,
+  event: { titulo: "Mostra atualizada", descricao: null, data_evento: "2026-10-03", hora_evento: null, local: null, ativo: true },
+});
+assert.ok(eventQueries.every(({ sql }) => !sql.includes("imagem_url")));
+assert.ok(eventQueries.every(({ params }) => params.includes(2)));

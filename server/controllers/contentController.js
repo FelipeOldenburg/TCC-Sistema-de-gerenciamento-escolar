@@ -31,7 +31,6 @@ export const createContentController = ({
     data_evento: String(body.data_evento || "").trim(),
     hora_evento: String(body.hora_evento || "").trim() || null,
     local: sanitizeFreeText(body.local, 140) || null,
-    imagem_url: sanitizeFreeText(body.imagem_url, 500) || null,
     ativo: body.ativo == null ? true : asBoolean(body.ativo),
   });
 
@@ -39,9 +38,6 @@ export const createContentController = ({
     if (!event.titulo || !event.data_evento) throw httpError(400, "Informe título e data do evento.");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(event.data_evento)) throw httpError(400, "Data do evento inválida.");
     if (event.hora_evento && !/^\d{2}:\d{2}$/.test(event.hora_evento)) throw httpError(400, "Horário do evento inválido.");
-    if (event.imagem_url && !/^https?:\/\//i.test(event.imagem_url)) {
-      throw httpError(400, "Informe uma URL de imagem iniciando com http:// ou https://.");
-    }
   };
 
   const serializeSector = (row) => ({ ...row, ativo: Boolean(row.ativo) });

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { CalendarDays, Clock, MapPin } from "lucide-react";
 import { apiFetch } from "@/lib/api";
-import { getEventoImage } from "@/lib/eventoImages";
 
 type Evento = {
   id: number;
@@ -10,8 +9,14 @@ type Evento = {
   data_evento: string;
   hora_evento: string | null;
   local: string | null;
-  imagem_url: string | null;
 };
+
+const eventGradients = [
+  "from-blue-700 via-indigo-600 to-cyan-500",
+  "from-violet-700 via-fuchsia-600 to-rose-500",
+  "from-emerald-700 via-teal-600 to-sky-500",
+  "from-amber-600 via-orange-600 to-rose-600",
+];
 
 const formatDate = (value: string) =>
   new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "long", year: "numeric" }).format(
@@ -58,29 +63,28 @@ const EventosSection = () => {
         {eventos.map((evento, index) => (
           <article
             key={evento.id}
-            className="glass-card glass-card-hover rounded-2xl overflow-hidden group"
+            className="glass-card glass-card-hover rounded-2xl overflow-hidden"
             style={{ animationDelay: `${index * 100}ms` }}
           >
-            <div className="relative h-52 overflow-hidden">
-              <img
-                src={getEventoImage(evento)}
-                alt={evento.titulo}
-                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-foreground/90 via-foreground/25 to-transparent" />
-              <div className="absolute bottom-0 left-0 right-0 p-5">
-                <h3 className="text-primary-foreground font-heading font-bold text-lg leading-tight">{evento.titulo}</h3>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-primary-foreground/85 text-sm">
+            <div className={`relative flex min-h-52 flex-col justify-between overflow-hidden bg-gradient-to-br p-5 text-white ${eventGradients[evento.id % eventGradients.length]}`}>
+              <div aria-hidden="true" className="absolute -right-8 -top-12 h-40 w-40 rounded-full border-[24px] border-white/10" />
+              <div className="relative flex items-start justify-between gap-4">
+                <CalendarDays aria-hidden="true" className="h-8 w-8 opacity-85" />
+                <time dateTime={evento.data_evento} className="rounded-xl border border-white/25 bg-white/15 px-3 py-2 text-right shadow-sm backdrop-blur-sm">
+                  <span className="block text-2xl font-bold leading-none">{new Date(`${evento.data_evento}T00:00:00`).getDate()}</span>
+                  <span className="mt-1 block text-xs font-semibold uppercase tracking-wider">
+                    {new Intl.DateTimeFormat("pt-BR", { month: "short" }).format(new Date(`${evento.data_evento}T00:00:00`)).replace(".", "")}
+                  </span>
+                </time>
+              </div>
+              <div className="relative">
+                <h3 className="font-heading text-lg font-bold leading-tight">{evento.titulo}</h3>
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-white/90">
                   <span className="inline-flex items-center gap-1.5">
-                    <CalendarDays className="w-3.5 h-3.5 text-accent" />
+                    <CalendarDays aria-hidden="true" className="h-3.5 w-3.5" />
                     {formatDate(evento.data_evento)}
                   </span>
-                  {evento.hora_evento && (
-                    <span className="inline-flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-accent" />
-                      {evento.hora_evento}
-                    </span>
-                  )}
+                  {evento.hora_evento && <span className="inline-flex items-center gap-1.5"><Clock aria-hidden="true" className="h-3.5 w-3.5" />{evento.hora_evento}</span>}
                 </div>
               </div>
             </div>
@@ -88,7 +92,7 @@ const EventosSection = () => {
               {evento.descricao && <p className="text-sm text-muted-foreground leading-relaxed">{evento.descricao}</p>}
               {evento.local && (
                 <p className="text-sm text-card-foreground inline-flex items-center gap-2">
-                  <MapPin className="w-4 h-4 text-primary" />
+                  <MapPin aria-hidden="true" className="w-4 h-4 text-primary" />
                   {evento.local}
                 </p>
               )}

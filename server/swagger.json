@@ -89,7 +89,6 @@
           "data_evento": { "type": "string", "format": "date" },
           "hora_evento": { "type": "string", "nullable": true, "example": "19:30" },
           "local": { "type": "string", "nullable": true },
-          "imagem_url": { "type": "string", "nullable": true },
           "ativo": { "type": "boolean" }
         }
       },

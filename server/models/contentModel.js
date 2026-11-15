@@ -8,7 +8,7 @@ export const createContentModel = ({ db }) => ({
       : "WHERE instituicao_id = ? AND ativo = TRUE AND data_evento >= CURRENT_DATE";
     const [rows] = await db.query(
       `SELECT id, titulo, descricao, data_evento, TO_CHAR(hora_evento, 'HH24:MI') AS hora_evento,
-              local, imagem_url, ativo, created_at, updated_at
+              local, ativo, created_at, updated_at
          FROM eventos
          ${where}
         ORDER BY data_evento ASC, hora_evento IS NULL, hora_evento ASC, id ASC`,
@@ -19,10 +19,10 @@ export const createContentModel = ({ db }) => ({
 
   createEvent: async ({ institutionId, event }) => {
     const [result] = await db.query(
-      `INSERT INTO eventos (instituicao_id, titulo, descricao, data_evento, hora_evento, local, imagem_url, ativo)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO eventos (instituicao_id, titulo, descricao, data_evento, hora_evento, local, ativo)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        RETURNING id`,
-      [institutionId, event.titulo, event.descricao, event.data_evento, event.hora_evento, event.local, event.imagem_url, event.ativo]
+      [institutionId, event.titulo, event.descricao, event.data_evento, event.hora_evento, event.local, event.ativo]
     );
     return result;
   },
@@ -30,7 +30,7 @@ export const createContentModel = ({ db }) => ({
   updateEvent: async ({ id, institutionId, event }) => {
     const [result] = await db.query(
       `UPDATE eventos
-          SET titulo = ?, descricao = ?, data_evento = ?, hora_evento = ?, local = ?, imagem_url = ?, ativo = ?
+          SET titulo = ?, descricao = ?, data_evento = ?, hora_evento = ?, local = ?, ativo = ?
         WHERE id = ? AND instituicao_id = ?`,
       [
         event.titulo,
@@ -38,7 +38,6 @@ export const createContentModel = ({ db }) => ({
         event.data_evento,
         event.hora_evento,
         event.local,
-        event.imagem_url,
         event.ativo,
         id,
         institutionId,
