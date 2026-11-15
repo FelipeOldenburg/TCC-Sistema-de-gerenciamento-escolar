@@ -90,6 +90,53 @@ describe("HorariosSection", () => {
     expect(screen.queryByText("MEC 21 A · Mecânica · 2º ano")).not.toBeInTheDocument();
   });
 
+  it("permite ao CPD trocar em lote a sala dos horários selecionados", async () => {
+    localStorage.setItem("cimol_horarios_state", JSON.stringify({ view: "tabela", course: "Informática", year: "3", className: "INFO 63 1", teacherQuery: "" }));
+    const schedules = [
+      { id: 1, turma: "INFO 63 1", curso: "Informática", ano: "3", dia: "SEG", periodo: 1, hora_inicio: "07:30", disciplina: "Programação", professor: "Ana", sala_id: null, ambiente: null, sala: null, bloco: null },
+      { id: 2, turma: "INFO 63 1", curso: "Informática", ano: "3", dia: "TER", periodo: 2, hora_inicio: "08:20", disciplina: "Banco de Dados", professor: "Beto", sala_id: null, ambiente: null, sala: null, bloco: null },
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/auth/me")) return ok({ user: { id: 7, papel: "CPD" } });
+      if (url.endsWith("/api/intervalos")) return ok([]);
+      if (url.includes("apenas_opcoes=1")) return ok({ turmas: [{ ...turmas[0], grupo_ids: [] }], professores: [], horarios: [] });
+      if (url.includes("/api/horarios/publicados?turma=")) return ok({ turmas, horarios: schedules });
+      if (url.endsWith("/api/salas")) return ok([{ id: 4, nome: "B201", bloco_nome: "Bloco B", andar: "2º", capacidade: 30, tipo: "Sala de aula", status: "ATIVA", acessivel: false }]);
+      if (url.endsWith("/api/salas/ocupacoes")) return ok({ horarios: [] });
+      if (url.endsWith("/api/horarios/publicados/salas/lote") && init?.method === "PATCH") return ok({ updated: 2 });
+      throw new Error(`URL inesperada: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<HorariosSection />);
+    const selection = await screen.findAllByRole("checkbox", { name: "Selecionar horário de Programação" });
+    fireEvent.click(selection[0]);
+    fireEvent.click((await screen.findAllByRole("checkbox", { name: "Selecionar horário de Banco de Dados" }))[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Alterar sala em lote" }));
+
+    const roomSelect = await screen.findByLabelText("Nova sala");
+    await waitFor(() => expect(roomSelect).toBeEnabled());
+    fireEvent.change(roomSelect, { target: { value: "4" } });
+    fireEvent.click(screen.getByRole("button", { name: "Revisar alterações" }));
+
+    expect(await screen.findByRole("heading", { name: "Revisar troca de salas" })).toBeInTheDocument();
+    const review = screen.getByRole("dialog", { name: "Revisar troca de salas" });
+    expect(within(review).getByText(/Programação/)).toBeInTheDocument();
+    expect(within(review).getByText(/Banco de Dados/)).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/api/horarios/publicados/salas/lote"))).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Editar" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Revisar alterações" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirmar troca" }));
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([input, init]) => String(input).endsWith("/api/horarios/publicados/salas/lote") && init?.method === "PATCH");
+      expect(call).toBeDefined();
+      expect(JSON.parse(String(call?.[1]?.body))).toEqual({ horario_ids: [1, 2], sala_id: 4 });
+    });
+  });
+
   it("mostra apenas intervalos ligados ao grupo da turma", async () => {
     const option = { ...turmas[0], grupo_ids: [1, 2, 3] };
     const otherOption = { turma: "MEC 21 A", curso: "Mecânica", ano: "2", grupo_ids: [99] };

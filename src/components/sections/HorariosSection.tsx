@@ -11,6 +11,7 @@ import meioAmbienteImg from "@/assets/cursos/meio-ambiente.png";
 import moveisImg from "@/assets/cursos/moveis.png";
 import quimicaImg from "@/assets/cursos/quimica.png";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -141,9 +142,16 @@ const HorariosSection = ({ onReportContext }: { onReportContext?: (context: Repo
   const [roomsLoaded, setRoomsLoaded] = useState(false);
   const [loadingRooms, setLoadingRooms] = useState(false);
   const [selectedSchedule, setSelectedSchedule] = useState<PublishedSchedule | null>(null);
+  const [selectedScheduleIds, setSelectedScheduleIds] = useState<Set<number>>(() => new Set());
+  const [selectionError, setSelectionError] = useState("");
   const [roomValue, setRoomValue] = useState(NO_ROOM_VALUE);
   const [roomError, setRoomError] = useState("");
   const [savingRoom, setSavingRoom] = useState(false);
+  const [bulkRoomOpen, setBulkRoomOpen] = useState(false);
+  const [bulkReviewOpen, setBulkReviewOpen] = useState(false);
+  const [bulkRoomValue, setBulkRoomValue] = useState("");
+  const [bulkRoomError, setBulkRoomError] = useState("");
+  const [savingBulkRoom, setSavingBulkRoom] = useState(false);
   const [studentCount, setStudentCount] = useState("");
   const [roomReason, setRoomReason] = useState("");
   const [notificationEmail, setNotificationEmail] = useState("");
@@ -299,6 +307,9 @@ const HorariosSection = ({ onReportContext }: { onReportContext?: (context: Repo
     [rooms, roomValue]
   );
   const selectedRoomCapacity = selectedRoom?.capacidade ?? null;
+  const activeRooms = useMemo(() => rooms.filter((room) => room.status === "ATIVA"), [rooms]);
+  const selectedBulkRoom = activeRooms.find((room) => String(room.id) === bulkRoomValue) || null;
+  const selectedSchedules = schedules.filter((schedule) => selectedScheduleIds.has(schedule.id));
   const parsedStudentCount = studentCount ? Number(studentCount) : null;
   const capacityWarning = selectedRoom && parsedStudentCount && selectedRoomCapacity !== null && parsedStudentCount > selectedRoomCapacity;
   const roomConflict = selectedSchedule && selectedRoom
@@ -317,6 +328,11 @@ const HorariosSection = ({ onReportContext }: { onReportContext?: (context: Repo
 
   useEffect(() => {
     setSelectedMobileDay("");
+  }, [className, teacherQuery]);
+
+  useEffect(() => {
+    setSelectedScheduleIds(new Set());
+    setSelectionError("");
   }, [className, teacherQuery]);
 
   useEffect(() => {
@@ -353,6 +369,28 @@ const HorariosSection = ({ onReportContext }: { onReportContext?: (context: Repo
     setStudentCount("");
     setRoomReason("");
     void ensureRoomsLoaded(true);
+  };
+
+  const toggleScheduleSelection = (scheduleId: number, checked: boolean) => {
+    setSelectedScheduleIds((current) => {
+      if (checked && current.size >= 100 && !current.has(scheduleId)) {
+        setSelectionError("Selecione até 100 horários por operação.");
+        return current;
+      }
+      const next = new Set(current);
+      if (checked) next.add(scheduleId);
+      else next.delete(scheduleId);
+      setSelectionError("");
+      return next;
+    });
+  };
+
+  const openBulkRoomConfig = () => {
+    setBulkRoomValue("");
+    setBulkRoomError("");
+    setRoomError("");
+    setBulkRoomOpen(true);
+    void ensureRoomsLoaded();
   };
 
   const closeRoomConfig = () => {
@@ -393,6 +431,45 @@ const HorariosSection = ({ onReportContext }: { onReportContext?: (context: Repo
       setRoomError(err instanceof Error ? err.message : "Erro ao configurar a sala.");
     } finally {
       setSavingRoom(false);
+    }
+  };
+
+  const reviewBulkRoomConfig = () => {
+    if (!selectedBulkRoom || !selectedSchedules.length) {
+      setBulkRoomError("Selecione os horários e uma sala ativa.");
+      return;
+    }
+    setBulkRoomError("");
+    setBulkRoomOpen(false);
+    setBulkReviewOpen(true);
+  };
+
+  const rejectBulkRoomConfig = () => {
+    setBulkReviewOpen(false);
+    setSelectedScheduleIds(new Set());
+    setBulkRoomValue("");
+  };
+
+  const confirmBulkRoomConfig = async () => {
+    if (!selectedBulkRoom || !selectedSchedules.length) return;
+    setSavingBulkRoom(true);
+    try {
+      const scheduleIds = selectedSchedules.map((schedule) => schedule.id);
+      const result = await apiFetch<{ updated: number }>("/api/horarios/publicados/salas/lote", {
+        method: "PATCH",
+        body: JSON.stringify({ horario_ids: scheduleIds, sala_id: selectedBulkRoom.id }),
+      });
+      setSchedules((current) => current.map((schedule) => selectedScheduleIds.has(schedule.id)
+        ? { ...schedule, sala_id: selectedBulkRoom.id, sala: selectedBulkRoom.nome, bloco: selectedBulkRoom.bloco_nome }
+        : schedule));
+      setSelectedScheduleIds(new Set());
+      setBulkReviewOpen(false);
+      setBulkRoomValue("");
+      toast.success(result.updated ? `Sala alterada em ${result.updated} horário(s).` : "Os horários já estavam nessa sala.");
+    } catch (err) {
+      setBulkRoomError(err instanceof Error ? err.message : "Erro ao alterar as salas.");
+    } finally {
+      setSavingBulkRoom(false);
     }
   };
 
@@ -688,6 +765,18 @@ const HorariosSection = ({ onReportContext }: { onReportContext?: (context: Repo
         {!loadingSchedules && !schedules.length && <div className="rounded-xl border border-border py-10 text-center text-muted-foreground">{viewingTeacher ? "Nenhuma aula encontrada para este professor." : "Nenhuma aula encontrada para esta turma."}</div>}
         {!loadingSchedules && !!schedules.length && (
           <div className="space-y-5">
+            {isCpd && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3">
+                <div>
+                  <p className="text-sm font-medium">{selectedScheduleIds.size} horário(s) selecionado(s)</p>
+                  {selectionError && <p role="alert" className="text-xs text-destructive">{selectionError}</p>}
+                </div>
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => { setSelectedScheduleIds(new Set()); setSelectionError(""); }} disabled={!selectedScheduleIds.size}>Limpar</Button>
+                  <Button type="button" size="sm" onClick={openBulkRoomConfig} disabled={!selectedScheduleIds.size}>Alterar sala em lote</Button>
+                </div>
+              </div>
+            )}
             <div className="md:hidden pb-1">
               <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
                 {daysWithSchedules.map(({ day, schedules: daySchedules }) => (
@@ -721,19 +810,12 @@ const HorariosSection = ({ onReportContext }: { onReportContext?: (context: Repo
                       <div key={schedule.id} className="rounded-xl border border-border bg-background/70 p-3 text-sm">
                         <div className="flex items-start justify-between gap-3">
                           <p className="font-semibold text-primary">{schedule.hora_inicio || `${schedule.periodo}ª aula`}</p>
-                          {isCpd && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => openRoomConfig(schedule)}
-                              className="h-8 w-8 shrink-0"
-                              title="Configurar sala"
-                              aria-label={`Configurar sala de ${schedule.disciplina}`}
-                            >
+                          {isCpd && <div className="flex items-center gap-1">
+                            <Checkbox aria-label={`Selecionar horário de ${schedule.disciplina}`} checked={selectedScheduleIds.has(schedule.id)} onCheckedChange={(checked) => toggleScheduleSelection(schedule.id, checked === true)} />
+                            <Button type="button" variant="ghost" size="icon" onClick={() => openRoomConfig(schedule)} className="h-8 w-8 shrink-0" title="Configurar sala" aria-label={`Configurar sala de ${schedule.disciplina}`}>
                               <Settings className="w-4 h-4" />
                             </Button>
-                          )}
+                          </div>}
                         </div>
                         <p className="mt-1 font-medium text-foreground">{schedule.disciplina}</p>
                         <div className="mt-3 grid gap-2 text-xs text-muted-foreground">
@@ -755,6 +837,7 @@ const HorariosSection = ({ onReportContext }: { onReportContext?: (context: Repo
                     <Table>
                       <TableHeader>
                         <TableRow className="bg-muted/50">
+                          {isCpd && <TableHead>Selecionar</TableHead>}
                           <TableHead>Horário</TableHead>
                           {viewingTeacher && <TableHead>Turma</TableHead>}
                           <TableHead>Disciplina</TableHead>
@@ -766,6 +849,7 @@ const HorariosSection = ({ onReportContext }: { onReportContext?: (context: Repo
                       <TableBody>
                         {daySchedules.map((schedule) => (
                           <TableRow key={schedule.id} className="hover:bg-primary/5">
+                            {isCpd && <TableCell><Checkbox aria-label={`Selecionar horário de ${schedule.disciplina}`} checked={selectedScheduleIds.has(schedule.id)} onCheckedChange={(checked) => toggleScheduleSelection(schedule.id, checked === true)} /></TableCell>}
                             <TableCell className="font-semibold text-primary">{schedule.hora_inicio || `${schedule.periodo}ª aula`}</TableCell>
                             {viewingTeacher && <TableCell>{classDetails(schedule)}</TableCell>}
                             <TableCell className="font-medium">{schedule.disciplina}</TableCell>
@@ -891,6 +975,61 @@ const HorariosSection = ({ onReportContext }: { onReportContext?: (context: Repo
             <Button type="button" onClick={saveRoomConfig} disabled={savingRoom || loadingRooms || !!capacityWarning || !!roomConflict}>
               {savingRoom ? "Salvando..." : "Salvar sala"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={bulkRoomOpen} onOpenChange={(open) => { if (!savingBulkRoom) setBulkRoomOpen(open); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Alterar sala em lote</DialogTitle>
+            <DialogDescription>A mesma sala será atribuída aos {selectedSchedules.length} horários selecionados. Conflitos serão verificados antes de salvar.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <label htmlFor="bulk-room-target" className="text-sm font-medium text-foreground">Nova sala</label>
+            <select id="bulk-room-target" value={bulkRoomValue} onChange={(event) => setBulkRoomValue(event.target.value)} disabled={loadingRooms || savingBulkRoom} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
+              <option value="">{loadingRooms ? "Carregando salas..." : "Selecione uma sala ativa"}</option>
+              {activeRooms.map((room) => <option key={room.id} value={room.id}>{room.nome} · {room.bloco_nome} · {room.tipo}</option>)}
+            </select>
+            {selectedBulkRoom && <p className="text-xs text-muted-foreground">{selectedBulkRoom.andar} · {selectedBulkRoom.capacidade == null ? "capacidade a conferir" : `${selectedBulkRoom.capacidade} lugares`}</p>}
+            {!loadingRooms && roomsLoaded && !activeRooms.length && <p className="text-xs text-muted-foreground">Nenhuma sala ativa cadastrada no painel do CPD.</p>}
+            {roomError && <p role="alert" className="text-sm text-destructive">{roomError}</p>}
+            {bulkRoomError && <p role="alert" className="text-sm text-destructive">{bulkRoomError}</p>}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setBulkRoomOpen(false)} disabled={savingBulkRoom}>Cancelar</Button>
+            <Button type="button" onClick={reviewBulkRoomConfig} disabled={savingBulkRoom || loadingRooms || !bulkRoomValue}>
+              Revisar alterações
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={bulkReviewOpen} onOpenChange={(open) => { if (!savingBulkRoom) setBulkReviewOpen(open); }}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Revisar troca de salas</DialogTitle>
+            <DialogDescription>
+              Confira as {selectedSchedules.length} alterações. Nenhuma sala ou notificação será enviada até confirmar.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[55vh] space-y-2 overflow-y-auto rounded-md border border-border p-3">
+            {selectedSchedules.map((schedule) => (
+              <div key={schedule.id} className="grid gap-1 border-b border-border/60 pb-2 text-sm last:border-0 last:pb-0 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                <p className="font-medium text-foreground">
+                  {schedule.turma} · {dayLabels[schedule.dia] || schedule.dia} · {schedule.hora_inicio || `${schedule.periodo}ª aula`} · {schedule.disciplina}
+                </p>
+                <p className="text-muted-foreground">{schedule.sala || schedule.ambiente || "Sem sala"} → {selectedBulkRoom?.nome}</p>
+              </div>
+            ))}
+          </div>
+          {bulkRoomError && <p role="alert" className="text-sm text-destructive">{bulkRoomError}</p>}
+          <DialogFooter className="flex-col-reverse sm:flex-row sm:justify-between">
+            <Button type="button" variant="outline" onClick={rejectBulkRoomConfig} disabled={savingBulkRoom}>Rejeitar troca</Button>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row">
+              <Button type="button" variant="outline" onClick={() => { setBulkReviewOpen(false); setBulkRoomOpen(true); }} disabled={savingBulkRoom}>Editar</Button>
+              <Button type="button" onClick={confirmBulkRoomConfig} disabled={savingBulkRoom}>
+                {savingBulkRoom ? "Aplicando..." : "Confirmar troca"}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
