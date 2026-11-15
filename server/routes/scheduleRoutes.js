@@ -13,6 +13,7 @@ export const registerScheduleRoutes = (
   app.get("/api/importacoes", requireRole("CPD"), controller.listImports);
   app.get("/api/importacoes/:id", requireRole("CPD"), controller.getImport);
   app.patch("/api/importacoes/horarios/:id/sala", requireRole("CPD"), controller.assignPendingRoom);
+  app.patch("/api/importacoes/:id/horarios/sala/lote", requireRole("CPD"), controller.assignPendingRooms);
   app.post("/api/importacoes/:id/aprovar", requireRole("CPD"), controller.approveImport);
   app.post("/api/importacoes/:id/rejeitar", requireRole("CPD"), controller.rejectImport);
 
@@ -21,6 +22,7 @@ export const registerScheduleRoutes = (
   app.get("/api/horarios/notificacoes/confirmar", controller.confirmNotification);
   app.get("/api/horarios/notificacoes/manutencao", notificationMaintenance, controller.maintainNotifications);
   app.get("/api/horarios/publicados", controller.listPublishedSchedules);
+  app.patch("/api/horarios/publicados/salas/lote", requireRole("CPD"), controller.assignPublishedRooms);
   app.patch("/api/horarios/publicados/:id/sala", requireRole("CPD"), controller.assignPublishedRoom);
 
   app.get("/api/grupos-academicos", requireRole("CPD"), controller.listAcademicGroups);

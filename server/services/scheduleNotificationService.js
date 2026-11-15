@@ -45,13 +45,28 @@ const changedLabel = (change) => {
   return `${slot}${fields.length ? ` | ${fields.join("; ")}` : ""}`;
 };
 
-export const buildScheduleNotificationText = ({ turma, payload }) => {
-  const details = parsePayload(payload);
-  const lines = [`A grade da turma ${turma} foi atualizada.`, "", "Alterações:"];
+const appendScheduleDetails = (lines, details) => {
   for (const item of details.alteradas || []) lines.push(`- ${changedLabel(item)}`);
   for (const item of details.adicionadas || []) lines.push(`- Aula incluída: ${scheduleLabel(item)}`);
   for (const item of details.removidas || []) lines.push(`- Aula removida: ${scheduleLabel(item)}`);
+};
+
+export const buildScheduleNotificationText = ({ turma, payload }) => {
+  const details = parsePayload(payload);
+  const lines = [`A grade da turma ${turma} foi atualizada.`, "", "Alterações:"];
+  appendScheduleDetails(lines, details);
   lines.push("", "Consulte a grade atualizada no sistema.");
+  return lines.join("\n");
+};
+
+const buildRoomBatchNotificationText = (events) => {
+  const lines = ["As salas dos horários selecionados foram atualizadas.", ""];
+  for (const event of events) {
+    lines.push(`Turma ${event.turma}:`);
+    appendScheduleDetails(lines, parsePayload(event.payload_json));
+    lines.push("");
+  }
+  lines.push("Consulte os horários atualizados no sistema.");
   return lines.join("\n");
 };
 
@@ -61,32 +76,32 @@ export const buildScheduleNotificationHtml = ({ turma, payload }) => {
   return `<div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2937;max-width:640px;margin:auto;padding:24px"><h2 style="color:#1d4ed8">Alteração na grade da sua turma</h2><p>${lines.join("<br>")}</p></div>`;
 };
 
-export const createScheduleNotificationService = ({ scheduleModel }) => {
-  const sendEmail = async ({ to, subject, text, html }) => {
-    if (!process.env.SMTP_HOST) return { sent: false, reason: "SMTP_HOST ausente" };
-    if (!process.env.SMTP_FROM && !process.env.SMTP_USER) return { sent: false, reason: "SMTP_FROM ausente" };
-    const nodemailer = (await import("nodemailer")).default;
-    const port = Number(process.env.SMTP_PORT || 587);
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port,
-      secure: process.env.SMTP_SECURE
-        ? [true, 1, "1", "true", "on"].includes(process.env.SMTP_SECURE)
-        : port === 465,
-      auth: process.env.SMTP_USER
-        ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS || "" }
-        : undefined,
-    });
-    await transporter.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
-      to,
-      subject,
-      text,
-      html,
-    });
-    return { sent: true };
-  };
+const sendEmailWithTransport = async ({ to, subject, text, html }) => {
+  if (!process.env.SMTP_HOST) return { sent: false, reason: "SMTP_HOST ausente" };
+  if (!process.env.SMTP_FROM && !process.env.SMTP_USER) return { sent: false, reason: "SMTP_FROM ausente" };
+  const nodemailer = (await import("nodemailer")).default;
+  const port = Number(process.env.SMTP_PORT || 587);
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port,
+    secure: process.env.SMTP_SECURE
+      ? [true, 1, "1", "true", "on"].includes(process.env.SMTP_SECURE)
+      : port === 465,
+    auth: process.env.SMTP_USER
+      ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS || "" }
+      : undefined,
+  });
+  await transporter.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to,
+    subject,
+    text,
+    html,
+  });
+  return { sent: true };
+};
 
+export const createScheduleNotificationService = ({ scheduleModel, sendEmail = sendEmailWithTransport }) => {
   const sendVerificationEmail = async ({ to, turma, code, confirmationUrl }) => sendEmail({
     to,
     subject: `Confirmar avisos da grade - turma ${turma}`,
@@ -99,33 +114,49 @@ export const createScheduleNotificationService = ({ scheduleModel }) => {
     html: `<div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2937;max-width:640px;margin:auto;padding:24px"><h2 style="color:#1d4ed8">Confirmar avisos da grade</h2><p>Use este código para ativar os avisos da turma <strong>${escapeHtml(turma)}</strong>:</p><p style="font-size:30px;letter-spacing:8px;font-weight:700;text-align:center">${escapeHtml(code)}</p><p>O código vale por 2 dias e pode ser usado uma única vez.</p>${confirmationUrl ? `<p><a href="${escapeHtml(confirmationUrl)}">Confirmar automaticamente</a></p>` : ""}</div>`,
   });
 
-  const processPendingEvents = async ({ institutionId = null, limit = 100 } = {}) => {
-    const events = await scheduleModel.claimNotificationEvents({ institutionId, limit });
+  const processPendingEvents = async ({ institutionId = null, operationId = null, limit = 100 } = {}) => {
+    const events = await scheduleModel.claimNotificationEvents({ institutionId, operationId, limit });
     const result = { tentadas: events.length, enviadas: 0, sem_smtp: 0, falhas: 0 };
+    const batches = new Map();
     for (const event of events) {
+      const match = event.tipo === "ALTERACAO" ? /^sala:lote:([0-9a-f-]+):/i.exec(event.chave || "") : null;
+      const operationKey = match ? match[1] : `evento:${event.id}`;
+      const key = `${String(event.email).toLowerCase()}\0${operationKey}`;
+      const batch = batches.get(key) || { events: [], roomBatch: Boolean(match) };
+      batch.events.push(event);
+      batches.set(key, batch);
+    }
+
+    for (const batch of batches.values()) {
+      const { events: batchEvents, roomBatch } = batch;
       try {
-        const payload = parsePayload(event.payload_json);
+        const event = batchEvents[0];
         const expiration = event.tipo === "EXPIRACAO";
         const text = expiration
           ? "O período de 1 ano das notificações de alterações da sua turma foi encerrado.\n\nCaso queira continuar recebendo atualizações, acesse o sistema e realize uma nova ativação."
-          : buildScheduleNotificationText({ turma: event.turma, payload });
+          : roomBatch
+            ? buildRoomBatchNotificationText(batchEvents)
+            : buildScheduleNotificationText({ turma: event.turma, payload: event.payload_json });
+        const title = expiration
+          ? "Suas notificações de horários expiraram"
+          : roomBatch ? "Alteração de salas nos horários selecionados" : "Alteração na grade da sua turma";
         const sent = await sendEmail({
           to: event.email,
-          subject: expiration ? "Suas notificações de horários expiraram" : "Alteração na grade da sua turma",
+          subject: title,
           text,
-          html: `<div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2937;max-width:640px;margin:auto;padding:24px"><h2 style="color:#1d4ed8">${expiration ? "Suas notificações de horários expiraram" : "Alteração na grade da sua turma"}</h2><p>${escapeHtml(text).replaceAll("\n", "<br>")}</p></div>`,
+          html: `<div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2937;max-width:640px;margin:auto;padding:24px"><h2 style="color:#1d4ed8">${escapeHtml(title)}</h2><p>${escapeHtml(text).replaceAll("\n", "<br>")}</p></div>`,
         });
         if (!sent.sent) {
-          await scheduleModel.failNotificationEvent({ eventId: event.id, error: sent.reason });
-          result.sem_smtp += 1;
+          for (const item of batchEvents) await scheduleModel.failNotificationEvent({ eventId: item.id, error: sent.reason });
+          result.sem_smtp += batchEvents.length;
           continue;
         }
-        await scheduleModel.completeNotificationEvent(event.id);
-        result.enviadas += 1;
+        for (const item of batchEvents) await scheduleModel.completeNotificationEvent(item.id);
+        result.enviadas += batchEvents.length;
       } catch (error) {
-        await scheduleModel.failNotificationEvent({ eventId: event.id, error: error.message });
-        result.falhas += 1;
-        console.error({ error, eventId: event.id }, "Falha ao enviar notificação de horário");
+        for (const item of batchEvents) await scheduleModel.failNotificationEvent({ eventId: item.id, error: error.message });
+        result.falhas += batchEvents.length;
+        console.error({ error, eventIds: batchEvents.map(({ id }) => id) }, "Falha ao enviar notificação de horário");
       }
     }
     return result;

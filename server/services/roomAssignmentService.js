@@ -5,7 +5,12 @@ export const createRoomAssignmentService = ({ dayOrderSql, httpError, isFirstFlo
     .replace(/^(?:laboratorio|lab\.?)(?:\s+de)?(?=\s|$)/, "laboratorio");
   const resources = ["possui_computadores", "possui_data_show", "possui_internet", "possui_ar_condicionado"];
 
+  const lockRoomAssignments = (conn, institutionId) =>
+    // ponytail: serialize room changes per institution; use per-slot locks if CPD throughput requires it.
+    conn.query("SELECT id FROM instituicoes WHERE id = ? FOR UPDATE", [institutionId]);
+
   const updatePublishedScheduleRoom = async (conn, { institutionId, scheduleId, roomId, userId, studentCount, reason }) => {
+    await lockRoomAssignments(conn, institutionId);
     const [schedules] = await conn.query(
       `SELECT h.id, h.importacao_id, h.turma, h.dia, h.periodo, h.hora_inicio, h.sala_id,
               h.disciplina, h.professor, h.ambiente, s.nome AS sala_nome
@@ -39,22 +44,25 @@ export const createRoomAssignmentService = ({ dayOrderSql, httpError, isFirstFlo
 
       const [conflicts] = await conn.query(
         `SELECT turma, disciplina, professor
-           FROM horarios_importados
-          WHERE importacao_id = ?
-            AND id <> ?
-            AND categoria = 'TURMA'
-            AND dia = ?
-            AND periodo = ?
+           FROM horarios_importados h
+           JOIN importacoes_horarios i ON i.id = h.importacao_id
+          WHERE i.instituicao_id = ?
+            AND i.status = 'APROVADA'
+            AND i.ativa = TRUE
+            AND h.categoria = 'TURMA'
+            AND h.id <> ?
+            AND h.dia = ?
+            AND h.periodo = ?
             AND (
-              sala_id = ?
+              h.sala_id = ?
               OR (
-                sala_id IS NULL
-                AND ambiente IS NOT NULL
-                AND REPLACE(LOWER(TRIM(ambiente)), ' ', '') = REPLACE(LOWER(TRIM(?)), ' ', '')
+                h.sala_id IS NULL
+                AND h.ambiente IS NOT NULL
+                AND REPLACE(LOWER(TRIM(h.ambiente)), ' ', '') = REPLACE(LOWER(TRIM(?)), ' ', '')
               )
             )
           LIMIT 1`,
-        [schedule.importacao_id, scheduleId, schedule.dia, schedule.periodo, roomId, roomName]
+        [institutionId, scheduleId, schedule.dia, schedule.periodo, roomId, roomName]
       );
       if (conflicts.length) {
         const conflict = conflicts[0];
@@ -100,6 +108,7 @@ export const createRoomAssignmentService = ({ dayOrderSql, httpError, isFirstFlo
             {
               horario_id: schedule.id,
               alteracao_id: changeResult?.insertId || null,
+              turma: schedule.turma,
               dia: schedule.dia,
               periodo: schedule.periodo,
               hora_inicio: schedule.hora_inicio,
@@ -109,6 +118,43 @@ export const createRoomAssignmentService = ({ dayOrderSql, httpError, isFirstFlo
             },
           ]
         : [],
+    };
+  };
+
+  const updatePublishedScheduleRooms = async (conn, { institutionId, scheduleIds, roomId, assignments, userId, reason }) => {
+    const targets = assignments || (Array.isArray(scheduleIds)
+      ? scheduleIds.map((scheduleId) => ({ scheduleId, roomId }))
+      : null);
+    if (!Array.isArray(targets) || !targets.length || targets.length > 100
+      || targets.some((target) => !target || !Number.isInteger(target.scheduleId) || target.scheduleId < 1
+        || !Number.isInteger(target.roomId) || target.roomId < 1
+        || (target.studentCount != null && (!Number.isInteger(target.studentCount) || target.studentCount < 1)))
+      || new Set(targets.map(({ scheduleId }) => scheduleId)).size !== targets.length) {
+      throw httpError(400, "Selecione de 1 a 100 alocações válidas, sem horários duplicados.");
+    }
+
+    const orderedTargets = [...targets].sort((a, b) => a.scheduleId - b.scheduleId);
+    const alteracoes = [];
+    for (const { scheduleId, roomId: targetRoomId, studentCount } of orderedTargets) {
+      const result = await updatePublishedScheduleRoom(conn, {
+        institutionId,
+        scheduleId,
+        roomId: targetRoomId,
+        userId,
+        studentCount: studentCount ?? null,
+        reason,
+      });
+      alteracoes.push(...result.alteracoes);
+    }
+    return {
+      ok: true,
+      sala_id: orderedTargets.every(({ roomId: targetRoomId }) => targetRoomId === orderedTargets[0].roomId)
+        ? orderedTargets[0].roomId
+        : null,
+      updated: alteracoes.length,
+      changed: alteracoes.length > 0,
+      horarios: orderedTargets.map(({ scheduleId }) => scheduleId),
+      alteracoes,
     };
   };
 
@@ -197,5 +243,5 @@ export const createRoomAssignmentService = ({ dayOrderSql, httpError, isFirstFlo
     return { avaliadas: upperSchedules.length, candidatas: candidates.length, aplicadas: applied, nao_aplicadas: skipped };
   };
 
-  return { updatePublishedScheduleRoom, applyGroundFloorReorganization };
+  return { updatePublishedScheduleRoom, updatePublishedScheduleRooms, applyGroundFloorReorganization };
 };

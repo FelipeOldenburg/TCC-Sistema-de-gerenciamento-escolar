@@ -287,6 +287,118 @@ export const createScheduleController = ({
     }
   };
 
+  const assignPublishedRooms = async (req, res, next) => {
+    const scheduleIds = req.body?.horario_ids;
+    const roomId = Number(req.body?.sala_id);
+    let assignments;
+    if (req.body?.alocacoes !== undefined) {
+      const rawAssignments = req.body.alocacoes;
+      if (!Array.isArray(rawAssignments) || !rawAssignments.length || rawAssignments.length > 100
+        || rawAssignments.some((item) => !item || !Number.isInteger(item.horario_id) || item.horario_id < 1
+          || !Number.isInteger(item.sala_id) || item.sala_id < 1
+          || (item.quantidade_alunos != null && (!Number.isInteger(item.quantidade_alunos) || item.quantidade_alunos < 1)))
+        || new Set(rawAssignments.map(({ horario_id }) => horario_id)).size !== rawAssignments.length) {
+        return next(httpError(400, "Selecione de 1 a 100 períodos válidos, sem horários duplicados."));
+      }
+      assignments = rawAssignments.map(({ horario_id, sala_id, quantidade_alunos }) => ({
+        scheduleId: horario_id,
+        roomId: sala_id,
+        studentCount: quantidade_alunos ?? null,
+      }));
+    } else {
+      if (!Array.isArray(scheduleIds) || !scheduleIds.length || scheduleIds.length > 100
+        || scheduleIds.some((id) => !Number.isInteger(id) || id < 1)
+        || new Set(scheduleIds).size !== scheduleIds.length) {
+        return next(httpError(400, "Selecione de 1 a 100 horários válidos, sem duplicidades."));
+      }
+      if (!Number.isInteger(roomId) || roomId < 1) return next(httpError(400, "Selecione uma sala válida."));
+      assignments = scheduleIds.map((scheduleId) => ({ scheduleId, roomId, studentCount: null }));
+    }
+
+    const reason = sanitizeFreeText(req.body?.motivo, 255) || null;
+    let operationId = null;
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+      const result = await roomAssignmentService.updatePublishedScheduleRooms(conn, {
+        institutionId: req.institution.id,
+        assignments,
+        userId: req.user.id,
+        reason,
+      });
+
+      if (result.alteracoes?.length) {
+        const changesByClass = new Map();
+        for (const change of result.alteracoes) {
+          const base = {
+            dia: change.dia,
+            periodo: change.periodo,
+            hora_inicio: change.hora_inicio,
+            disciplina: change.disciplina,
+          };
+          const changes = changesByClass.get(change.turma) || [];
+          changes.push({
+            antes: { ...base, sala: change.sala_anterior },
+            depois: { ...base, sala: change.sala_nova },
+            sala_alterada: true,
+            horario_alterado: false,
+            disciplina_alterada: false,
+            professor_alterado: false,
+          });
+          changesByClass.set(change.turma, changes);
+        }
+        operationId = crypto.randomUUID();
+        await scheduleModel.enqueueNotificationEvents(conn, {
+          institutionId: req.institution.id,
+          events: [...changesByClass].map(([turma, alteradas]) => ({
+            chave: `sala:lote:${operationId}:${turma}`,
+            turma,
+            payload: { adicionadas: [], removidas: [], alteradas },
+          })),
+        });
+      }
+
+      await conn.commit();
+      if (result.changed && result.alteracoes?.length) {
+        try {
+          await notificationService.processPendingEvents({ institutionId: req.institution.id, operationId });
+        } catch (notificationError) {
+          console.error({ notificationError }, "Falha ao enviar notificações de troca de sala em lote");
+        }
+      }
+      return res.json(result);
+    } catch (error) {
+      await conn.rollback();
+      return next(error);
+    } finally {
+      conn.release();
+    }
+  };
+
+  const assignPendingRooms = async (req, res, next) => {
+    const importId = Number(req.params.id);
+    const rawRoomId = req.body?.sala_id;
+    const roomId = rawRoomId === null || rawRoomId === undefined || rawRoomId === "" ? null : Number(rawRoomId);
+    const scheduleIds = req.body?.horario_ids;
+    if (!Number.isInteger(importId) || importId < 1) return next(httpError(400, "Importação inválida."));
+    if (roomId === null || !Number.isInteger(roomId) || roomId < 1) return next(httpError(400, "Selecione uma sala válida."));
+    if (!Array.isArray(scheduleIds) || !scheduleIds.length || scheduleIds.length > 100
+      || scheduleIds.some((id) => !Number.isInteger(id) || id < 1)
+      || new Set(scheduleIds).size !== scheduleIds.length) {
+      return next(httpError(400, "Selecione de 1 a 100 horários válidos, sem duplicidades."));
+    }
+    try {
+      return res.json(await scheduleModel.assignPendingRooms({
+        institutionId: req.institution.id,
+        importId,
+        roomId,
+        scheduleIds,
+      }));
+    } catch (error) {
+      return next(error);
+    }
+  };
+
   const listAcademicGroups = async (req, res, next) => {
     try {
       return res.json(await scheduleModel.listAcademicGroups(req.institution.id));
@@ -356,7 +468,9 @@ export const createScheduleController = ({
   return {
     approveImport,
     assignPendingRoom,
+    assignPendingRooms,
     assignPublishedRoom,
+    assignPublishedRooms,
     deactivateInterval,
     confirmNotification,
     confirmNotificationByCode,

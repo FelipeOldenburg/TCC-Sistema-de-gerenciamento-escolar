@@ -640,11 +640,14 @@ export const createScheduleModel = ({ db, dayOrderSql, httpError, normalizeLooku
     activateNotificationSubscription({ institutionId, where: "confirmacao_token_hash = ?", params: [tokenHash] })
       .then(() => ({ affectedRows: 1 }));
 
-  const claimNotificationEvents = async ({ institutionId = null, limit = 100 }) => {
+  const claimNotificationEvents = async ({ institutionId = null, operationId = null, limit = 100 }) => {
     const conn = await db.getConnection();
     const institutionCondition = institutionId === null ? "" : "AND instituicao_id = ?";
     const eventInstitutionCondition = institutionId === null ? "" : "AND e.instituicao_id = ?";
     const institutionParams = institutionId === null ? [] : [institutionId];
+    const operationCondition = operationId ? "AND e.chave LIKE ?" : "";
+    const operationParams = operationId ? [`sala:lote:${operationId}:%`] : [];
+    const limitClause = operationId ? "" : "LIMIT ?";
     try {
       await conn.beginTransaction();
       await conn.query(
@@ -656,17 +659,18 @@ export const createScheduleModel = ({ db, dayOrderSql, httpError, normalizeLooku
         institutionParams
       );
       const [events] = await conn.query(
-        `SELECT e.id, e.tipo, e.turma, e.payload_json, n.email
+        `SELECT e.id, e.tipo, e.chave, e.turma, e.payload_json, n.email
            FROM horario_notificacao_eventos e
            JOIN horario_notificacoes n ON n.id = e.horario_notificacao_id AND n.instituicao_id = e.instituicao_id
           WHERE e.status IN ('PENDENTE', 'FALHA')
             AND e.proxima_tentativa_em <= CURRENT_TIMESTAMP
             AND (e.tipo = 'EXPIRACAO' OR (n.status = 'ATIVA' AND n.ativo = TRUE AND n.expires_at > CURRENT_TIMESTAMP))
             ${eventInstitutionCondition}
+            ${operationCondition}
           ORDER BY e.id
-          LIMIT ?
+          ${limitClause}
           FOR UPDATE SKIP LOCKED`,
-        [...institutionParams, limit]
+        [...institutionParams, ...operationParams, ...(operationId ? [] : [limit])]
       );
       if (events.length) {
         await conn.query(
