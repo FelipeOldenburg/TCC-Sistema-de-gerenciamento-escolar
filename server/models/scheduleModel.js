@@ -732,9 +732,10 @@ export const createScheduleModel = ({ db, dayOrderSql, httpError, normalizeLooku
         institutionParams
       );
       const [events] = await conn.query(
-        `SELECT e.id, e.tipo, e.chave, e.turma, e.payload_json, n.email
+        `SELECT e.id, e.tipo, e.chave, e.turma, e.payload_json, n.email, i.slug AS instituicao_slug
            FROM horario_notificacao_eventos e
            JOIN horario_notificacoes n ON n.id = e.horario_notificacao_id AND n.instituicao_id = e.instituicao_id
+           JOIN instituicoes i ON i.id = e.instituicao_id
           WHERE e.status IN ('PENDENTE', 'FALHA')
             AND e.proxima_tentativa_em <= CURRENT_TIMESTAMP
             AND (e.tipo = 'EXPIRACAO' OR (n.status = 'ATIVA' AND n.ativo = TRUE AND n.expires_at > CURRENT_TIMESTAMP))

@@ -51,6 +51,15 @@ const appendScheduleDetails = (lines, details) => {
   for (const item of details.removidas || []) lines.push(`- Aula removida: ${scheduleLabel(item)}`);
 };
 
+const publicSiteUrl = (institutionSlug) => {
+  if (!process.env.PUBLIC_ORIGIN || !institutionSlug) return "";
+  const url = new URL(process.env.PUBLIC_ORIGIN);
+  if (url.hostname !== "localhost" && !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(url.hostname)) {
+    url.hostname = `${institutionSlug}.${url.hostname.split(".").slice(1).join(".")}`;
+  }
+  return url.origin;
+};
+
 export const buildScheduleNotificationText = ({ turma, payload }) => {
   const details = parsePayload(payload);
   const lines = [`A grade da turma ${turma} foi atualizada.`, "", "Alterações:"];
@@ -140,11 +149,13 @@ export const createScheduleNotificationService = ({ scheduleModel, sendEmail = s
         const title = expiration
           ? "Suas notificações de horários expiraram"
           : roomBatch ? "Alteração de salas nos horários selecionados" : "Alteração na grade da sua turma";
+        const siteUrl = publicSiteUrl(event.instituicao_slug);
+        const emailText = `${text}${siteUrl ? `\n\nAcesse o site para conferir: ${siteUrl}` : ""}`;
         const sent = await sendEmail({
           to: event.email,
           subject: title,
-          text,
-          html: `<div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2937;max-width:640px;margin:auto;padding:24px"><h2 style="color:#1d4ed8">${escapeHtml(title)}</h2><p>${escapeHtml(text).replaceAll("\n", "<br>")}</p></div>`,
+          text: emailText,
+          html: `<div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2937;max-width:640px;margin:auto;padding:24px"><h2 style="color:#1d4ed8">${escapeHtml(title)}</h2><p>${escapeHtml(text).replaceAll("\n", "<br>")}</p>${siteUrl ? `<p><a href="${escapeHtml(siteUrl)}">Acesse o site para conferir as mudanças</a></p>` : ""}</div>`,
         });
         if (!sent.sent) {
           for (const item of batchEvents) await scheduleModel.failNotificationEvent({ eventId: item.id, error: sent.reason });

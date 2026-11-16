@@ -102,6 +102,7 @@ assert.equal(verified.codeHash.length, 64);
 assert.deepEqual(responseBody, { status: "ATIVA" });
 
 const operationId = "d92f0a71-bb0d-43d6-9d59-ec5f8f6534aa";
+process.env.PUBLIC_ORIGIN = "https://horarios.exemplo.edu.br";
 const sends = [];
 const completedEvents = [];
 let claimedOptions;
@@ -110,9 +111,9 @@ const batchNotificationService = createScheduleNotificationService({
     claimNotificationEvents: async (options) => {
       claimedOptions = options;
       return [
-        { id: 51, tipo: "ALTERACAO", chave: `sala:lote:${operationId}:1A`, turma: "1A", email: "aluno@example.test", payload_json: JSON.stringify({ alteradas: [{ depois: { dia: "SEG", periodo: 1, disciplina: "Matemática", sala: "B201" }, antes: { sala: "A101" }, sala_alterada: true }] }) },
-        { id: 52, tipo: "ALTERACAO", chave: `sala:lote:${operationId}:2B`, turma: "2B", email: "aluno@example.test", payload_json: JSON.stringify({ alteradas: [{ depois: { dia: "TER", periodo: 2, disciplina: "Física", sala: "B202" }, antes: { sala: "A102" }, sala_alterada: true }] }) },
-        { id: 53, tipo: "ALTERACAO", chave: `sala:lote:${operationId}:2B`, turma: "2B", email: "outro@example.test", payload_json: JSON.stringify({ alteradas: [{ depois: { dia: "TER", periodo: 2, disciplina: "Física", sala: "B202" }, antes: { sala: "A102" }, sala_alterada: true }] }) },
+        { id: 51, tipo: "ALTERACAO", chave: `sala:lote:${operationId}:1A`, turma: "1A", email: "aluno@example.test", instituicao_slug: "cimol", payload_json: JSON.stringify({ alteradas: [{ depois: { dia: "SEG", periodo: 1, disciplina: "Matemática", sala: "B201" }, antes: { sala: "A101" }, sala_alterada: true }] }) },
+        { id: 52, tipo: "ALTERACAO", chave: `sala:lote:${operationId}:2B`, turma: "2B", email: "aluno@example.test", instituicao_slug: "cimol", payload_json: JSON.stringify({ alteradas: [{ depois: { dia: "TER", periodo: 2, disciplina: "Física", sala: "B202" }, antes: { sala: "A102" }, sala_alterada: true }] }) },
+        { id: 53, tipo: "ALTERACAO", chave: `sala:lote:${operationId}:2B`, turma: "2B", email: "outro@example.test", instituicao_slug: "escola-exemplo", payload_json: JSON.stringify({ alteradas: [{ depois: { dia: "TER", periodo: 2, disciplina: "Física", sala: "B202" }, antes: { sala: "A102" }, sala_alterada: true }] }) },
       ];
     },
     completeNotificationEvent: async (eventId) => completedEvents.push(eventId),
@@ -125,6 +126,8 @@ assert.deepEqual(claimedOptions, { institutionId: 1, operationId, limit: 100 });
 assert.equal(sends.length, 2);
 assert.match(sends.find(({ to }) => to === "aluno@example.test").text, /Turma 1A:[\s\S]*Turma 2B:/);
 assert.match(sends.find(({ to }) => to === "aluno@example.test").text, /A101 → B201[\s\S]*A102 → B202/);
+assert.match(sends.find(({ to }) => to === "aluno@example.test").text, /https:\/\/cimol\.exemplo\.edu\.br/);
+assert.match(sends.find(({ to }) => to === "outro@example.test").html, /https:\/\/escola-exemplo\.exemplo\.edu\.br/);
 assert.deepEqual(completedEvents, [51, 52, 53]);
 assert.deepEqual(batchResult, { tentadas: 3, enviadas: 3, sem_smtp: 0, falhas: 0 });
 
