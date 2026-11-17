@@ -24,6 +24,7 @@ export const createPlatformInstitutionRoutes = ({
   });
   const router = Router();
 
+  router.get("/public", controller.listPublicInstitutions);
   router.get("/", requirePlatformManager, controller.listInstitutions);
   router.post("/", requirePlatformManager, controller.createInstitution);
   router.put("/:id", requirePlatformManager, controller.updateInstitution);

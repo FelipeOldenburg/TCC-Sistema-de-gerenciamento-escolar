@@ -25,7 +25,13 @@ export class ApiError extends Error {
 }
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") || "";
+export const INSTITUTION_DOMAIN = "horariodaescola.com.br";
 export const INSTITUTION_SLUG_STORAGE_KEY = "design-compass.institutionSlug";
+
+export const isInstitutionDirectoryHost = () => {
+  const hostname = window.location.hostname.toLowerCase();
+  return hostname === INSTITUTION_DOMAIN || hostname === `www.${INSTITUTION_DOMAIN}`;
+};
 
 const normalizeInstitutionSlug = (value: string | null) =>
   String(value || "")
@@ -36,12 +42,16 @@ const normalizeInstitutionSlug = (value: string | null) =>
 
 export const selectedInstitutionSlug = () => {
   if (typeof window === "undefined") return "";
+  const hostname = window.location.hostname.toLowerCase();
+  const domainSuffix = `.${INSTITUTION_DOMAIN}`;
+  const subdomain = hostname.endsWith(domainSuffix) ? hostname.slice(0, -domainSuffix.length) : "";
+  if (subdomain && !subdomain.includes(".") && subdomain !== "www") return normalizeInstitutionSlug(subdomain);
   const urlSlug = normalizeInstitutionSlug(new URLSearchParams(window.location.search).get("instituicao"));
   if (urlSlug) {
     window.localStorage.setItem(INSTITUTION_SLUG_STORAGE_KEY, urlSlug);
     return urlSlug;
   }
-  return normalizeInstitutionSlug(window.localStorage.getItem(INSTITUTION_SLUG_STORAGE_KEY));
+  return isInstitutionDirectoryHost() ? "" : normalizeInstitutionSlug(window.localStorage.getItem(INSTITUTION_SLUG_STORAGE_KEY));
 };
 
 export const apiUrl = (url: string) => {

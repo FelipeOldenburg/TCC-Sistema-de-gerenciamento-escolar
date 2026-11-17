@@ -10,6 +10,7 @@ const controller = createPlatformInstitutionController({
   httpError: (statusCode, message) => Object.assign(new Error(message), { statusCode }),
   model: {
     institutionExists: async () => true,
+    listPublicInstitutions: async () => [{ slug: "escola-nova", nome_sistema: "Escola Nova" }],
     withTransaction: async (work) => {
       calls.push("begin");
       const result = await work(connection);
@@ -40,3 +41,6 @@ await controller.updateUser(
 
 assert.deepEqual(calls, ["begin", "update", "revoke-sessions", "commit"]);
 assert.deepEqual(response.payload, { ok: true });
+
+await controller.listPublicInstitutions({}, response, (error) => assert.fail(error));
+assert.deepEqual(response.payload, [{ slug: "escola-nova", nome_sistema: "Escola Nova" }]);

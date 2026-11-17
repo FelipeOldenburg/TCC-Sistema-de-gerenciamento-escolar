@@ -7,6 +7,8 @@ import SetoresSection from "@/components/sections/SetoresSection";
 import ReclamacoesSection from "@/components/sections/ReclamacoesSection";
 import { ProblemReportDialog, type ReportContext } from "@/components/sections/ReclamacoesSection";
 import { useHomeController } from "@/controllers/useHomeController";
+import InstitutionDirectory from "@/components/InstitutionDirectory";
+import { isInstitutionDirectoryHost, selectedInstitutionSlug } from "@/lib/api";
 import { useState } from "react";
 
 const Index = () => {
@@ -14,6 +16,7 @@ const Index = () => {
   const [reportContext, setReportContext] = useState<ReportContext | null>(null);
   const [selectedAreaId, setSelectedAreaId] = useState<number | null>(null);
   const [selectedSectorId, setSelectedSectorId] = useState<number | null>(null);
+  if (isInstitutionDirectoryHost() && !selectedInstitutionSlug()) return <InstitutionDirectory />;
 
   const section = activeTab === "horarios"
     ? <HorariosSection onReportContext={setReportContext} />

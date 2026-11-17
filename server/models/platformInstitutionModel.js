@@ -17,6 +17,16 @@ export const createPlatformInstitutionModel = ({ db }) => {
   return {
     withTransaction,
 
+    listPublicInstitutions: async () => {
+      const [rows] = await db.query(
+        `SELECT slug, nome_sistema
+           FROM instituicoes
+          WHERE ativo = TRUE
+          ORDER BY nome_sistema`
+      );
+      return rows;
+    },
+
     listInstitutions: async () => {
       const [rows] = await db.query(
         `SELECT i.id, i.slug, i.nome, i.nome_admin, i.nome_sistema, i.subtitulo_admin, i.logo_url,

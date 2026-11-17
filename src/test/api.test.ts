@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { apiFetch, INSTITUTION_SLUG_STORAGE_KEY } from "@/lib/api";
+import { apiFetch, INSTITUTION_DOMAIN, INSTITUTION_SLUG_STORAGE_KEY, isInstitutionDirectoryHost, selectedInstitutionSlug } from "@/lib/api";
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   window.localStorage.clear();
   window.history.replaceState(null, "", "/");
   vi.restoreAllMocks();
@@ -33,5 +34,31 @@ describe("apiFetch", () => {
     const headers = fetchMock.mock.calls[0][1]?.headers as Headers;
     expect(headers.get("x-institution-slug")).toBe("escola-nova");
     expect(window.localStorage.getItem(INSTITUTION_SLUG_STORAGE_KEY)).toBe("escola-nova");
+  });
+
+  it("usa o slug do subdominio nas chamadas da instituicao", async () => {
+    vi.stubGlobal("window", {
+      location: { hostname: "escola-nova.horariodaescola.com.br", search: "" },
+      localStorage: { getItem: () => "escola-antiga", setItem: vi.fn() },
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true }),
+    } as Response);
+
+    await apiFetch("/api/instituicao");
+
+    const headers = fetchMock.mock.calls[0][1]?.headers as Headers;
+    expect(headers.get("x-institution-slug")).toBe("escola-nova");
+  });
+
+  it("mantem a raiz sem instituicao selecionada mesmo com um slug salvo", () => {
+    vi.stubGlobal("window", {
+      location: { hostname: `www.${INSTITUTION_DOMAIN}`, search: "" },
+      localStorage: { getItem: () => "escola-antiga" },
+    });
+
+    expect(isInstitutionDirectoryHost()).toBe(true);
+    expect(selectedInstitutionSlug()).toBe("");
   });
 });

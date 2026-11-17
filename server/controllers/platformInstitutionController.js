@@ -115,6 +115,14 @@ export const createPlatformInstitutionController = ({
   });
 
   return {
+    listPublicInstitutions: async (_req, res, next) => {
+      try {
+        return res.json(await model.listPublicInstitutions());
+      } catch (error) {
+        return next(error);
+      }
+    },
+
     listInstitutions: async (_req, res, next) => {
       try {
         const rows = await model.listInstitutions();
