@@ -1,6 +1,6 @@
 import { useLayoutEffect, useState } from "react";
 import cimolLogo from "@/assets/cimol-logo.png";
-import { apiFetch, selectedInstitutionSlug } from "@/lib/api";
+import { apiFetch, INSTITUTION_DOMAIN, selectedInstitutionSlug } from "@/lib/api";
 
 export type InstitutionBrand = {
   slug: string;
@@ -72,6 +72,18 @@ const applyInstitutionTheme = (brand: InstitutionBrand) => {
   setThemeColor("--nav-active", brand.colors.navActive);
 };
 
+const applyInstitutionMetadata = (brand: InstitutionBrand) => {
+  const title = `Horários do ${brand.name} | Horário da Escola`;
+  const description = `Consulte horários de aula, turmas, eventos e informações de ${brand.name} no Horário da Escola.`;
+  const canonical = `https://${brand.slug}.${INSTITUTION_DOMAIN}/`;
+  document.title = title;
+  document.querySelector('meta[name="description"]')?.setAttribute("content", description);
+  document.querySelector('meta[property="og:title"]')?.setAttribute("content", title);
+  document.querySelector('meta[property="og:description"]')?.setAttribute("content", description);
+  document.querySelector('meta[property="og:url"]')?.setAttribute("content", canonical);
+  document.querySelector('link[rel="canonical"]')?.setAttribute("href", canonical);
+};
+
 const toInstitutionBrand = (data: InstitutionResponse): InstitutionBrand => ({
   ...data,
   logo: data.logoUrl || (data.slug === "cimol" ? cimolLogo : null),
@@ -80,6 +92,7 @@ const toInstitutionBrand = (data: InstitutionResponse): InstitutionBrand => ({
 export const setInstitutionBrand = (data: InstitutionResponse) => {
   cachedBrand = toInstitutionBrand(data);
   applyInstitutionTheme(cachedBrand);
+  applyInstitutionMetadata(cachedBrand);
   return cachedBrand;
 };
 

@@ -35,6 +35,7 @@ import { registerInstitutionRoutes } from "./routes/institutionRoutes.js";
 import { createPlatformInstitutionRoutes } from "./routes/platformInstitutionRoutes.js";
 import { registerReorganizationRoutes } from "./routes/reorganizationRoutes.js";
 import { registerScheduleRoutes } from "./routes/scheduleRoutes.js";
+import { registerSeoRoutes } from "./routes/seoRoutes.js";
 import { isFirstFloorRoom, isUpperFloorRoom } from "./scheduleUtils.js";
 import { isAllowedRequestOrigin, isLocalhostOrigin } from "./requestSecurity.js";
 import { createRoomAssignmentService } from "./services/roomAssignmentService.js";
@@ -346,6 +347,7 @@ registerInstitutionRoutes(
   createInstitutionController({ institutionModel, normalizeInstitutionBrandPayload, validateInstitutionBrandPayload }),
   { requireRole }
 );
+registerSeoRoutes(app, { loadInstitutionBySlug });
 
 app.use(
   "/api/instituicoes",

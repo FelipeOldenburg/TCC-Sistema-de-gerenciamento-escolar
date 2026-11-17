@@ -12,6 +12,14 @@
   ],
   "rewrites": [
     {
+      "source": "/robots.txt",
+      "destination": "/api"
+    },
+    {
+      "source": "/sitemap.xml",
+      "destination": "/api"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api"
     },
