@@ -172,6 +172,49 @@ describe("SchoolMap", () => {
     expect(screen.getByRole("group", { name: "CIMOL · Bloco C · 3º pavimento" })).toBeInTheDocument();
   });
 
+  it("navega ao tocar numa saída do SVG mesmo com captura de ponteiro", async () => {
+    mockApi({ maps: navigationMaps, roomData: navigationRooms });
+    render(<SchoolMap />);
+    const campus = await screen.findByRole("group", { name: "CIMOL · Visão geral" });
+    const area = within(campus).getByRole("button", { name: "Hall C/D" });
+    const capture = vi.fn();
+    Object.defineProperty(campus, "setPointerCapture", { configurable: true, value: capture });
+    const pointer = (target: Element, type: string) => fireEvent(target, Object.assign(
+      new MouseEvent(type, { bubbles: true, clientX: 10, clientY: 10 }),
+      { pointerId: 1, pointerType: "touch" }
+    ));
+
+    pointer(area, "pointerdown");
+    pointer(campus, "pointerup");
+    fireEvent.click(capture.mock.calls.length ? campus : area);
+
+    expect(screen.getByRole("group", { name: "CIMOL · Hall C/D · 2º pavimento" })).toBeInTheDocument();
+  });
+
+  it("captura o ponteiro quando um arraste começa", async () => {
+    mockApi({ maps: navigationMaps, roomData: [] });
+    vi.spyOn(SVGElement.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 0, y: 0, left: 0, top: 0, right: 400, bottom: 340, width: 400, height: 340, toJSON: () => ({}),
+    } as DOMRect);
+    render(<SchoolMap />);
+    const svg = await screen.findByRole("group", { name: "CIMOL · Visão geral" });
+    fireEvent.click(screen.getByRole("button", { name: "Ampliar mapa" }));
+    const before = svg.getAttribute("viewBox");
+    const capture = vi.fn();
+    Object.defineProperty(svg, "setPointerCapture", { configurable: true, value: capture });
+    const pointer = (type: string, clientX: number) => fireEvent(svg, Object.assign(
+      new MouseEvent(type, { bubbles: true, clientX, clientY: 100 }),
+      { pointerId: 1, pointerType: "touch" }
+    ));
+
+    pointer("pointerdown", 100);
+    pointer("pointermove", 130);
+
+    expect(capture).toHaveBeenCalledWith(1);
+    expect(svg.getAttribute("viewBox")).not.toBe(before);
+    pointer("pointerup", 130);
+  });
+
   it("reinicia o zoom de pinça ao trocar de pavimento pelas abas", async () => {
     mockApi({ maps: navigationMaps, roomData: [] });
     const getBoundingClientRect = vi.spyOn(SVGElement.prototype, "getBoundingClientRect").mockReturnValue({

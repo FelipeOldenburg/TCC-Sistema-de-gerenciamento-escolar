@@ -94,10 +94,13 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
     const svg = event.currentTarget;
     const point = { x: event.clientX, y: event.clientY };
     pointers.current.set(event.pointerId, point);
-    try { svg.setPointerCapture(event.pointerId); } catch { /* Capture can fail if the pointer already ended. */ }
 
     if (pointers.current.size >= 2 && activeMap) {
-      startPinchGesture(svg, [...pointers.current.keys()].slice(0, 2), viewportRef.current);
+      const pointerIds = [...pointers.current.keys()].slice(0, 2);
+      for (const pointerId of pointerIds) {
+        try { svg.setPointerCapture(pointerId); } catch { /* Capture can fail if the pointer already ended. */ }
+      }
+      startPinchGesture(svg, pointerIds, viewportRef.current);
     } else {
       gesture.current = {
         kind: "pan",
@@ -153,6 +156,9 @@ const SchoolMap = ({ selectedAreaId, onSelectSector, onReportContext }: {
     const dx = event.clientX - currentGesture.anchor.x;
     const dy = event.clientY - currentGesture.anchor.y;
     if (!currentGesture.moved && Math.hypot(dx, dy) < 5) return;
+    if (!currentGesture.moved) {
+      try { svg.setPointerCapture(event.pointerId); } catch { /* Capture can fail if the pointer already ended. */ }
+    }
     currentGesture.moved = true;
     const startView = currentGesture.startView;
     if (startView.width >= activeMap.largura && startView.height >= activeMap.altura) return;
